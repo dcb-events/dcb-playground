@@ -45,14 +45,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             ]
           },
           "tagType": {
-            "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+            "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
             "type": "string",
             "anyOf": [
               {
                 "enum": [
                   "boolean",
                   "integer",
-                  "string"
+                  "string",
+                  "datetime",
+                  "duration"
                 ]
               },
               {
@@ -109,14 +111,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     ]
                   },
                   "propertyType": {
-                    "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+                    "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
                     "type": "string",
                     "anyOf": [
                       {
                         "enum": [
                           "boolean",
                           "integer",
-                          "string"
+                          "string",
+                          "datetime",
+                          "duration"
                         ]
                       },
                       {
@@ -146,7 +150,9 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "enum": [
                     "boolean",
                     "integer",
-                    "string"
+                    "string",
+                    "datetime",
+                    "duration"
                   ]
                 },
                 {
@@ -329,14 +335,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "additionalProperties": false,
                                 "properties": {
                                   "tagType": {
-                                    "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+                                    "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
                                     "type": "string",
                                     "anyOf": [
                                       {
                                         "enum": [
                                           "boolean",
                                           "integer",
-                                          "string"
+                                          "string",
+                                          "datetime",
+                                          "duration"
                                         ]
                                       },
                                       {
@@ -477,6 +485,20 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "required": [
                         "collect",
                         "read"
+                      ]
+                    },
+                    {
+                      "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "duration": {
+                          "type": "string",
+                          "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                        }
+                      },
+                      "required": [
+                        "duration"
                       ]
                     }
                   ]
@@ -593,14 +615,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "additionalProperties": false,
                                 "properties": {
                                   "tagType": {
-                                    "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+                                    "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
                                     "type": "string",
                                     "anyOf": [
                                       {
                                         "enum": [
                                           "boolean",
                                           "integer",
-                                          "string"
+                                          "string",
+                                          "datetime",
+                                          "duration"
                                         ]
                                       },
                                       {
@@ -741,6 +765,20 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "required": [
                         "collect",
                         "read"
+                      ]
+                    },
+                    {
+                      "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "duration": {
+                          "type": "string",
+                          "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                        }
+                      },
+                      "required": [
+                        "duration"
                       ]
                     }
                   ]
@@ -1083,6 +1121,20 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                               "string",
                                               "number",
                                               "boolean"
+                                            ]
+                                          },
+                                          {
+                                            "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "duration": {
+                                                "type": "string",
+                                                "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                                              }
+                                            },
+                                            "required": [
+                                              "duration"
                                             ]
                                           }
                                         ]
@@ -1511,14 +1563,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "propertyType": {
-              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
               "type": "string",
               "anyOf": [
                 {
                   "enum": [
                     "boolean",
                     "integer",
-                    "string"
+                    "string",
+                    "datetime",
+                    "duration"
                   ]
                 },
                 {
@@ -1606,14 +1660,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "tagType": {
-              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
               "type": "string",
               "anyOf": [
                 {
                   "enum": [
                     "boolean",
                     "integer",
-                    "string"
+                    "string",
+                    "datetime",
+                    "duration"
                   ]
                 },
                 {
@@ -1652,14 +1708,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "propertyType": {
-              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
               "type": "string",
               "anyOf": [
                 {
                   "enum": [
                     "boolean",
                     "integer",
-                    "string"
+                    "string",
+                    "datetime",
+                    "duration"
                   ]
                 },
                 {
@@ -1689,7 +1747,9 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             "enum": [
               "boolean",
               "integer",
-              "string"
+              "string",
+              "datetime",
+              "duration"
             ]
           },
           {
@@ -1872,14 +1932,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "additionalProperties": false,
                           "properties": {
                             "tagType": {
-                              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+                              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
                               "type": "string",
                               "anyOf": [
                                 {
                                   "enum": [
                                     "boolean",
                                     "integer",
-                                    "string"
+                                    "string",
+                                    "datetime",
+                                    "duration"
                                   ]
                                 },
                                 {
@@ -2020,6 +2082,20 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 "required": [
                   "collect",
                   "read"
+                ]
+              },
+              {
+                "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "duration": {
+                    "type": "string",
+                    "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                  }
+                },
+                "required": [
+                  "duration"
                 ]
               }
             ]
@@ -2136,14 +2212,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "additionalProperties": false,
                           "properties": {
                             "tagType": {
-                              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+                              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
                               "type": "string",
                               "anyOf": [
                                 {
                                   "enum": [
                                     "boolean",
                                     "integer",
-                                    "string"
+                                    "string",
+                                    "datetime",
+                                    "duration"
                                   ]
                                 },
                                 {
@@ -2284,6 +2362,20 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 "required": [
                   "collect",
                   "read"
+                ]
+              },
+              {
+                "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "duration": {
+                    "type": "string",
+                    "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                  }
+                },
+                "required": [
+                  "duration"
                 ]
               }
             ]
@@ -2626,6 +2718,20 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                         "string",
                                         "number",
                                         "boolean"
+                                      ]
+                                    },
+                                    {
+                                      "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "duration": {
+                                          "type": "string",
+                                          "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                                        }
+                                      },
+                                      "required": [
+                                        "duration"
                                       ]
                                     }
                                   ]
@@ -3050,14 +3156,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "propertyType": {
-              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
               "type": "string",
               "anyOf": [
                 {
                   "enum": [
                     "boolean",
                     "integer",
-                    "string"
+                    "string",
+                    "datetime",
+                    "duration"
                   ]
                 },
                 {
@@ -3198,14 +3306,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "additionalProperties": false,
                         "properties": {
                           "tagType": {
-                            "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+                            "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
                             "type": "string",
                             "anyOf": [
                               {
                                 "enum": [
                                   "boolean",
                                   "integer",
-                                  "string"
+                                  "string",
+                                  "datetime",
+                                  "duration"
                                 ]
                               },
                               {
@@ -3474,14 +3584,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "additionalProperties": false,
                         "properties": {
                           "tagType": {
-                            "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+                            "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
                             "type": "string",
                             "anyOf": [
                               {
                                 "enum": [
                                   "boolean",
                                   "integer",
-                                  "string"
+                                  "string",
+                                  "datetime",
+                                  "duration"
                                 ]
                               },
                               {
@@ -3653,7 +3765,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "additionalProperties": false,
                       "properties": {
                         "leftHandSide": {
-                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
+                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
                           "oneOf": [
                             {
                               "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -3812,6 +3924,39 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               },
                               "required": [
                                 "instanceValue"
+                              ]
+                            },
+                            {
+                              "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "duration": {
+                                  "type": "string",
+                                  "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                                }
+                              },
+                              "required": [
+                                "duration"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
+                              "properties": {
+                                "operator": {
+                                  "enum": [
+                                    "add",
+                                    "subtract"
+                                  ]
+                                },
+                                "leftHandSide": {},
+                                "rightHandSide": {}
+                              },
+                              "required": [
+                                "operator",
+                                "leftHandSide",
+                                "rightHandSide"
                               ]
                             }
                           ]
@@ -3841,7 +3986,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "additionalProperties": false,
                       "properties": {
                         "leftHandSide": {
-                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
+                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
                           "oneOf": [
                             {
                               "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -4001,6 +4146,39 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "required": [
                                 "instanceValue"
                               ]
+                            },
+                            {
+                              "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "duration": {
+                                  "type": "string",
+                                  "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                                }
+                              },
+                              "required": [
+                                "duration"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
+                              "properties": {
+                                "operator": {
+                                  "enum": [
+                                    "add",
+                                    "subtract"
+                                  ]
+                                },
+                                "leftHandSide": {},
+                                "rightHandSide": {}
+                              },
+                              "required": [
+                                "operator",
+                                "leftHandSide",
+                                "rightHandSide"
+                              ]
                             }
                           ]
                         },
@@ -4024,7 +4202,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "rightHandSide": {
                           "oneOf": [
                             {
-                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
+                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
                               "oneOf": [
                                 {
                                   "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -4184,6 +4362,39 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   "required": [
                                     "instanceValue"
                                   ]
+                                },
+                                {
+                                  "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "duration": {
+                                      "type": "string",
+                                      "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                                    }
+                                  },
+                                  "required": [
+                                    "duration"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
+                                  "properties": {
+                                    "operator": {
+                                      "enum": [
+                                        "add",
+                                        "subtract"
+                                      ]
+                                    },
+                                    "leftHandSide": {},
+                                    "rightHandSide": {}
+                                  },
+                                  "required": [
+                                    "operator",
+                                    "leftHandSide",
+                                    "rightHandSide"
+                                  ]
                                 }
                               ]
                             },
@@ -4304,7 +4515,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere – and writes no tag for it, when the property is\ntag-marked.\n",
                   "type": "object",
                   "additionalProperties": {
-                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
+                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
                     "oneOf": [
                       {
                         "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -4464,6 +4675,39 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "required": [
                           "instanceValue"
                         ]
+                      },
+                      {
+                        "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "duration": {
+                            "type": "string",
+                            "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                          }
+                        },
+                        "required": [
+                          "duration"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
+                        "properties": {
+                          "operator": {
+                            "enum": [
+                              "add",
+                              "subtract"
+                            ]
+                          },
+                          "leftHandSide": {},
+                          "rightHandSide": {}
+                        },
+                        "required": [
+                          "operator",
+                          "leftHandSide",
+                          "rightHandSide"
+                        ]
                       }
                     ]
                   }
@@ -4494,7 +4738,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "additionalProperties": false,
                             "properties": {
                               "leftHandSide": {
-                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
                                 "oneOf": [
                                   {
                                     "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -4653,6 +4897,39 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     },
                                     "required": [
                                       "instanceValue"
+                                    ]
+                                  },
+                                  {
+                                    "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "duration": {
+                                        "type": "string",
+                                        "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                                      }
+                                    },
+                                    "required": [
+                                      "duration"
+                                    ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
+                                    "properties": {
+                                      "operator": {
+                                        "enum": [
+                                          "add",
+                                          "subtract"
+                                        ]
+                                      },
+                                      "leftHandSide": {},
+                                      "rightHandSide": {}
+                                    },
+                                    "required": [
+                                      "operator",
+                                      "leftHandSide",
+                                      "rightHandSide"
                                     ]
                                   }
                                 ]
@@ -4682,7 +4959,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "additionalProperties": false,
                             "properties": {
                               "leftHandSide": {
-                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
                                 "oneOf": [
                                   {
                                     "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -4842,6 +5119,39 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "required": [
                                       "instanceValue"
                                     ]
+                                  },
+                                  {
+                                    "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "duration": {
+                                        "type": "string",
+                                        "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                                      }
+                                    },
+                                    "required": [
+                                      "duration"
+                                    ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
+                                    "properties": {
+                                      "operator": {
+                                        "enum": [
+                                          "add",
+                                          "subtract"
+                                        ]
+                                      },
+                                      "leftHandSide": {},
+                                      "rightHandSide": {}
+                                    },
+                                    "required": [
+                                      "operator",
+                                      "leftHandSide",
+                                      "rightHandSide"
+                                    ]
                                   }
                                 ]
                               },
@@ -4865,7 +5175,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "rightHandSide": {
                                 "oneOf": [
                                   {
-                                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
+                                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
                                     "oneOf": [
                                       {
                                         "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -5024,6 +5334,39 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                         },
                                         "required": [
                                           "instanceValue"
+                                        ]
+                                      },
+                                      {
+                                        "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "duration": {
+                                            "type": "string",
+                                            "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                                          }
+                                        },
+                                        "required": [
+                                          "duration"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
+                                        "properties": {
+                                          "operator": {
+                                            "enum": [
+                                              "add",
+                                              "subtract"
+                                            ]
+                                          },
+                                          "leftHandSide": {},
+                                          "rightHandSide": {}
+                                        },
+                                        "required": [
+                                          "operator",
+                                          "leftHandSide",
+                                          "rightHandSide"
                                         ]
                                       }
                                     ]
@@ -5240,14 +5583,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "propertyType": {
-              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
               "type": "string",
               "anyOf": [
                 {
                   "enum": [
                     "boolean",
                     "integer",
-                    "string"
+                    "string",
+                    "datetime",
+                    "duration"
                   ]
                 },
                 {
@@ -5468,14 +5813,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           "additionalProperties": false,
           "properties": {
             "tagType": {
-              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n",
+              "description": "A simple type, or a declared value type – scalar (which includes\nan enum and a tag-marked identifier) or composite.\n`datetime` and `duration` (11.0) are times: a string of the JSON Schema\nformat `date-time` – with an offset – or `duration`.\n",
               "type": "string",
               "anyOf": [
                 {
                   "enum": [
                     "boolean",
                     "integer",
-                    "string"
+                    "string",
+                    "datetime",
+                    "duration"
                   ]
                 },
                 {

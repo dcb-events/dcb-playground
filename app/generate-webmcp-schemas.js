@@ -19,8 +19,9 @@
 //     one, its tags are operands in turn, and inlining that at every
 //     operand more than doubled a command's schema. A collection
 //     function (11.0) is written the same way, for the same reason –
-//     inlined, its read and its where tripled the file – and so is a
-//     loop, whose steps nest every step shape again.
+//     inlined, its read and its where tripled the file – and so are a
+//     loop, whose steps nest every step shape again, and arithmetic
+//     (11.0), whose sides are operands in turn.
 //
 // The members WebMCP does not offer are cut before anything is
 // inlined (see webmcp.js): the arguments a read passes, a group
@@ -168,6 +169,23 @@ function inline(value, stack) {
         where: { type: 'object' },
       },
       required: ['collect', 'read'],
+    };
+  }
+  // Arithmetic (11.0) nests a command operand on each side – inlined,
+  // every operand would hold every operand twice over – so it is
+  // written compactly too.
+  if (name === 'ArithmeticValue') {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' ' + defs[name].description.trim()
+        + ' `leftHandSide` and `rightHandSide`: command operands, as a rule\'s sides – a parameter, a read,'
+        + ' a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.').trim(),
+      properties: {
+        operator: inline(defs[name].properties.operator, stack),
+        leftHandSide: {},
+        rightHandSide: {},
+      },
+      required: ['operator', 'leftHandSide', 'rightHandSide'],
     };
   }
   // A loop (11.0) holds steps of its own – an emission and a branch

@@ -519,6 +519,31 @@ async function call(name, args) {
     await call('remove_definition', { kind: 'command-definition', name: 'SubscribeToAll' });
   });
 
+  await check('time is offered: datetime and duration types, a duration literal and arithmetic', async () => {
+    const schema = registered.get('add_command_definition').inputSchema;
+    const text = JSON.stringify(schema);
+    eq(['"datetime"', '"duration"', 'leftHandSide', '"subtract"'].every((word) => text.includes(word)), true, 'in the command schema');
+    const one = (name, propertyType) => ({ name, propertyType, isOptional: false, isList: false });
+    const event = await call('add_event_definition', { name: 'CourseScheduled', tags: ['courseId'],
+      properties: [one('courseId', 'CourseId'), one('startsAt', 'datetime'), one('length', 'duration')] });
+    eq(event.isError, false, event.text);
+    const steps = [
+      { condition: { leftHandSide: { parameterName: 'length' }, predicate: 'lessThanOrEquals', rightHandSide: { duration: 'PT8H' } }, rejection: 'Too long' },
+      { name: 'CourseScheduled', parameters: { courseId: { parameterName: 'courseId' },
+        startsAt: { operator: 'add', leftHandSide: { parameterName: 'now' }, rightHandSide: { duration: 'P1D' } }, length: { parameterName: 'length' } } },
+    ];
+    const added = await call('add_command_definition', { name: 'ScheduleCourse',
+      properties: [one('courseId', 'CourseId'), one('length', 'duration'), one('now', 'datetime')], boundary: [], steps });
+    eq(added.isError, false, added.text);
+    eq(model()['command-definitions'].ScheduleCourse.steps, steps, 'stored as sent');
+    eq(sandbox.modelAdvisories(model()).filter((a) => ['ScheduleCourse', 'CourseScheduled'].includes(a.name)), [], 'advisory-clean');
+    const { value } = await call('evaluate_command', { commandName: 'ScheduleCourse',
+      arguments: { courseId: 'c1', length: 'PT2H', now: '2026-01-01T10:00:00+01:00' } });
+    eq(value.events[0].data.startsAt, '2026-01-02T09:00:00Z', 'a day on, in UTC');
+    await call('remove_definition', { kind: 'command-definition', name: 'ScheduleCourse' });
+    await call('remove_definition', { kind: 'event-definition', name: 'CourseScheduled' });
+  });
+
   await check('add_group_projection adds one under its local name, read by the group\'s tag', async () => {
     const { isError, text } = await call('add_group_projection', {
       group: 'Course', name: 'archived', valueType: 'boolean', isList: false, initialValue: false,
