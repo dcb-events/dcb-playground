@@ -1955,6 +1955,7 @@ function operandWords(operand) {
     // set whole (11.0) read as the code view writes them: constructs
     // the pages show and leave to the code view to edit.
     case 'collection':
+    case 'count':
     case 'open':
     case 'instance-value':
     case 'record':
@@ -2008,13 +2009,13 @@ const PREDICATE_WORDS = {
 };
 
 // Whether an operand is one only the code view writes (11.0): a
-// collection function, a record value's field, a record set whole,
-// a duration, arithmetic –
+// collection function (`list(…)` among them), a count as a value, a
+// record value's field, a record set whole, a duration, arithmetic –
 // shown on the pages, edited in the code view, never dropped by them.
 function operandBeyondEditors(operand) {
   if (Array.isArray(operand)) return operand.some(operandBeyondEditors);
   const source = operandSource(operand);
-  if (['collection', 'open', 'instance-value', 'record', 'arithmetic', 'duration'].includes(source)) return true;
+  if (['collection', 'count', 'open', 'instance-value', 'record', 'arithmetic', 'duration'].includes(source)) return true;
   if (operand && typeof operand === 'object' && operand.field !== undefined) return true;
   if (source === 'projection-read') return readTagOperands(operand).some(operandBeyondEditors);
   return false;

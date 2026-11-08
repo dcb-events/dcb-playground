@@ -34,6 +34,10 @@ Comparisons (after require or if), each negated by a leading not:
   xs containsAny ys    s startsWith "c"    s endsWith "c"
   count(xs) == 3                (also !=, < and >)
   a is empty    a is not empty    a is true    a is false
+count(xs) is a value too, an integer, wherever one goes – of a list parameter or record field,
+a list projection, or list(P(x, *)):
+  require count(Lent(memberId, *)) + count(bookIds) <= 3 else reject "Too many"
+  emit Counted { memberId, requested: count(bookIds) }
 Conditions join comparisons with and / or – and binds tighter – grouped in brackets:
   require a > 0 and (b == c or d is true) else reject "<message>"
 
@@ -53,8 +57,8 @@ A for each emits zero or more events per element, inside the one append:
     if Unread(customerId) contains id => emit Read { id, customerId }
     else if … => reject "<message>"
   }
-It runs over an open read (value, value.field: the instance's value), a list projection or a
-list parameter, in that order – an open read in the order of each instance's first event. The
+It runs over an open read (value, value.field: the instance's value), list(P(x, *)), a list
+projection or a list parameter, in that order – an open read in the order of each instance's first event. The
 names are in scope inside; a read by one is made once per element and joins the boundary.
 Its body is => emit, or a block of emit and if steps whose arms are one emit or one reject.
 A reject inside refuses the whole command. No element emits nothing. A loop does not nest.
@@ -66,6 +70,7 @@ A projection's handler is on E => <operation>, or branches on the event:
   }
   on E { if event.data.seats == 0 => set "released"  else if … => …  else => set "booked" }
 One operation per branch. Separate ifs all apply, in order; an else chain applies its first match.
+A value may be one field of a record-typed property, one hop in: set event.data.signUp.emailAddress.
 A condition compares event.data.<property> (or .<property>.<field> of a record) with == or !=
 against one of the projection's own tags or a literal, joined with and / or. It never reads
 another projection or the state, and never narrows the query.
@@ -93,8 +98,13 @@ An open tag, *, reads every present instance of a projection tagged by several �
 value is not its initial one – matching the tags it binds; at least one stays bound:
   count(P(x, *))    sum(P(x, *))    min(…)    max(…)    average(…)    any(…)    all(…)
   count(P(x, *) where value > 2 and (value.city == city or value.city == "Berlin"))
+  list(P(x, *))    list(P(x, *) where value == true)
+list(P(x, *)) is the open tag's values, as a list of its type, in the order of each instance's
+first event; it takes a read with exactly one tag open, and goes wherever a list does – an
+emitted list, contains, count(…), for each.
 An open read stands only inside one of these. Its where reads value (value.field of a record),
-names in scope and literals – never a projection. Over no instance: count and sum 0;
+names in scope – parameters, and an alias already bound (its value, a value and no new read) –
+and literals – never a projection. Over no instance: count and sum 0;
 min, max and average null; any false; all true. Without a where, any says whether one is
 present, and all holds. A derived projection may hold one such value: { sum(P(x, *)) }.
 
@@ -178,6 +188,8 @@ event BookWithdrawn { tag bookId: BookId }
 @deprecated
 event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
+event MemberLeft { tag memberId: MemberId, tag bookIds: BookId[] }
+event BookMoved { tag bookId: BookId, shelf: Shelf }
 // datetime is an RFC 3339 date-time with an offset, duration a length.
 event BookReserved { tag bookId: BookId, tag memberId: MemberId, until: datetime }
 
@@ -214,6 +226,12 @@ projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
 // of it, BookShelf(bookId).room.
 projection BookShelf (tag bookId: BookId): Shelf = null {
   on BookShelved => set { room: event.data.room, row: event.data.row }
+  on BookMoved => set event.data.shelf
+}
+
+// A value may be one field of a record-typed property, one hop in.
+projection BookRoom (tag bookId: BookId): string = null {
+  on BookMoved => set event.data.shelf.room
 }
 
 projection MemberHasBook (tag memberId: MemberId, tag bookId: BookId): boolean = false {
@@ -411,9 +429,18 @@ command LeaveLibrary(memberId: MemberId) {
     else reject "Not a member"
 
   for each bookId in MemberHasBook(memberId, *) => emit BookReturned { bookId, memberId }
+
+  // "list(…)" is the open tag's values, as a list: here, every book
+  // the member still has.
+  emit MemberLeft { memberId, bookIds: list(MemberHasBook(memberId, *)) }
 }
 
+// "count(xs)" is a value too: a list parameter's, a list projection's
+// or list(…)'s length, computed with and compared on either side.
 command WithdrawBooks(bookIds: BookId[]) {
+  require count(bookIds) <= 10
+    else reject "Ten books at most"
+
   for each bookId in bookIds {
     if BookStatus(bookId) == Available => emit BookWithdrawn { bookId }
     else if BookStatus(bookId) == Lent => reject "A book is still lent"
@@ -441,6 +468,13 @@ command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId)
     else reject "Not a member"
 
   emit BookPassedOn { bookId, fromMemberId, toMemberId }
+}
+
+command MoveBook(bookId: BookId, shelf: Shelf) {
+  require BookRoom(bookId) != shelf.room
+    else reject "Book is in that room already"
+
+  emit BookMoved { bookId, shelf }
 }
 
 command WithdrawBook(bookId: BookId) {

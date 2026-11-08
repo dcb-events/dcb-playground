@@ -1357,6 +1357,11 @@ function findReferencers(model, targetKind, targetName) {
 // `any` or `all` (`COLLECTION_FUNCTIONS`) – whose `where` is a condition
 // over `{instanceValue: true}` (`value`, or `value.field` with `field`),
 // the parameters in scope and literals, and never reads a projection.
+// `list` (`{collect: 'list'}`, G1 of the acceptance) collects the one
+// tag the read leaves open: the values of the present instances, in
+// the order of each one's first event – a list of that tag's type,
+// usable wherever a list is (an emission, `contains`, `count`, a `for
+// each`'s source).
 // At least one tag stays bound, and a group's one tag never opens. Its
 // query is the handled types by the bound tags alone; the fold groups
 // the events by the open tags' values, and an event without one belongs
@@ -1381,13 +1386,14 @@ function findReferencers(model, targetKind, targetName) {
 // ============================================================
 
 // The collection functions an open read is reduced by (11.0), and what
-// each gives over no instance at all.
-const COLLECTION_FUNCTIONS = ['count', 'sum', 'min', 'max', 'average', 'any', 'all'];
+// each gives over no instance at all – `list` the open tag's values.
+const COLLECTION_FUNCTIONS = ['count', 'sum', 'min', 'max', 'average', 'any', 'all', 'list'];
 
 function operandSource(operand) {
   if (operand === null || operand === undefined) return 'static';
   if (typeof operand !== 'object') return 'static';
   if (operand.collect !== undefined) return 'collection';
+  if (operand.count !== undefined && Object.keys(operand).length === 1) return 'count';
   if (operand.operator !== undefined && operand.leftHandSide !== undefined) return 'arithmetic';
   if (operand.duration !== undefined && Object.keys(operand).length === 1) return 'duration';
   if (operand.open === true) return 'open';
@@ -1437,6 +1443,7 @@ function operandText(operand) {
     case 'collection':
       return `${operand.collect || '?'}(${operandText(operand.read)}`
         + `${operand.where !== undefined ? ` where ${conditionText(operand.where)}` : ''})`;
+    case 'count': return `count(${operandText(operand.count)})`;
     case 'instance-value': return `value${operand.field !== undefined ? '.' + operand.field : ''}`;
     case 'duration': return durationLiteralText(operand.duration) || JSON.stringify(operand.duration);
     case 'arithmetic': return arithmeticText(operand);
@@ -1483,6 +1490,7 @@ function operandIncomplete(operand) {
     case 'tag-literal': return !operand.tagType;
     case 'each': return operandIncomplete(operand.each);
     case 'collection': return !operand.collect || operandIncomplete(operand.read);
+    case 'count': return operandIncomplete(operand.count);
     case 'arithmetic': return operandIncomplete(operand.leftHandSide) || operandIncomplete(operand.rightHandSide);
     default: return false;
   }
@@ -1936,6 +1944,8 @@ function derivedInputOf(model, operand, seen = [], owner = null) {
   // A collection function (11.0): a count is an integer, a sum what the
   // projection holds and 0 over nothing; min, max and average are null
   // over nothing, and an average is a number.
+  // A count of a list (G3) is an integer, 0 over nothing.
+  if (operandSource(operand) === 'count') return { base: 'integer', nullable: false };
   if (operandSource(operand) === 'collection') {
     const read = operandRead(operand);
     const target = read && projectionsOf(model)[read.projection];
@@ -2018,8 +2028,7 @@ function derivedOperands(derived) {
 // and a collection function's open read (11.0) – which is what its
 // query, its references and its cycles are made of.
 function derivedReads(derived) {
-  return derivedOperands(derived).map((operand) => (operandSource(operand) === 'collection' ? operand.read : operand))
-    .filter((operand) => operandSource(operand) === 'projection-read');
+  return derivedOperands(derived).map(operandRead).filter(Boolean);
 }
 
 // The projection read an operand makes, if any: a read in place – the
@@ -2028,7 +2037,15 @@ function operandRead(operand) {
   const source = operandSource(operand);
   if (source === 'projection-read') return operand;
   if (source === 'collection' && operandSource(operand.read) === 'projection-read') return operand.read;
+  if (source === 'count') return operandRead(operand.count);
   return null;
+}
+
+// What a `count(…)` counts (11.0, G3), unwrapped – or the operand
+// itself: where a walker looks for reads, names and fields, a count is
+// what it counts.
+function uncounted(operand) {
+  return operandSource(operand) === 'count' ? uncounted(operand.count) : operand;
 }
 
 // A read's tags that are left open (`*`, 11.0), by name.
@@ -2662,6 +2679,11 @@ function forEachCommandOperand(body, outerVisit) {
       visit(operand.rightHandSide, { ...meta, arithmetic: operand });
       return;
     }
+    // A count (G3): the list it counts, in the same place.
+    if (operandSource(operand) === 'count') {
+      visit(operand.count, { ...meta, counted: operand });
+      return;
+    }
     // A collection function (11.0): its open read, then its `where`'s
     // sides – `value`, parameters, aliases already bound and literals, never a read.
     if (operandSource(operand) === 'collection') {
@@ -2766,6 +2788,7 @@ function resolveOperandType(operand, scope) {
     return resolved.isList ? null : recordFieldType(scope.model, resolved.propertyType, operand.field);
   }
   if (operandSource(operand) === 'collection') return collectionResultType(scope.model, operand);
+  if (operandSource(operand) === 'count') return { propertyType: 'integer', isList: false };
   if (operandSource(operand) === 'duration') return { propertyType: 'duration', isList: false };
   if (operandSource(operand) === 'arithmetic') return arithmeticOperandType(operand, scope);
   // `value` inside a loop over an open read (11.0), given its type.
@@ -3501,6 +3524,8 @@ function operandAliases(operand, out = []) {
   } else if (operandSource(operand) === 'arithmetic') {
     operandAliases(operand.leftHandSide, out);
     operandAliases(operand.rightHandSide, out);
+  } else if (operandSource(operand) === 'count') {
+    operandAliases(operand.count, out);
   } else if (operandSource(operand) === 'projection-read') {
     for (const inner of [...readTagOperands(operand), ...Object.values(operand.arguments || {})]) operandAliases(inner, out);
   }
@@ -4278,12 +4303,14 @@ function loopProblem(model, body, loop) {
     }
     return null;
   }
-  if (!['projection-read', 'parameter', 'alias-property'].includes(operandSource(source))) {
-    return `${text}: a loop runs over an open read P(x, *), a list projection or a list parameter.`;
+  // `list(P(x, *))` (G1) is a list like any other – one name.
+  const listed = operandSource(source) === 'collection' && source.collect === 'list';
+  if (!listed && !['projection-read', 'parameter', 'alias-property'].includes(operandSource(source))) {
+    return `${text}: a loop runs over an open read P(x, *), list(P(x, *)), a list projection or a list parameter.`;
   }
   const resolved = resolveOperandType(source, { boundary: body.boundary || [], commandProperties: body.properties || [], model });
   if (resolved && !resolved.isList) {
-    return `${text}: ${operandText(source)} is not a list – a loop runs over an open read P(x, *), a list projection or a list parameter.`;
+    return `${text}: ${operandText(source)} is not a list – a loop runs over an open read P(x, *), list(P(x, *)), a list projection or a list parameter.`;
   }
   if (names.length !== 1) {
     return `${text} names ${names.length} – a list's element takes one name; two names are for two open tags.`;
@@ -4347,6 +4374,14 @@ function collectionProblem(model, operand, where, parameterSide = () => null, al
     return `${where} collects ${operandText(operand.read)} – a collection function reads a projection with a tag left open, P(x, *).`;
   }
   const target = projectionsOf(model)[operand.read.projection];
+  // `list` (G1) collects the one tag left open – with two, a list of
+  // what would be ambiguous.
+  if (operand.collect === 'list') {
+    const open = openTagNames(operand.read);
+    if (open.length !== 1) {
+      return `${where}: list(…) collects the one tag a read leaves open – ${operandText(operand.read)} leaves ${open.length}.`;
+    }
+  }
   // A record's field (11.0), `sum(P(x, *).seats)`: what a numeric one
   // computes over, while its where still sees the whole value.
   if (operand.read.field !== undefined) {
@@ -4449,16 +4484,36 @@ function collectionResultType(model, operand) {
   switch (operand.collect) {
     case 'count': return { propertyType: 'integer', isList: false };
     case 'any': case 'all': return { propertyType: 'boolean', isList: false };
+    // The one open tag's values (G1): a list of its type.
+    case 'list': {
+      const open = target && read ? projectionTagParams(target).filter((tag) => openTagNames(read).includes(tag.name)) : [];
+      return open.length === 1 ? { propertyType: open[0].tagType, isList: true } : null;
+    }
     case 'sum': case 'min': case 'max':
       return target && !target.isList ? { propertyType: target.valueType, isList: false } : null;
     default: return null;
   }
 }
 
+// Why a `count(…)` (G3) cannot count what it names – or null: it
+// counts a list, one whose type `scope` (`resolveOperandType`'s, or
+// null for a derived projection's) resolves – a list parameter or
+// record field, a list projection, `list(…)` – and is an integer.
+function countProblem(model, operand, where, scope, typeOf = null) {
+  const inner = operand.count;
+  if (operandSource(inner) === 'collection' && inner.collect !== 'list') {
+    return `${where}: count(${operandText(inner)}) counts a list – ${inner.collect}(…) gives one value; count(P(x, *)) counts instances.`;
+  }
+  const resolved = typeOf ? typeOf(inner) : resolveOperandType(inner, scope);
+  if (!resolved || resolved.isList) return null;
+  return `${where}: count(${operandText(inner)}) counts a list – ${operandText(inner)} is ${typeArticle(resolved.propertyType)} ${resolved.propertyType}.`;
+}
+
 // What a derived side yields, `{propertyType, isList}` – a read's value
 // or its field, a collection's result, a parameter's type – or null.
 function derivedOperandType(model, operand, owner) {
   const source = operandSource(operand);
+  if (source === 'count') return { propertyType: 'integer', isList: false };
   if (source === 'collection') {
     if (operand.collect === 'average') return { propertyType: 'number', isList: false };
     return collectionResultType(model, operand);
@@ -5237,9 +5292,16 @@ function validateDerived(model, projectionName, body) {
   };
 
   // A side: a read, a collection function over an open read (11.0),
-  // one of its own parameters, an enum member or a literal.
-  for (const operand of derivedOperands(derived)) {
+  // one of its own parameters, an enum member or a literal – or a
+  // count of a list one gives (G3), checked as that side is.
+  for (let operand of derivedOperands(derived)) {
     assertRecognisedOperand(operand, `An operand of ${label}`);
+    if (operandSource(operand) === 'count') {
+      const problem = countProblem(model, operand, label, null, (inner) => derivedOperandType(model, inner, body));
+      if (problem) throw new DomainError(problem);
+      operand = uncounted(operand);
+      assertRecognisedOperand(operand, `An operand of ${label}`);
+    }
     const source = operandSource(operand);
     if (source === 'parameter') {
       ownParameter(operand, `An operand of ${label} is`);
@@ -5820,6 +5882,18 @@ function validateCommandBody(model, body) {
     }
     if (source === 'collection') {
       failure = collectionProblem(model, operand, `${meta.where} ${operandText(operand)}`, undefined, true);
+      return;
+    }
+    // A count (G3) counts a list: a list parameter or record field, a
+    // list projection, `list(…)`. Never in a read's tag or a where.
+    if (source === 'count') {
+      if (meta.inWhere || meta.tag) {
+        failure = `${meta.where} counts ${operandText(operand.count)} – ${meta.inWhere ? 'a where compares value with what is in scope, and computes nothing' : 'a tag\'s value is read, never computed'}.`;
+        return;
+      }
+      failure = countProblem(model, operand, `${meta.where}`, {
+        boundary, commandProperties: inScope, model, instanceValue: loopValueType(model, meta.loop || null),
+      });
       return;
     }
     if (source === 'projection-read') {
@@ -6967,7 +7041,7 @@ const MEMBER_REWRITES = {
       }
       if (derivedOf(body)) {
         // A collection's where compares value with a member (11.0).
-        for (const operand of derivedOperands(body.derived)) {
+        for (const operand of derivedOperands(body.derived).map(uncounted)) {
           if (operandSource(operand) !== 'collection') continue;
           for (const { operand: member, type } of whereEnumMembers(model, operand)) {
             if (member.enumMember === previous && type === typeName) { member.enumMember = next; touched = true; }
@@ -7179,7 +7253,7 @@ const MEMBER_REWRITES = {
           touched = true;
         }
       }
-      for (const operand of derivedOperands(body.derived)) {
+      for (const operand of derivedOperands(body.derived).map(uncounted)) {
         const read = operandRead(operand);
         const target = read && projectionsOf(model)[read.projection];
         if (!target || target.valueType !== typeName) continue;
@@ -7335,7 +7409,7 @@ function forEachOwnParameterRefOf(body, visit) {
 // Every `{parameterName}` a derived predicate names one of its owner's
 // parameters by: a side, an operand's tag, an operand's argument.
 function forEachOwnParameterRef(derived, visit) {
-  for (const operand of derivedOperands(derived)) {
+  for (const operand of derivedOperands(derived).map(uncounted)) {
     if (operandSource(operand) === 'parameter') visit(operand);
     // A collection's where compares with them too (11.0).
     if (operandSource(operand) === 'collection') {

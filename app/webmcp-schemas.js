@@ -386,7 +386,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               "additionalProperties": false,
               "properties": {
                 "leftHandSide": {
-                  "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\n",
+                  "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\nA count of a list (`CountValue`, G3) too.\n",
                   "oneOf": [
                     {
                       "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters. A grouped projection is named qualified, `Course.capacity`,\nand tagged by its group's tag; inside its own group a derived\nprojection names a sibling bare, `capacity`, and gives no tags – the\ngroup's, passed on, is implied: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
@@ -598,7 +598,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     },
                     {
                       "type": "object",
-                      "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                      "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                       "properties": {
                         "collect": {
                           "enum": [
@@ -608,7 +608,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "max",
                             "average",
                             "any",
-                            "all"
+                            "all",
+                            "list"
                           ]
                         },
                         "read": {
@@ -635,6 +636,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       },
                       "required": [
                         "duration"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                      "properties": {
+                        "count": {}
+                      },
+                      "required": [
+                        "count"
                       ]
                     }
                   ]
@@ -666,7 +677,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   ]
                 },
                 "rightHandSide": {
-                  "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\n",
+                  "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\nA count of a list (`CountValue`, G3) too.\n",
                   "oneOf": [
                     {
                       "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters. A grouped projection is named qualified, `Course.capacity`,\nand tagged by its group's tag; inside its own group a derived\nprojection names a sibling bare, `capacity`, and gives no tags – the\ngroup's, passed on, is implied: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
@@ -878,7 +889,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     },
                     {
                       "type": "object",
-                      "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                      "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                       "properties": {
                         "collect": {
                           "enum": [
@@ -888,7 +899,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "max",
                             "average",
                             "any",
-                            "all"
+                            "all",
+                            "list"
                           ]
                         },
                         "read": {
@@ -915,6 +927,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       },
                       "required": [
                         "duration"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                      "properties": {
+                        "count": {}
+                      },
+                      "required": [
+                        "count"
                       ]
                     }
                   ]
@@ -2193,7 +2215,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "additionalProperties": false,
         "properties": {
           "leftHandSide": {
-            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\n",
+            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\nA count of a list (`CountValue`, G3) too.\n",
             "oneOf": [
               {
                 "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters. A grouped projection is named qualified, `Course.capacity`,\nand tagged by its group's tag; inside its own group a derived\nprojection names a sibling bare, `capacity`, and gives no tags – the\ngroup's, passed on, is implied: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
@@ -2405,7 +2427,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               },
               {
                 "type": "object",
-                "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                 "properties": {
                   "collect": {
                     "enum": [
@@ -2415,7 +2437,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "max",
                       "average",
                       "any",
-                      "all"
+                      "all",
+                      "list"
                     ]
                   },
                   "read": {
@@ -2442,6 +2465,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 },
                 "required": [
                   "duration"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                "properties": {
+                  "count": {}
+                },
+                "required": [
+                  "count"
                 ]
               }
             ]
@@ -2473,7 +2506,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             ]
           },
           "rightHandSide": {
-            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\n",
+            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\nA count of a list (`CountValue`, G3) too.\n",
             "oneOf": [
               {
                 "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters. A grouped projection is named qualified, `Course.capacity`,\nand tagged by its group's tag; inside its own group a derived\nprojection names a sibling bare, `capacity`, and gives no tags – the\ngroup's, passed on, is implied: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
@@ -2685,7 +2718,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               },
               {
                 "type": "object",
-                "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                 "properties": {
                   "collect": {
                     "enum": [
@@ -2695,7 +2728,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "max",
                       "average",
                       "any",
-                      "all"
+                      "all",
+                      "list"
                     ]
                   },
                   "read": {
@@ -2722,6 +2756,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 },
                 "required": [
                   "duration"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                "properties": {
+                  "count": {}
+                },
+                "required": [
+                  "count"
                 ]
               }
             ]
@@ -4239,7 +4283,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "additionalProperties": false,
                       "properties": {
                         "leftHandSide": {
-                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
+                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
                           "oneOf": [
                             {
                               "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -4351,7 +4395,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             },
                             {
                               "type": "object",
-                              "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                              "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                               "properties": {
                                 "collect": {
                                   "enum": [
@@ -4361,7 +4405,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "max",
                                     "average",
                                     "any",
-                                    "all"
+                                    "all",
+                                    "list"
                                   ]
                                 },
                                 "read": {
@@ -4431,6 +4476,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "operator",
                                 "leftHandSide",
                                 "rightHandSide"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                              "properties": {
+                                "count": {}
+                              },
+                              "required": [
+                                "count"
                               ]
                             }
                           ]
@@ -4460,7 +4515,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "additionalProperties": false,
                       "properties": {
                         "leftHandSide": {
-                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
+                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
                           "oneOf": [
                             {
                               "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -4572,7 +4627,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             },
                             {
                               "type": "object",
-                              "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                              "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                               "properties": {
                                 "collect": {
                                   "enum": [
@@ -4582,7 +4637,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "max",
                                     "average",
                                     "any",
-                                    "all"
+                                    "all",
+                                    "list"
                                   ]
                                 },
                                 "read": {
@@ -4653,6 +4709,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "leftHandSide",
                                 "rightHandSide"
                               ]
+                            },
+                            {
+                              "type": "object",
+                              "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                              "properties": {
+                                "count": {}
+                              },
+                              "required": [
+                                "count"
+                              ]
                             }
                           ]
                         },
@@ -4676,7 +4742,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "rightHandSide": {
                           "oneOf": [
                             {
-                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
+                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
                               "oneOf": [
                                 {
                                   "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -4788,7 +4854,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 },
                                 {
                                   "type": "object",
-                                  "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                                  "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                                   "properties": {
                                     "collect": {
                                       "enum": [
@@ -4798,7 +4864,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                         "max",
                                         "average",
                                         "any",
-                                        "all"
+                                        "all",
+                                        "list"
                                       ]
                                     },
                                     "read": {
@@ -4868,6 +4935,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "operator",
                                     "leftHandSide",
                                     "rightHandSide"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                                  "properties": {
+                                    "count": {}
+                                  },
+                                  "required": [
+                                    "count"
                                   ]
                                 }
                               ]
@@ -4989,7 +5066,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere – and writes no tag for it, when the property is\ntag-marked.\n",
                   "type": "object",
                   "additionalProperties": {
-                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
+                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
                     "oneOf": [
                       {
                         "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -5101,7 +5178,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       },
                       {
                         "type": "object",
-                        "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                        "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                         "properties": {
                           "collect": {
                             "enum": [
@@ -5111,7 +5188,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "max",
                               "average",
                               "any",
-                              "all"
+                              "all",
+                              "list"
                             ]
                           },
                           "read": {
@@ -5182,6 +5260,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "leftHandSide",
                           "rightHandSide"
                         ]
+                      },
+                      {
+                        "type": "object",
+                        "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                        "properties": {
+                          "count": {}
+                        },
+                        "required": [
+                          "count"
+                        ]
                       }
                     ]
                   }
@@ -5212,7 +5300,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "additionalProperties": false,
                             "properties": {
                               "leftHandSide": {
-                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
                                 "oneOf": [
                                   {
                                     "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -5324,7 +5412,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   },
                                   {
                                     "type": "object",
-                                    "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                                    "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                                     "properties": {
                                       "collect": {
                                         "enum": [
@@ -5334,7 +5422,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                           "max",
                                           "average",
                                           "any",
-                                          "all"
+                                          "all",
+                                          "list"
                                         ]
                                       },
                                       "read": {
@@ -5404,6 +5493,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       "operator",
                                       "leftHandSide",
                                       "rightHandSide"
+                                    ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                                    "properties": {
+                                      "count": {}
+                                    },
+                                    "required": [
+                                      "count"
                                     ]
                                   }
                                 ]
@@ -5433,7 +5532,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "additionalProperties": false,
                             "properties": {
                               "leftHandSide": {
-                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
                                 "oneOf": [
                                   {
                                     "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -5545,7 +5644,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   },
                                   {
                                     "type": "object",
-                                    "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                                    "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                                     "properties": {
                                       "collect": {
                                         "enum": [
@@ -5555,7 +5654,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                           "max",
                                           "average",
                                           "any",
-                                          "all"
+                                          "all",
+                                          "list"
                                         ]
                                       },
                                       "read": {
@@ -5626,6 +5726,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       "leftHandSide",
                                       "rightHandSide"
                                     ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                                    "properties": {
+                                      "count": {}
+                                    },
+                                    "required": [
+                                      "count"
+                                    ]
                                   }
                                 ]
                               },
@@ -5649,7 +5759,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "rightHandSide": {
                                 "oneOf": [
                                   {
-                                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\n",
+                                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
                                     "oneOf": [
                                       {
                                         "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
@@ -5761,7 +5871,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       },
                                       {
                                         "type": "object",
-                                        "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal.",
+                                        "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
                                         "properties": {
                                           "collect": {
                                             "enum": [
@@ -5771,7 +5881,8 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                               "max",
                                               "average",
                                               "any",
-                                              "all"
+                                              "all",
+                                              "list"
                                             ]
                                           },
                                           "read": {
@@ -5841,6 +5952,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                           "operator",
                                           "leftHandSide",
                                           "rightHandSide"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                                        "properties": {
+                                          "count": {}
+                                        },
+                                        "required": [
+                                          "count"
                                         ]
                                       }
                                     ]

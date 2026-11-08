@@ -6900,6 +6900,122 @@ command SignUp(customerId: CustomerId, email: EmailAddress) {
   sandbox.clearActiveModelId();
 }
 
+// ---------------------------------------------------------------
+// The acceptance additions on the pages: a handler taking a record's
+// field (G2), list(…) (G1) and count(…) as a value (G3) are shown as
+// written, read-only with the way to the code view, kept through an
+// unrelated edit, and run in the sandbox.
+// ---------------------------------------------------------------
+{
+  const LISTS = `model "Lists"
+
+tag type MemberId = string
+tag type BookId = string
+record Shelf { room: string, row: integer }
+
+event BookLent { tag memberId: MemberId, tag bookId: BookId }
+event BookReturned { tag memberId: MemberId, tag bookId: BookId }
+event MemberLeft { tag memberId: MemberId, tag bookIds: BookId[], lent: integer }
+event BookMoved { tag bookId: BookId, shelf: Shelf }
+
+projection Lent (tag memberId: MemberId, tag bookId: BookId): boolean = false {
+  on BookLent => set true
+  on BookReturned => set false
+}
+
+projection BookRoom (tag bookId: BookId): string = null {
+  on BookMoved => set event.data.shelf.room
+}
+
+derived projection LentCount (tag memberId: MemberId): integer {
+  count(list(Lent(memberId, *)))
+}
+
+command Lend(memberId: MemberId, bookIds: BookId[]) {
+  require count(Lent(memberId, *)) + count(bookIds) <= 3
+    else reject "Too many books"
+
+  for each bookId in bookIds => emit BookLent { memberId, bookId }
+}
+
+command Leave(memberId: MemberId) {
+  emit MemberLeft { memberId, bookIds: list(Lent(memberId, *)), lent: count(list(Lent(memberId, *))) }
+}
+
+command Move(bookId: BookId, shelf: Shelf) {
+  emit BookMoved { bookId, shelf }
+}
+
+command Return(memberId: MemberId, bookId: BookId) {
+  emit BookReturned { memberId, bookId }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Lists');
+  sandbox.applyModelSource(id, LISTS);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+  const page = (name) => {
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+    sandbox.state.projTab = 'definition';
+    sandbox.renderProjections(model(), main);
+    return textOf(main);
+  };
+
+  check('the pages show list, count and a record\'s field from the event, with the way to edit them', () => {
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    const room = page('BookRoom');
+    eq(room.includes('event.data.shelf.room') && room.includes('Edit in code'), true, room.slice(0, 600));
+    eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'].BookRoom.handlers, 'painting it changed nothing');
+    const derived = page('LentCount');
+    eq(derived.includes('count(list(Lent(memberId, *)))') && derived.includes('Edit in code'), true, derived.slice(0, 600));
+    sandbox.state.projDraft = null;
+    const decision = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'Lend')));
+    eq(decision.includes('count(Lent(memberId, *)) + count(bookIds)') && decision.includes('Edit in code'), true, decision.slice(0, 600));
+    sandbox.state.slice = 'Leave';
+    sandbox.state.openEvent = 'MemberLeft';
+    const emits = textOf(sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'Leave')));
+    eq(emits.includes('list(Lent(memberId, *))') && emits.includes('count(list(Lent(memberId, *)))') && emits.includes('Edit in code'), true, emits.slice(0, 600));
+    sandbox.state.openEvent = null;
+    for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
+      sandbox[fn](model(), sandbox.document.createElement('div'));
+    }
+  });
+
+  check('an unrelated edit on the pages keeps list, count and a record\'s field', () => {
+    for (const name of ['BookRoom', 'LentCount']) {
+      const body = model()['projection-definitions'][name];
+      sandbox.updateDefinition('projection-definition', id, name, cleanProjectionBody(projectionDraftFrom(body)));
+      eq(model()['projection-definitions'][name], body, name);
+    }
+    const before = model()['command-definitions'].Lend.steps[0];
+    sandbox.state.slice = 'Lend';
+    sandbox.patch('command-definition', 'Lend', (b) => { b.conditions[0].rejection = 'Three books at most'; });
+    eq(model()['command-definitions'].Lend.steps[0].condition, before.condition, 'the count kept');
+    const leave = model()['command-definitions'].Leave;
+    sandbox.state.slice = 'Leave';
+    sandbox.patch('command-definition', 'Leave', () => {});
+    eq(model()['command-definitions'].Leave, leave, 'list and count in an emission kept');
+    sandbox.applyModelSource(id, LISTS);
+  });
+
+  check('the sandbox runs list and count', () => {
+    const session = sandbox.session;
+    session.reset();
+    sandbox.sessionRun(model(), 'Lend', { memberId: 'm1', bookIds: ['b1', 'b2'] });
+    sandbox.sessionRun(model(), 'Lend', { memberId: 'm1', bookIds: ['b3', 'b4'] });
+    sandbox.sessionRun(model(), 'Leave', { memberId: 'm1' });
+    eq(session.log.map((e) => e.type), ['BookLent', 'BookLent', 'MemberLeft'], 'the second refused');
+    eq(session.log[2].data, { memberId: 'm1', bookIds: ['b1', 'b2'], lent: 2 }, 'the list and its count');
+    session.reset();
+  });
+
+  sandbox.clearActiveModelId();
+}
+
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the
 // link is unpacked the moment it is opened.

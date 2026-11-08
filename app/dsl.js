@@ -168,8 +168,8 @@
 // emit E { … }`, or a block `{ … }` of `emit`s and `if`s whose arms
 // are each one `emit` or `reject` (`loop`) – `for each (a, b) in
 // P(c, *, *)` for two open tags. The source is a read leaving a tag
-// open (the one other place `*` may stand), a list projection or a
-// list parameter. The names are read as payload properties are – the
+// open (the one other place `*` may stand), `list(P(x, *))`, a list
+// projection or a list parameter. The names are read as payload properties are – the
 // wire format stores them as `{parameterName}` – and over an open read
 // `value` is the instance's value, `value.field` a record's field: a
 // word only inside such a loop. A loop inside a loop, a `require`
@@ -197,6 +197,17 @@
 // `"2026-01-01T10:00:00Z"`, checked where a datetime is expected. The
 // clock is a parameter, `now: datetime`. `type Deadline = datetime`
 // stores the string format, `{type: 'string', format: 'date-time'}`.
+//
+// **Lists from open reads, counts as values** (the 11.0 acceptance):
+// `list(P(x, *))` is a collection function like `sum`, `{collect:
+// 'list'}`, the one open tag's values. `count(xs)` of a list is
+// `{count: operand}` wherever a value goes – except `count(xs) == 3`
+// (and `!=`, `<`, `>`), which reads back as the count predicate it was
+// always stored as, so no stored rule changes; a count operand stored
+// in that one position prints as JSON. Which `count(…)` is meant shows
+// inside the parentheses: a `*` in the read directly inside, or a
+// `where`, makes it the collection function. A handler's value may be
+// a record's field one hop into the event, `event.data.signUp.email`.
 //
 // **A `///` line is stored, a `//` line is not** (11.0): doc comments
 // right above a definition or the `model "…"` line are its
@@ -813,6 +824,7 @@ function parseModelSourceText(text, options) {
     const token = peek();
     if (token.t === 'duration') return durationLiteral();
     if (startsCollection()) return collection(commandOperand);
+    if (startsCount()) return countOf(commandOperand);
     // `value` inside a loop over an open read (11.0): the instance's.
     if (loopRead && loopRead.value && token.t === 'ident' && token.v === 'value' && !is('(', 1)) {
       next();
@@ -943,10 +955,12 @@ function parseModelSourceText(text, options) {
   // `sum(P(x, *))`, `count(P(x, *) where value > 2)`: a function of the
   // set, over a read that leaves a tag open – that read alone may – and
   // an optional `where` over `value` (`value.field` of a record), the
-  // names in scope and literals. `count(xs)` over a list stays the
-  // count predicate, and `min(a, b)` / `max(a, b)` stay a derived
-  // projection's computation: which one it is shows inside the
-  // parentheses (`collectionAhead`).
+  // names in scope and literals. `list(P(x, *))` (G1) is the open tag's
+  // values. `count(xs)` over a list is a count (G3) – a value, or, as
+  // `count(xs) == 3`, the count predicate it always was – and `min(a,
+  // b)` / `max(a, b)` stay a derived projection's computation: which
+  // one it is shows inside the parentheses (`collectionAhead`): a `*`
+  // in the read directly inside, or a `where`.
   const collectionAhead = () => {
     let level = 0;
     for (let i = at + 1; i < tokens.length; i++) {
@@ -957,7 +971,7 @@ function parseModelSourceText(text, options) {
         level -= 1;
         if (level === 0) return false;
       } else if (level === 1 && token.t === 'ident' && token.v === 'where') return true;
-      else if (token.t === 'punct' && token.v === '*') {
+      else if (level === 2 && token.t === 'punct' && token.v === '*') {
         const before = tokens[i - 1];
         const after = tokens[i + 1];
         if (before && before.t === 'punct' && (before.v === '(' || before.v === ',')
@@ -967,7 +981,18 @@ function parseModelSourceText(text, options) {
     return false;
   };
   const startsCollection = () => peek().t === 'ident' && COLLECTION_FUNCTIONS.includes(peek().v) && is('(', 1)
-    && (['sum', 'average', 'any', 'all'].includes(peek().v) || collectionAhead());
+    && (['sum', 'average', 'any', 'all', 'list'].includes(peek().v) || collectionAhead());
+  // `count(xs)` of a list (G3), as a value: `{count: operand}`.
+  const startsCount = () => is('count') && is('(', 1) && !collectionAhead();
+  const countOf = (valueOf) => {
+    const word = next();
+    next();
+    enter();
+    const out = { count: valueOf() };
+    expect(')', '")" closing count(…)');
+    mark(out, 'count', word);
+    return leave(out);
+  };
   const collection = (valueOf) => {
     const fn = next();
     next();
@@ -1049,6 +1074,7 @@ function parseModelSourceText(text, options) {
   const derivedOperand = () => {
     const token = peek();
     if (startsCollection()) return collection(derivedValue);
+    if (startsCount()) return countOf(derivedOperand);
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1)) return call(derivedValue);
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)) {
       next();
@@ -1098,7 +1124,7 @@ function parseModelSourceText(text, options) {
       expect(')');
       return { leftHandSide, operator: word, rightHandSide };
     }
-    if (!is('not') && !(is('count') && is('(', 1) && !collectionAhead())) {
+    if (!is('not')) {
       const from = at;
       const leftHandSide = derivedOperand();
       const op = peek();
@@ -1187,16 +1213,21 @@ function parseModelSourceText(text, options) {
   const condition = (operand) => {
     let negate = false;
     while (accept('not')) negate = !negate;
+    // `count(xs) == 3`, `!=`, `<` and `>` stay the count predicate,
+    // stored as they always were; anything else – `<=`, arithmetic, a
+    // count on the right – reads `count(xs)` as a value (G3).
     if (is('count') && is('(', 1) && !collectionAhead()) {
+      const from = at;
       next(); next();
       const leftHandSide = operand();
       expect(')');
       const op = peek();
-      let predicate = SOURCE_COUNT_PREDICATES[op.v];
-      if (op.t === 'punct' && op.v === '!=') { predicate = 'countEquals'; negate = !negate; }
-      if (op.t !== 'punct' || !predicate) fail(`Expected ==, !=, < or > after count(…), found ${describeToken(op)}.`);
-      next();
-      return finish({ leftHandSide, predicate, rightHandSide: operand() }, negate);
+      const predicate = op.t === 'punct' ? (op.v === '!=' ? 'countEquals' : SOURCE_COUNT_PREDICATES[op.v]) : null;
+      if (predicate) {
+        next();
+        return finish({ leftHandSide, predicate, rightHandSide: operand() }, op.v === '!=' ? !negate : negate);
+      }
+      at = from;
     }
     const leftHandSide = operand();
     if (accept('is')) {
@@ -2890,6 +2921,13 @@ function sourceCondition(condition, operand) {
     return not(`${left} ${SOURCE_UNARY_WORDS[predicate]}`);
   }
   if (condition.rightHandSide === undefined) unprintable(`a "${predicate}" rule has no right-hand side`);
+  // `count(xs) == 3` reads back as the count predicate it always was,
+  // so a count operand (G3) on the left of ==, !=, < or > has no other
+  // spelling.
+  if (['equals', 'lessThan', 'greaterThan'].includes(predicate) && condition.leftHandSide
+    && typeof condition.leftHandSide === 'object' && condition.leftHandSide.count !== undefined) {
+    unprintable(`count(…) ${predicate === 'equals' ? '==' : predicate === 'lessThan' ? '<' : '>'} … is stored as the count predicate`);
+  }
   const right = () => operand(condition.rightHandSide);
   switch (predicate) {
     case 'equals': return `${left} ${negate ? '!=' : '=='} ${right()}`;
@@ -3158,9 +3196,14 @@ function sourceDerivedOperand(names, siblings = null) {
     }
     return sourceRead(operand, names, value);
   };
-  return (operand) => {
+  const self = (operand) => {
     if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.collect !== undefined) {
       return sourceCollection(operand, read, value);
+    }
+    // A count of a list (G3).
+    if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.count !== undefined) {
+      if (Object.keys(operand).length !== 1) unprintable('a count carries extra fields');
+      return `count(${self(operand.count)})`;
     }
     if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.projection !== undefined) return read(operand);
     if (siblings && operand && typeof operand === 'object' && siblings.includes(operand.parameterName)) {
@@ -3168,6 +3211,7 @@ function sourceDerivedOperand(names, siblings = null) {
     }
     return value(operand);
   };
+  return self;
 }
 
 function printCustomType(name, body) {
@@ -3348,6 +3392,11 @@ function sourceCommandOperand(body, names) {
       if (value.collect !== undefined) {
         const operand = sourceCommandOperand(body, names);
         return sourceCollection(value, (read) => sourceRead(read, names, operand), operand);
+      }
+      // A count of a list (G3).
+      if (value.count !== undefined) {
+        if (Object.keys(value).length !== 1) unprintable('a count carries extra fields');
+        return `count(${sourceCommandOperand(body, names)(value.count)})`;
       }
       if (value.projection !== undefined) {
         if (Object.keys(value).some((k) => !['projection', 'tags', 'arguments', 'field'].includes(k))) unprintable('an inline read carries extra fields');
@@ -4599,7 +4648,8 @@ function sourceSymbols(parsed) {
     const operand = (value, expected) => {
       if (Array.isArray(value)) return value.forEach((v) => operand(v, expected));
       const marked = slotsOf(value);
-      if (has(value, 'parameterName')) ownRef(value);
+      if (has(value, 'count')) operand(value.count, null);
+      else if (has(value, 'parameterName')) ownRef(value);
       else if (has(value, 'collect')) {
         operand(value.read, null);
         if (has(value.read, 'projection')) whereSymbols(value, value.read.projection, ownRef);
@@ -4669,6 +4719,10 @@ function sourceSymbols(parsed) {
       // Arithmetic (11.0): both sides, in the same scope.
       commandOperand(commandName, body, value.leftHandSide, null);
       commandOperand(commandName, body, value.rightHandSide, null);
+      return;
+    } else if (has(value, 'count')) {
+      // A count of a list (G3): what it counts, in the same scope.
+      commandOperand(commandName, body, value.count, null);
       return;
     } else if (has(value, 'collect')) {
       // A collection function (11.0): its open read, and its where.
@@ -5971,6 +6025,9 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         const p = properties.find((x) => x.name === key);
         if (p) valueItems(p.propertyType);
         operandItems(scope, { sort: 1, prefer: (x) => (x.propertyType ? x.propertyType === (p && p.propertyType) : true) });
+        // A list from an open read (G1) fills a list; a count (G3) a number.
+        if (p && p.isList) push('list', 'keyword', 'list(P(x, *))', { insert: 'list($1)', snippet: true, sort: 2 });
+        if (p && !p.isList && numericBaseOf(known, p.propertyType)) push('count', 'keyword', 'count(…)', { insert: 'count($1)', snippet: true, sort: 2 });
         return done();
       },
     });
@@ -6188,6 +6245,10 @@ const SOURCE_REFERENCE_FORMS = `Comparisons (after require or if), each negated 
   xs containsAny ys    s startsWith "c"    s endsWith "c"
   count(xs) == 3                (also !=, < and >)
   a is empty    a is not empty    a is true    a is false
+count(xs) is a value too, an integer, wherever one goes – of a list parameter or record field,
+a list projection, or list(P(x, *)):
+  require count(Lent(memberId, *)) + count(bookIds) <= 3 else reject "Too many"
+  emit Counted { memberId, requested: count(bookIds) }
 Conditions join comparisons with and / or – and binds tighter – grouped in brackets:
   require a > 0 and (b == c or d is true) else reject "<message>"
 
@@ -6207,8 +6268,8 @@ A for each emits zero or more events per element, inside the one append:
     if Unread(customerId) contains id => emit Read { id, customerId }
     else if … => reject "<message>"
   }
-It runs over an open read (value, value.field: the instance's value), a list projection or a
-list parameter, in that order – an open read in the order of each instance's first event. The
+It runs over an open read (value, value.field: the instance's value), list(P(x, *)), a list
+projection or a list parameter, in that order – an open read in the order of each instance's first event. The
 names are in scope inside; a read by one is made once per element and joins the boundary.
 Its body is => emit, or a block of emit and if steps whose arms are one emit or one reject.
 A reject inside refuses the whole command. No element emits nothing. A loop does not nest.
@@ -6220,6 +6281,7 @@ A projection's handler is on E => <operation>, or branches on the event:
   }
   on E { if event.data.seats == 0 => set "released"  else if … => …  else => set "booked" }
 One operation per branch. Separate ifs all apply, in order; an else chain applies its first match.
+A value may be one field of a record-typed property, one hop in: set event.data.signUp.emailAddress.
 A condition compares event.data.<property> (or .<property>.<field> of a record) with == or !=
 against one of the projection's own tags or a literal, joined with and / or. It never reads
 another projection or the state, and never narrows the query.
@@ -6247,8 +6309,13 @@ An open tag, *, reads every present instance of a projection tagged by several �
 value is not its initial one – matching the tags it binds; at least one stays bound:
   count(P(x, *))    sum(P(x, *))    min(…)    max(…)    average(…)    any(…)    all(…)
   count(P(x, *) where value > 2 and (value.city == city or value.city == "Berlin"))
+  list(P(x, *))    list(P(x, *) where value == true)
+list(P(x, *)) is the open tag's values, as a list of its type, in the order of each instance's
+first event; it takes a read with exactly one tag open, and goes wherever a list does – an
+emitted list, contains, count(…), for each.
 An open read stands only inside one of these. Its where reads value (value.field of a record),
-names in scope and literals – never a projection. Over no instance: count and sum 0;
+names in scope – parameters, and an alias already bound (its value, a value and no new read) –
+and literals – never a projection. Over no instance: count and sum 0;
 min, max and average null; any false; all true. Without a where, any says whether one is
 present, and all holds. A derived projection may hold one such value: { sum(P(x, *)) }.
 
@@ -6312,6 +6379,8 @@ event BookWithdrawn { tag bookId: BookId }
 @deprecated
 event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
+event MemberLeft { tag memberId: MemberId, tag bookIds: BookId[] }
+event BookMoved { tag bookId: BookId, shelf: Shelf }
 // datetime is an RFC 3339 date-time with an offset, duration a length.
 event BookReserved { tag bookId: BookId, tag memberId: MemberId, until: datetime }
 
@@ -6348,6 +6417,12 @@ projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
 // of it, BookShelf(bookId).room.
 projection BookShelf (tag bookId: BookId): Shelf = null {
   on BookShelved => set { room: event.data.room, row: event.data.row }
+  on BookMoved => set event.data.shelf
+}
+
+// A value may be one field of a record-typed property, one hop in.
+projection BookRoom (tag bookId: BookId): string = null {
+  on BookMoved => set event.data.shelf.room
 }
 
 projection MemberHasBook (tag memberId: MemberId, tag bookId: BookId): boolean = false {
@@ -6545,9 +6620,18 @@ command LeaveLibrary(memberId: MemberId) {
     else reject "Not a member"
 
   for each bookId in MemberHasBook(memberId, *) => emit BookReturned { bookId, memberId }
+
+  // "list(…)" is the open tag's values, as a list: here, every book
+  // the member still has.
+  emit MemberLeft { memberId, bookIds: list(MemberHasBook(memberId, *)) }
 }
 
+// "count(xs)" is a value too: a list parameter's, a list projection's
+// or list(…)'s length, computed with and compared on either side.
 command WithdrawBooks(bookIds: BookId[]) {
+  require count(bookIds) <= 10
+    else reject "Ten books at most"
+
   for each bookId in bookIds {
     if BookStatus(bookId) == Available => emit BookWithdrawn { bookId }
     else if BookStatus(bookId) == Lent => reject "A book is still lent"
@@ -6575,6 +6659,13 @@ command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId)
     else reject "Not a member"
 
   emit BookPassedOn { bookId, fromMemberId, toMemberId }
+}
+
+command MoveBook(bookId: BookId, shelf: Shelf) {
+  require BookRoom(bookId) != shelf.room
+    else reject "Book is in that room already"
+
+  emit BookMoved { bookId, shelf }
 }
 
 command WithdrawBook(bookId: BookId) {
@@ -6733,7 +6824,7 @@ const SOURCE_KEYWORDS = [
   'projection', 'min', 'max', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'or', 'not', 'is', 'if',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
-  'sum', 'average', 'any', 'all', 'where',
+  'sum', 'average', 'any', 'all', 'list', 'where',
   'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject', 'for',
 ];

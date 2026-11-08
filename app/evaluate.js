@@ -687,6 +687,8 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
   const readOperand = (operand) => {
     if (operandSource(operand) === 'parameter') return parameter(operand);
     if (operandSource(operand) === 'duration') return operand.duration;
+    // A count of a list (G3): 0 for none.
+    if (operandSource(operand) === 'count') return evAsList(readOperand(operand.count)).length;
     if (operandSource(operand) === 'collection') {
       const read = operand.read || {};
       const tags = {};
@@ -823,6 +825,13 @@ function evCollect(operand, instances, named) {
   });
   switch (operand.collect) {
     case 'count': return kept.length;
+    // The one open tag's values (G1), in the order of each instance's
+    // first event – which is the order the instances are found in.
+    case 'list': {
+      const open = openTagNames(operand.read);
+      if (open.length !== 1) fail(`${label} collects the one tag a read leaves open – it leaves ${open.length}.`);
+      return kept.map((instance) => instance.tags[open[0]]);
+    }
     case 'sum': return numbers().reduce((a, b) => a + b, 0);
     case 'min': { const n = numbers(); return n.length ? Math.min(...n) : null; }
     case 'max': { const n = numbers(); return n.length ? Math.max(...n) : null; }
@@ -958,6 +967,10 @@ function evReadOperand(operand, scope) {
       return evField(evNormalize(scope.loop.value), operand.field);
     // A collection function (11.0): its open read made once per
     // spelling, like any read in place, and reduced.
+    // A count of a list (G3) – a parameter's, a projection's, a
+    // record's field, `list(…)` – 0 for none.
+    case 'count':
+      return evAsList(evReadOperand(operand.count, scope)).length;
     case 'collection': {
       const read = operand.read || {};
       const key = evInlineKey(read, scope);

@@ -163,13 +163,26 @@ function inline(value, stack) {
         + ' `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any'
         + ' read\'s. `where`: a condition, as a rule\'s, whose sides are {instanceValue: true} (value),'
         + ' {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or'
-        + ' {alias, field} of a record it holds) in a command, an enum member or a literal.').trim(),
+        + ' {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: "list"`'
+        + ' takes a read with exactly one tag open and gives that tag\'s values as a list.').trim(),
       properties: {
         collect: inline(defs[name].properties.collect, stack),
         read: { type: 'object' },
         where: { type: 'object' },
       },
       required: ['collect', 'read'],
+    };
+  }
+  // A count (G3) nests one operand – inlined, every operand would hold
+  // every operand again – so it is written compactly too.
+  if (name === 'CountValue') {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' ' + defs[name].description.trim()
+        + ' `count`: the list counted – a parameter, a read or alias of a list projection, or a'
+        + ' {collect: "list", read} collection.').trim(),
+      properties: { count: {} },
+      required: ['count'],
     };
   }
   // Arithmetic (11.0) nests a command operand on each side – inlined,

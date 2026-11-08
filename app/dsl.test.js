@@ -1951,7 +1951,7 @@ check('completion knows a command\'s reads and payload', () => {
   const text = modelToSource(buildText().model());
   const rule = (insert) => completeAt(swap(text, '    else reject "Course has more subscriptions than that"',
     `    else reject "Course has more subscriptions than that"\n  ${insert}`));
-  eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'Student', 'Course', 'count', 'sum', 'min', 'max', 'average', 'any', 'all', 'not'],
+  eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'Student', 'Course', 'count', 'sum', 'min', 'max', 'average', 'any', 'all', 'list', 'not'],
     'what a rule can be about – its reads and payload, then any group or projection, read in place');
   eq(rule('require |').items.find((i) => i.label === 'Course').insert, 'Course($1).', 'a group, for one of its projections');
   eq(rule('require course.|').labels, ['status', 'capacity', 'subscriptionCount', 'subscribedStudentIds'], 'the group\'s projections');
@@ -3966,6 +3966,210 @@ command ChangeEmail(customerId: CustomerId, email: EmailAddress) {
       .some((m) => /SignUp has no field "nope"/.test(m)), true, 'an unknown field');
     eq(parseModelSource(swap(NESTED, 'on SignedUp => set event.data.signUp.emailAddress', 'on SignedUp => set event.data.signUp.emailAddress.x'))
       .diagnostics.map((d) => d.message)[0], 'A handler reads one field of a record-typed property – event.data.<property>.<field>, one hop.', 'one hop');
+  });
+
+  // G1 and G3: `list(P(x, *))` builds a list from an open read – the
+  // open tag's values, in instance order – and `count(xs)` is a value.
+  const LIBRARY = `model "Library"
+
+// Types
+tag type MemberId = string
+tag type BookId = string
+
+// Events
+event BookLent { tag memberId: MemberId, tag bookId: BookId, late: boolean }
+event BookReturned { tag memberId: MemberId, tag bookId: BookId }
+event MemberLeft { tag memberId: MemberId, tag bookIds: BookId[], lent: integer }
+event BooksCounted { tag memberId: MemberId, lent: integer, free: integer }
+
+// Projections
+projection Lent (tag memberId: MemberId, tag bookId: BookId): boolean = false {
+  on BookLent => set true
+  on BookReturned => set false
+}
+
+projection Late (tag memberId: MemberId, tag bookId: BookId): boolean = false {
+  on BookLent => set event.data.late
+  on BookReturned => set false
+}
+
+projection Wishlist (tag memberId: MemberId): BookId[] = [] {
+  on BookLent => append event.data.bookId
+}
+
+derived projection LentCount (tag memberId: MemberId): integer {
+  count(Wishlist(memberId))
+}
+
+// Commands
+command Lend(memberId: MemberId, bookIds: BookId[]) {
+  require count(Lent(memberId, *)) + count(bookIds) <= 3
+    else reject "Too many books"
+  require count(bookIds) > 0
+    else reject "No books"
+  require count(bookIds) >= 1 and 3 >= count(bookIds)
+    else reject "Out of range"
+
+  for each bookId in bookIds => emit BookLent { memberId, bookId, late: false }
+
+  emit BooksCounted {
+    memberId,
+    lent: count(list(Lent(memberId, *))) + count(bookIds),
+    free: 3 - count(bookIds),
+  }
+}
+
+command Leave(memberId: MemberId) {
+  if list(Lent(memberId, *)) contains "b9" => reject "The rare book is still out"
+
+  for each bookId in list(Lent(memberId, *)) => emit BookReturned { memberId, bookId }
+
+  emit MemberLeft {
+    memberId,
+    bookIds: list(Lent(memberId, *) where value == true),
+    lent: LentCount(memberId),
+  }
+}
+
+command ReturnLate(memberId: MemberId) {
+  emit MemberLeft {
+    memberId,
+    bookIds: list(Late(memberId, *)),
+    lent: count(list(Late(memberId, *))),
+  }
+}
+
+command Return(memberId: MemberId, bookId: BookId) {
+  emit BookReturned { memberId, bookId }
+}
+`;
+  // A command's scenarios, after the last line of its body (`end`).
+  const ENDS = { Lend: '    free: 3 - count(bookIds),\n  }\n', Leave: '    lent: LentCount(memberId),\n  }\n' };
+  const withScenarios = (text, command, scenarios) => swap(text, `${ENDS[command]}}\n`, `${ENDS[command]}\n  scenarios {\n${scenarios}\n  }\n}\n`);
+  const LEND = withScenarios(LIBRARY, 'Lend', `    scenario "two" {
+      given BookLent { memberId: "m1", bookId: "b1" }
+      when Lend { memberId: "m1", bookIds: ["b2", "b3"] }
+      then BookLent { memberId: "m1", bookId: "b2" }
+      and BookLent { memberId: "m1", bookId: "b3" }
+      and BooksCounted { memberId: "m1", lent: 3, free: 1 }
+    }
+
+    scenario "too many" {
+      given BookLent { memberId: "m1", bookId: "b1" }
+      and BookLent { memberId: "m1", bookId: "b2" }
+      when Lend { memberId: "m1", bookIds: ["b3", "b4"] }
+      then rejected "Too many books"
+    }
+
+    scenario "none" {
+      when Lend { memberId: "m1", bookIds: [] }
+      then rejected "No books"
+    }`);
+  const LEAVE = withScenarios(LIBRARY, 'Leave', `    scenario "returns what is out, in order" {
+      given BookLent { memberId: "m1", bookId: "b2" }
+      and BookLent { memberId: "m1", bookId: "b1" }
+      and BookLent { memberId: "m1", bookId: "b3" }
+      and BookReturned { memberId: "m1", bookId: "b1" }
+      when Leave { memberId: "m1" }
+      then BookReturned { memberId: "m1", bookId: "b2" }
+      and BookReturned { memberId: "m1", bookId: "b3" }
+      and MemberLeft { memberId: "m1", bookIds: ["b2", "b3"], lent: 3 }
+    }
+
+    scenario "nothing out" {
+      when Leave { memberId: "m1" }
+      then MemberLeft { memberId: "m1", bookIds: [], lent: 0 }
+    }
+
+    scenario "the rare book" {
+      given BookLent { memberId: "m1", bookId: "b9" }
+      when Leave { memberId: "m1" }
+      then rejected "The rare book is still out"
+    }`);
+
+  check('G1: list(…) holds an open read\'s tag values, in instance order, present instances only', () => {
+    eq(runAll(LEAVE), ['current', 'current', 'current'], 'all hold');
+    const { model } = buildText(LEAVE);
+    const emission = model()['command-definitions'].Leave.steps.find((step) => step.name === 'MemberLeft');
+    eq(emission.parameters.bookIds, { collect: 'list', read: { projection: 'Lent', tags: { memberId: { parameterName: 'memberId' }, bookId: { open: true } } },
+      where: { leftHandSide: { instanceValue: true }, predicate: 'equals', rightHandSide: true } }, 'stored as a collection function');
+  });
+
+  check('G3: count(xs) is a value – in arithmetic, on either side, emitted, derived', () => {
+    eq(runAll(LEND), ['current', 'current', 'current'], 'all hold');
+    const { model } = buildText(LEND);
+    const rules = model()['command-definitions'].Lend.steps.filter((step) => step.condition);
+    eq(rules[0].condition.leftHandSide, { operator: 'add', leftHandSide: { collect: 'count', read: { projection: 'Lent', tags: { memberId: { parameterName: 'memberId' }, bookId: { open: true } } } },
+      rightHandSide: { count: { parameterName: 'bookIds' } } }, 'an operand in arithmetic');
+    eq(rules[1].condition, { leftHandSide: { parameterName: 'bookIds' }, predicate: 'countGreaterThan', rightHandSide: 0 }, 'the rule form stays as it was stored');
+    eq(rules[2].condition.all[1], { leftHandSide: 3, predicate: 'greaterThanOrEquals', rightHandSide: { count: { parameterName: 'bookIds' } } }, 'on the right');
+    eq(model()['projection-definitions'].LentCount.derived, { leftHandSide: { count: { projection: 'Wishlist', tags: { memberId: { parameterName: 'memberId' } } } } }, 'derived');
+  });
+
+  check('G1, G3: advisory-clean, printed as written, and read back equal', () => {
+    for (const text of [LIBRARY, LEND, LEAVE]) {
+      const { model } = buildText(text);
+      eq(advisedOtherwise(model()), [], 'advisory-clean');
+      eq(modelToSource(model()), text, 'printed as written');
+      assertSameModel(model(), parseModelSource(text), 'round trip');
+    }
+  });
+
+  check('G1: list(…) takes exactly one open tag, and is a list of its type', () => {
+    const errors = (text) => advisedOtherwise(buildText(text).model()).map((a) => a.message);
+    const twoOpen = `projection Pair (tag memberId: MemberId, tag bookId: BookId, tag otherId: BookId): boolean = false {
+  on BookLent {
+    if event.data.bookId == bookId => set true
+  }
+}
+`;
+    eq(errors(swap(swap(LIBRARY, 'derived projection LentCount', twoOpen + '\nderived projection LentCount'),
+      'bookIds: list(Late(memberId, *))', 'bookIds: list(Pair(memberId, *, *))'))
+      .filter((m) => /list\(…\) collects the one tag a read leaves open – Pair\(memberId, \*, \*\) leaves 2/.test(m)).length, 1, 'two open tags');
+    eq(errors(swap(LIBRARY, 'lent: count(list(Late(memberId, *))),', 'lent: list(Late(memberId, *)),'))
+      .some((m) => /takes its value from "list\(Late\(memberId, \*\)\)", which is BookId\[\]/.test(m)), true, 'a list where one value goes');
+    eq(errors(swap(LIBRARY, 'require count(bookIds) > 0', 'require sum(Lent(memberId, *)) > count(memberId)'))
+      .some((m) => /count\(memberId\) counts a list – memberId is a MemberId/.test(m)), true, 'count of no list');
+  });
+
+  check('G1, G3: older documents import unchanged', () => {
+    const { model } = buildText(LEND);
+    const envelope = JSON.parse(JSON.stringify(sandbox.buildShareEnvelope(model(), [])));
+    fresh();
+    const { modelId } = importModelFromEnvelope(envelope);
+    eq(modelToSource(projectState()[modelId]), LEND, 'the same model back');
+  });
+
+  check('G1, G3: the language reference and completion know list and count', () => {
+    const reference = sandbox.sourceLanguageReference();
+    eq(/list\(P\(x, \*\)\)/.test(reference), true, 'list in the reference');
+    eq(/count\(xs\) is a value/.test(reference), true, 'count as a value in the reference');
+    const { labels } = completeAt(swap(LIBRARY, '    bookIds: list(Late(memberId, *)),', '    bookIds: |'));
+    eq(labels.includes('list'), true, labels.join(' '));
+  });
+
+  check('G1, G2, G3: every name resolves to a symbol, and a rename follows it inside list and count', () => {
+    const notNames = new Set([...sandbox.SOURCE_KEYWORDS, ...sandbox.SOURCE_BASE_TYPES, 'number', 'pattern', 'minimum', 'data', 'value', 'duration', ...Object.keys(sandbox.SOURCE_ANNOTATIONS)]);
+    for (const [label, text] of [['lend', LEND], ['leave', LEAVE], ['nested', NESTED], ['tour', sandbox.SOURCE_REFERENCE_TOUR]]) {
+      const { occurrences, ambiguous } = sandbox.sourceSymbols(parseModelSource(text));
+      const key = (t) => `${t.line}:${t.col}`;
+      const resolved = new Set([...occurrences, ...ambiguous].map((o) => key(o.token)));
+      const missed = sandbox.lexSource(text).tokens
+        .filter((t) => t.t === 'ident' && !notNames.has(t.v) && !resolved.has(key(t)))
+        .map((t) => `${t.v} at ${key(t)}`);
+      eq(missed, [], `${label}: names nothing resolves`);
+    }
+    const renamed = renameAt(LEND, 'bookIds: BookId[]) {', 0, 'books').text;
+    eq([renamed.includes('count(Lent(memberId, *)) + count(books) <= 3'), renamed.includes('free: 3 - count(books)')], [true, true], 'into count');
+    const lent = renameAt(LEAVE, 'projection Lent ', 'projection '.length, 'OnLoan').text;
+    eq(lent.includes('list(OnLoan(memberId, *) where value == true)'), true, 'into list');
+    const { id, model } = buildText(LEND);
+    sandbox.renameDefinition('projection-definition', id, 'Lent', 'OnLoan');
+    sandbox.renameDefinition('projection-definition', id, 'Wishlist', 'Wished');
+    sandbox.renameMember('command-definition', id, 'Lend', 'property', 'bookIds', 'books');
+    const printed = modelToSource(model());
+    eq([printed.includes('lent: count(list(OnLoan(memberId, *))) + count(books)'), printed.includes('count(Wished(memberId))'),
+      printed.includes('Written as JSON')], [true, true, false], 'the editors\' renames too');
   });
 }
 
