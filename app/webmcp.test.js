@@ -131,8 +131,6 @@ async function call(name, args) {
       [['alias', 'group', 'tags'], ['alias', 'projection', 'tags']],
       'a binding reads a group or a projection – with no optional read, nor the arguments a read passes a script');
     eq('icon' in offered('add_event_definition'), true, 'nor is an event\'s');
-    eq(JSON.stringify(registered.get('add_projection_definition').inputSchema).includes('"currentValue"'), false,
-      'no currentValue operand');
   });
 
   await check('the model language is there before any model is', async () => {

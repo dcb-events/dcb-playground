@@ -600,7 +600,7 @@ const ISSUES_URL = 'https://github.com/dcb-events/dcb-events.github.io/issues/ne
   + '?labels=playground&title=%5BPlayground%5D%20';
 const NOTATION_ANCHORS = [
   'model', 'comments', 'literals', 'annotations', 'json', 'tag-type', 'type', 'enum', 'record', 'event',
-  'projection', 'on', 'event-data', 'successor', 'current-value', 'require',
+  'projection', 'on', 'event-data', 'successor', 'require',
   'derived', 'script', 'command', 'read', 'fan-out', 'optional-read', 'with', 'emit',
   'emit-when', 'consistency-boundary', 'scenario', 'projection-scenario',
 ];
@@ -2446,10 +2446,9 @@ function operandWords(operand) {
     // a dotted path reads as a typo. It is also what tells a value the
     // event carried apart from a constant at a glance.
     case 'event-property': return `event.data.${operand.eventProperty}`;
-    // Both are operand *kinds*, not prose: the schema names them and
-    // nothing an author typed is being unwound here, so they read as
-    // the tokens they are rather than as descriptions of themselves.
-    case 'current-value': return 'currentValue';
+    // An operand *kind*, not prose: the schema names it and nothing an
+    // author typed is being unwound here, so it reads as the token it is
+    // rather than as a description of itself.
     case 'successor': return `successor(${operandWords(operand.successor)})`;
     // A projection read in place, as a call: the name, then the values
     // it gives its tags and arguments – `Developer seniority level

@@ -711,7 +711,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     ]
                   },
                   "value": {
-                    "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties, the property's own current value, and literals.\n",
+                    "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
                     "oneOf": [
                       {
                         "description": "A property of the event being handled.",
@@ -1579,7 +1579,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "value": {
-              "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties, the property's own current value, and literals.\n",
+              "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
               "oneOf": [
                 {
                   "description": "A property of the event being handled.",

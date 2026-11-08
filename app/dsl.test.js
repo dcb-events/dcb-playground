@@ -1224,6 +1224,13 @@ check('a group, read wrongly or in an old spelling, says what to write', () => {
     ['"excluding" is gone – a fan-out reads every element of its list; a rule over it says what to leave out.'], 'excluding');
 });
 
+check('what 11.0 removed is an error where it is written, saying so', () => {
+  const head = 'tag type CourseId = string\nevent E { tag courseId: CourseId }\n';
+  const errors = (body) => parseModelSource(head + body).diagnostics.map((d) => d.message);
+  eq(errors('projection P (tag courseId: CourseId): integer = 0 {\n  on E => set currentValue\n}\n'),
+    ['"currentValue" is gone – a handler\'s value comes from the event (event.data.x), a literal or successor(…).'], 'currentValue');
+});
+
 check('an edit inside a group is one update of the group', () => {
   const { id, model } = buildText(GROUPS_MORE);
   const text = swap(modelToSource(model()), '    remaining >= seats', '    remaining > seats');
@@ -2106,9 +2113,9 @@ check('the reference example is the shipped model as printed', () => {
 });
 
 check('every keyword outside the experimental ones is shown to an agent', () => {
-  // Scripted projections (and their state), currentValue and guards
-  // (`and` chains them) are not offered over WebMCP.
-  const experimental = ['scripted', 'initialState', 'exposes', 'currentValue', 'and'];
+  // Scripted projections (and their state) and guards (`and` chains
+  // them) are not offered over WebMCP.
+  const experimental = ['scripted', 'initialState', 'exposes', 'and'];
   const shown = new Set((sandbox.SOURCE_REFERENCE_TOUR + '\n' + sandbox.SOURCE_REFERENCE_FORMS).match(/[A-Za-z]+/g));
   eq(sandbox.SOURCE_KEYWORDS.filter((word) => !experimental.includes(word) && !shown.has(word)), [],
     'add each to the tour or the forms in dsl.js');

@@ -8257,8 +8257,7 @@ function changeAdder(model, eventName, emission) {
   // apply: only the ones typed like the targeted property are offered –
   // a status is never set from a title. A successor is offered only to
   // `set` a numbering (`offersSuccessor`), which is the one thing it is
-  // for. `currentValue` is not offered at all: `set` to it changes
-  // nothing and `increment` by it doubles – see `handlerValueChoices`.
+  // for.
   const target = changeTargetOf(model, draft.target);
   const targetProjection = target ? target.projection : null;
   const targetEnumMembers = targetProjection ? enumMembersFor(model, targetProjection.valueType) : null;
@@ -9786,12 +9785,6 @@ function successorChoice(p) {
 // A list-typed event property of the right type is offered too: a
 // list-valued projection is `set` from one whole, and `append` from a
 // list adds its elements rather than nesting them.
-//
-// `currentValue` is not on the list, though the wire format keeps it:
-// `set` to the value already held changes nothing, `increment` by it
-// doubles and `append` of it repeats the list – no shipped model uses
-// it, and offering it only invited the question what it was for. A
-// stored one still runs and still reads as `currentValue`.
 function handlerValueChoices(model, draft, event, operation) {
   const properties = (event ? (event.properties || []) : [])
     .filter((p) => fieldFitsValueType(model, p.propertyType, draft.valueType));
@@ -10694,7 +10687,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     }
     const enumMembers = enumMembersFor(model, draft.valueType);
     // A value the row can no longer offer – a successor once the verb
-    // is no longer `set`, a stored `currentValue` – would leave the
+    // is no longer `set` – would leave the
     // picker showing one thing and the draft saving another, so it
     // resets to the first offer, as the change adder's does.
     if (event && handler.value && handler.value !== LITERAL

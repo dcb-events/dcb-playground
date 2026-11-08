@@ -22,8 +22,8 @@
 // The experimental members are cut before anything is inlined, since
 // WebMCP does not offer them (see webmcp.js): no schema so much as
 // mentions a guard, a script – its code handlers and the arguments its
-// readers pass included, a group member's among them – an optional
-// read, or `currentValue`. Groups themselves are not experimental and
+// readers pass included, a group member's among them – or an optional
+// read. Groups themselves are not experimental and
 // stay. The canonical schema keeps everything – a model using them
 // still imports.
 //
@@ -52,9 +52,7 @@ const EXPERIMENTAL_PROPERTIES = {
   GroupBinding: ['isOptional'],
   EventEmission: ['when'],
 };
-const EXPERIMENTAL_BRANCHES = {
-  HandlerOperand: ['CurrentValue'],
-};
+const EXPERIMENTAL_BRANCHES = {};
 for (const [name, properties] of Object.entries(EXPERIMENTAL_PROPERTIES)) {
   for (const property of properties) {
     if (!defs[name] || !defs[name].properties || !(property in defs[name].properties)) {

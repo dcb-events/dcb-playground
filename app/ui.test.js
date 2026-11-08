@@ -3331,9 +3331,8 @@ check('importing an older model with entities says what became of them', () => {
 
   // Narrower than validation on purpose: a successor numbers something,
   // so it is offered to `set` an integer or a named value type, never a
-  // plain string, never beside another verb – and `currentValue`, which
-  // only ever repeats or doubles what is held, is not offered at all.
-  check('a successor is offered only to set a numbering, and currentValue never', () => {
+  // plain string, never beside another verb.
+  check('a successor is offered only to set a numbering', () => {
     const { model } = build(GROUPED);
     eq(offersSuccessor(model(), 'integer'), true, 'an integer counts');
     eq(offersSuccessor(model(), 'CourseId'), true, 'and so does a named scalar type');
@@ -3350,9 +3349,6 @@ check('importing an older model with entities says what became of them', () => {
     eq(values('integer', 'set').includes(next), true, 'set an integer: offered');
     eq(values('integer', 'increment').includes(next), false, 'increment by it: not');
     eq(values('string', 'set').some((v) => v.includes('successor')), false, 'set a string: not');
-    for (const [type, op] of [['integer', 'set'], ['integer', 'increment'], ['string', 'set']]) {
-      eq(values(type, op).some((v) => v.includes('currentValue')), false, `no currentValue for ${type} ${op}`);
-    }
   });
 
   check('an event field reads as its path once picked', () => {
@@ -4839,7 +4835,7 @@ check('the reference links only anchors the website defines', () => {
   const links = sandbox.helpReferenceLinks();
   eq(links[0], sandbox.NOTATION_GUIDE_URL, 'the guide');
   eq(links.every((link) => link.startsWith(sandbox.NOTATION_GUIDE_URL)), true, 'only the notation pages');
-  eq(links.length, 29, 'the anchors the website defines, and no new one before it does');
+  eq(links.length, 28, 'the anchors the website defines, and no new one before it does');
   // dcb.events reads the list by loading shared.js with nothing around
   // it – no window, no document – so loading it must need neither.
   const bare = require('vm').createContext({});

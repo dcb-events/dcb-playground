@@ -34,7 +34,7 @@ and prune what no longer holds.
   What DCB is made of — types, events, projections, commands, the
   derived boundary — is always on screen; what the examples on
   dcb.events do not need is behind the flag: scripted projections,
-  guarded emissions, optional reads, `currentValue`, and the Coupling /
+  guarded emissions, optional reads, and the Coupling /
   Rule map / Event model / Metro map views. Groups are not on the list: a naming
   device with no consistency meaning has nothing to hide. Entities,
   lifecycles and `excluding` were on it until 11.0 removed them. A model that uses any of
@@ -217,9 +217,10 @@ and prune what no longer holds.
   Handler values are narrower still than validation: `successor` is
   offered only to `set` an integer or a named scalar value type
   (`offersSuccessor` — a numbering, never a plain string, never beside
-  another verb), and `currentValue` is not offered at all (`set` to it
-  is a no-op, `increment` by it doubles). Both stay in the wire format
-  and still run when stored.
+  another verb); it stays in the wire format and still runs when
+  stored. `currentValue` was never offered (`set` to it is a no-op,
+  `increment` by it doubles) and 11.0 removed it: a document that uses
+  it is refused on import, naming the projection.
   A plain scalar value type counts as what it wraps, for predicates as
   for operations (`underlyingScalarType`, `predicatesForType` given the
   model): `Hours` over an integer is ordered and decremented like one.
@@ -675,7 +676,7 @@ on Projections, inside a group's section, and in the definition modals.
   developers who know what an event log is, so the page names things the
   way the wire format does and does not narrate. `null`, `""` and `[]`
   each keep their own spelling (`initialValueWords`); operand kinds read
-  as their schema tokens (`currentValue`, `successor(x)`); step headings
+  as their schema tokens (`successor(x)`, `event.data.x`); step headings
   are `Payload` / `Rules` / `Append` / `State changes` /
   `Consistency boundary` / `Scenarios` — `Rules` and not the wire's
   `conditions`, because "rule" is the item word on every page (`+ rule`,

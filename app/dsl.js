@@ -153,7 +153,7 @@
 // research note is docs/research/2026-10-03-code-view-language.md.
 //
 // **A few spellings are the schema's own tokens**, matching the
-// interface's technical register: `currentValue`, `successor(x)`,
+// interface's technical register: `successor(x)`,
 // `event.data.x` (the path a scripted handler writes), the predicate
 // words `contains` / `containsAny` / `startsWith` / `endsWith`, and the
 // script fields `initialState` / `exposes`. The rest are what a
@@ -833,7 +833,9 @@ function parseModelSourceText(text, options) {
       mark(operand, 'eventProperty', property);
       return operand;
     }
-    if (accept('currentValue')) return { currentValue: true };
+    if (is('currentValue')) {
+      fail('"currentValue" is gone – a handler\'s value comes from the event (event.data.x), a literal or successor(…).');
+    }
     if (is('successor') && is('(', 1)) {
       next(); next();
       enter();
@@ -2336,7 +2338,6 @@ function sourceHandlerOperand(operand) {
     if (keys.length === 1 && operand.eventProperty !== undefined) {
       return `event.data.${sourceRef(operand.eventProperty, 'event property')}`;
     }
-    if (keys.length === 1 && operand.currentValue === true) return 'currentValue';
     if (keys.length === 1 && operand.successor !== undefined) return `successor(${sourceHandlerOperand(operand.successor)})`;
   }
   return sourceLiteral(operand);
@@ -3873,7 +3874,7 @@ const SOURCE_LOWER_NAME_RE = /^[\p{Ll}_][\p{L}\p{M}\p{Nd}_]*$/u;
 // values it is read by (`tags.x`, `args.x`). A json body can name anything.
 const SOURCE_SCRIPT_VISIBLE = ['eventProperty', 'field', 'member', 'projectionParameter', 'projectionTag', 'groupTag', 'type'];
 const sourceArticle = (word) => (/^[aeiou]/.test(word) ? 'an' : 'a');
-const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 'event', 'currentValue', 'successor'];
+const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 'event', 'successor'];
 
 // Edits that rename the symbol at a position, everywhere it occurs and
 // nowhere else: `{ edits: [{ line, col, endLine, endCol, text }] }`, or
@@ -5090,7 +5091,6 @@ function sourceExperimentalMarks(text) {
     // A group is not marked: a name is nothing to hide. A scripted
     // projection is, in a group as anywhere.
     if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
-    else if (v === 'currentValue') said(token, 'currentValue');
     else if (v === 'when' && !frames.includes(true)) said(token, 'A guarded emission');
   });
   return out;
@@ -5461,7 +5461,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 
 const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
   + 'guarded emissions (emit … when …), optional reads (alias x? = …), arguments on a group\'s projection '
-  + 'read through an alias (x.p(a: …)) and currentValue. A text or '
+  + 'read through an alias (x.p(a: …)). A text or '
   + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 
 function sourceLanguageReference() {
@@ -5485,7 +5485,7 @@ const SOURCE_KEYWORDS = [
   'projection', 'min', 'max', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
-  'currentValue', 'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
+  'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject',
 ];
 

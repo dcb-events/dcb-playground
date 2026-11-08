@@ -1307,7 +1307,7 @@ function findReferencers(model, targetKind, targetName) {
 //
 // Command operands:  {parameterName} | {alias, property?, arguments?} | {enumMember} | literal
 //                    | {projection, tags?, arguments?} (a read in place)
-// Handler operands:  {eventProperty} | {currentValue} | {successor} | {enumMember} | literal
+// Handler operands:  {eventProperty} | {successor} | {enumMember} | literal
 // Derived operands:  {projection, tags?, arguments?} | {parameterName} | {enumMember} | literal
 // Tag operands:      a command operand | {tagType, tagValue} | {each: operand}
 //
@@ -1340,7 +1340,6 @@ function operandSource(operand) {
   if (operand.alias !== undefined) return 'alias-property';
   if (operand.enumMember !== undefined) return 'enum-member';
   if (operand.eventProperty !== undefined) return 'event-property';
-  if (operand.currentValue !== undefined) return 'current-value';
   if (operand.successor !== undefined) return 'successor';
   if (operand.projection !== undefined) return 'projection-read';
   if (operand.tagType !== undefined) return 'tag-literal';
@@ -1363,7 +1362,6 @@ function operandText(operand) {
     }
     case 'enum-member': return operand.enumMember || '?';
     case 'event-property': return `event.data.${operand.eventProperty || '?'}`;
-    case 'current-value': return 'current';
     case 'successor': return `successor(${operandText(operand.successor)})`;
     // The values in the order they are held, which is the order the
     // projection declares them in wherever a writer built the read. A
@@ -1593,7 +1591,6 @@ const EXPERIMENTAL_FEATURES = {
   scripted: 'scripted projections',
   guards: 'guarded emissions',
   optional: 'optional reads',
-  currentValue: 'currentValue',
 };
 
 function experimentalFeatures(model) {
@@ -1605,14 +1602,8 @@ function experimentalFeatures(model) {
     seen.add(key);
     found.push({ feature, where });
   };
-  const usesCurrentValue = (value) => {
-    if (!value || typeof value !== 'object') return false;
-    if (value.currentValue === true) return true;
-    return Object.values(value).some(usesCurrentValue);
-  };
   for (const [name, body] of Object.entries(projectionsOf(model))) {
     if (scriptOf(body)) note('scripted', name);
-    if (!scriptOf(body) && usesCurrentValue(body && body.handlers)) note('currentValue', name);
   }
   for (const [name, body] of Object.entries(model['command-definitions'] || {})) {
     if (!body) continue;
@@ -3666,7 +3657,7 @@ function validateDerived(model, projectionName, body) {
       continue;
     }
     if (source === 'alias-property' || source === 'event-property'
-        || source === 'current-value' || source === 'successor') {
+        || source === 'successor') {
       throw new DomainError(
         `An operand of ${label} is "${operandText(operand)}" – a derived projection reads other ` +
         'projections, its own parameters, enum members and literals; nothing else is in scope.'
@@ -4650,9 +4641,52 @@ const STORABLE_LIST_FIELDS = [
   'properties', 'handlers', 'boundary', 'conditions', 'publishes', 'parameters', 'given', 'projections',
 ];
 
-function assertStorableBody(kind, body) {
+// What 11.0 removed, where a body still says it: the first such
+// construct, as `{construct, what}` – `what` the clause naming it,
+// after the definition's name – or null. A grouped projection is
+// found under its local name (`local`). Nothing below the write path
+// knows these constructs any more, so a body saying one is no
+// definition this build can mean: the write path refuses it and the
+// importer refuses, or leaves out, what says one (`removedConstructNote`).
+const REMOVED_CONSTRUCTS = {
+  currentValue: '11.0 has no currentValue',
+};
+
+function removedConstructIn(kind, body) {
+  if (!body || typeof body !== 'object') return null;
+  const list = (value) => (Array.isArray(value) ? value : []);
+  const mentions = (value, key) => !!value && typeof value === 'object'
+    && (Object.prototype.hasOwnProperty.call(value, key) || Object.values(value).some((inner) => mentions(inner, key)));
+  if (kind === 'group-definition') {
+    for (const inner of list(body.projections)) {
+      const found = removedConstructIn('projection-definition', inner);
+      if (found) return { ...found, local: inner.name };
+    }
+    return null;
+  }
+  if (kind === 'projection-definition') {
+    if (list(body.handlers).some((h) => h && mentions(h.value, 'currentValue'))) {
+      return { construct: 'currentValue', what: 'sets a value from currentValue' };
+    }
+  }
+  return null;
+}
+
+// The sentence a removed construct is refused with, naming its
+// definition – a grouped projection by its qualified name.
+function removedConstructMessage(kind, name, found) {
+  const label = kind === 'command-definition' ? 'Command' : 'Projection';
+  const subject = found.local !== undefined ? `${name}.${found.local}` : name;
+  return `${label} ${subject ? `"${subject}" ` : ''}${found.what} – ${REMOVED_CONSTRUCTS[found.construct]}`;
+}
+
+function assertStorableBody(kind, body, name = null) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
     throw new DomainError(`A ${humanize(kind)} body must be an object.`);
+  }
+  const removed = removedConstructIn(kind, body);
+  if (removed) {
+    throw new DomainError(`${removedConstructMessage(kind, name, removed)}.`);
   }
   for (const field of STORABLE_LIST_FIELDS) {
     if (body[field] === undefined) continue;
@@ -4726,7 +4760,7 @@ function addDefinition(kind, modelId, name, body) {
     addGroupProjection(modelId, split.group, split.local, body);
     return;
   }
-  assertStorableBody(kind, body);
+  assertStorableBody(kind, body, trimmed);
   const coll = collectionOfKind(model, kind);
   if (trimmed in coll) {
     throw new DomainError(`A ${humanize(kind)} named "${trimmed}" already exists in this model.`);
@@ -4746,7 +4780,7 @@ function validateDefinitionUpdate(model, kind, name, body) {
   if (!(name in coll)) {
     throw new DomainError(`No ${humanize(kind)} named "${name}" exists in this model.`);
   }
-  assertStorableBody(kind, body);
+  assertStorableBody(kind, body, name);
 }
 
 function updateDefinition(kind, modelId, name, body) {
@@ -4768,7 +4802,7 @@ function updateDefinitions(modelId, changes) {
   for (const change of changes) {
     const entry = change.kind === 'projection-definition' ? groupProjectionEntry(model, change.name) : null;
     if (!entry) { direct.push(change); continue; }
-    assertStorableBody('projection-definition', change.body);
+    assertStorableBody('projection-definition', change.body, change.name);
     if (!groups.has(entry.groupName)) groups.set(entry.groupName, deepClone(entry.group));
     // A body read off `projectionsOf` spells its siblings from outside
     // (`Course.capacity` by the group's tag passed on); stored, they are
@@ -4911,10 +4945,10 @@ function addGroupProjection(modelId, groupName, localName, body) {
   if (groupProjections(group).some((inner) => inner.name === local)) {
     throw new DomainError(`${groupName} already has a projection named "${local}".`);
   }
-  assertStorableBody('projection-definition', body);
+  assertStorableBody('projection-definition', body, `${groupName}.${local}`);
   const next = deepClone(group);
   next.projections = [...(Array.isArray(next.projections) ? next.projections : []), storedGroupProjection(local, body)];
-  assertStorableBody('group-definition', next);
+  assertStorableBody('group-definition', next, groupName);
   appendEvents([{ type: 'group-definition-updated', data: { 'dcb-model-id': modelId, name: groupName, body: next } }]);
 }
 
@@ -6054,7 +6088,7 @@ function replaceDefinitions(modelId, next) {
       const name = validateDefinitionKey(kind, key, `${humanize(kind)} name`);
       if (name in Object.prototype) throw new DomainError(`"${name}" cannot name a ${humanize(kind).toLowerCase()}.`);
       if (has(wanted, name)) throw new DomainError(`Two ${humanize(kind).toLowerCase()}s are named "${name}".`);
-      assertStorableBody(kind, body);
+      assertStorableBody(kind, body, name);
       wanted[name] = body;
     }
     const diff = diffCollection(current, wanted);
@@ -6696,6 +6730,33 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
   return { ...out, groups, notes };
 }
 
+// What a document still says that 11.0 removed (`removedConstructIn`),
+// read before anything is stored. A projection that is scripted or sets
+// from `currentValue` refuses the whole document: its value decides
+// rules, and no other spelling of it is there to read. A command that
+// guards an emission or reads optionally is left out, and said – the
+// rest of it is readable, but publishing every time or requiring the
+// read would change what it decides, silently. `commands` loses the
+// ones left out; the notes are returned, beside `groupsFromEntities`'.
+function refuseRemovedConstructs({ groups, projections, commands }) {
+  for (const [kind, coll] of [['group-definition', groups], ['projection-definition', projections]]) {
+    for (const [name, body] of Object.entries(coll)) {
+      const found = removedConstructIn(kind, body);
+      if (found) throw new DomainError(`${removedConstructMessage(kind, name, found)}, so this model cannot be imported.`);
+    }
+  }
+  const notes = [];
+  for (const [name, body] of Object.entries(commands)) {
+    const found = removedConstructIn('command-definition', body);
+    if (!found || !REMOVED_COMMAND_NOTES[found.construct]) continue;
+    notes.push({ kind: 'command-definition', name, note: REMOVED_COMMAND_NOTES[found.construct](found) });
+    delete commands[name];
+  }
+  return notes;
+}
+
+const REMOVED_COMMAND_NOTES = {};
+
 // The synthesizer: rebuilds a shared model into a brand-new one by
 // replaying it through the same commands manual editing uses, so an
 // untrusted export can never land in a state those commands would have
@@ -6734,7 +6795,7 @@ function importModelFromEnvelope(envelope) {
   let propertyScenarios = schemaArrayToDefinitions(
     'projection-scenario-definition', envelope.projectionScenarioDefinitions
   );
-  let converted = [];
+  let converted = refuseRemovedConstructs({ groups, projections, commands });
   if (legacy) {
     const lifted = groupsFromEntities({
       customTypes,
@@ -6745,7 +6806,7 @@ function importModelFromEnvelope(envelope) {
     });
     ({ customTypes, groups, projections, commands } = lifted);
     propertyScenarios = lifted.projectionScenarios;
-    converted = lifted.notes;
+    converted = [...converted, ...lifted.notes];
   }
 
   const modelId = createDcbModel(envelope.name);
@@ -8404,8 +8465,6 @@ function evCompileHandlerOperand(operand) {
   switch (operandSource(operand)) {
     case 'event-property':
       return (state, event) => evOwn(event.data, operand.eventProperty);
-    case 'current-value':
-      return (state) => state;
     case 'successor': {
       const inner = evCompileHandlerOperand(operand.successor);
       return (state, event) => evSuccessor(inner(state, event));
@@ -9987,7 +10046,7 @@ if (typeof module !== 'undefined' && module.exports) {
 // research note is docs/research/2026-10-03-code-view-language.md.
 //
 // **A few spellings are the schema's own tokens**, matching the
-// interface's technical register: `currentValue`, `successor(x)`,
+// interface's technical register: `successor(x)`,
 // `event.data.x` (the path a scripted handler writes), the predicate
 // words `contains` / `containsAny` / `startsWith` / `endsWith`, and the
 // script fields `initialState` / `exposes`. The rest are what a
@@ -10667,7 +10726,9 @@ function parseModelSourceText(text, options) {
       mark(operand, 'eventProperty', property);
       return operand;
     }
-    if (accept('currentValue')) return { currentValue: true };
+    if (is('currentValue')) {
+      fail('"currentValue" is gone – a handler\'s value comes from the event (event.data.x), a literal or successor(…).');
+    }
     if (is('successor') && is('(', 1)) {
       next(); next();
       enter();
@@ -12170,7 +12231,6 @@ function sourceHandlerOperand(operand) {
     if (keys.length === 1 && operand.eventProperty !== undefined) {
       return `event.data.${sourceRef(operand.eventProperty, 'event property')}`;
     }
-    if (keys.length === 1 && operand.currentValue === true) return 'currentValue';
     if (keys.length === 1 && operand.successor !== undefined) return `successor(${sourceHandlerOperand(operand.successor)})`;
   }
   return sourceLiteral(operand);
@@ -13707,7 +13767,7 @@ const SOURCE_LOWER_NAME_RE = /^[\p{Ll}_][\p{L}\p{M}\p{Nd}_]*$/u;
 // values it is read by (`tags.x`, `args.x`). A json body can name anything.
 const SOURCE_SCRIPT_VISIBLE = ['eventProperty', 'field', 'member', 'projectionParameter', 'projectionTag', 'groupTag', 'type'];
 const sourceArticle = (word) => (/^[aeiou]/.test(word) ? 'an' : 'a');
-const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 'event', 'currentValue', 'successor'];
+const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 'event', 'successor'];
 
 // Edits that rename the symbol at a position, everywhere it occurs and
 // nowhere else: `{ edits: [{ line, col, endLine, endCol, text }] }`, or
@@ -14924,7 +14984,6 @@ function sourceExperimentalMarks(text) {
     // A group is not marked: a name is nothing to hide. A scripted
     // projection is, in a group as anywhere.
     if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
-    else if (v === 'currentValue') said(token, 'currentValue');
     else if (v === 'when' && !frames.includes(true)) said(token, 'A guarded emission');
   });
   return out;
@@ -15295,7 +15354,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 
 const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
   + 'guarded emissions (emit … when …), optional reads (alias x? = …), arguments on a group\'s projection '
-  + 'read through an alias (x.p(a: …)) and currentValue. A text or '
+  + 'read through an alias (x.p(a: …)). A text or '
   + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 
 function sourceLanguageReference() {
@@ -15319,7 +15378,7 @@ const SOURCE_KEYWORDS = [
   'projection', 'min', 'max', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'not', 'is',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
-  'currentValue', 'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
+  'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject',
 ];
 

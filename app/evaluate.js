@@ -315,8 +315,6 @@ function evCompileHandlerOperand(operand) {
   switch (operandSource(operand)) {
     case 'event-property':
       return (state, event) => evOwn(event.data, operand.eventProperty);
-    case 'current-value':
-      return (state) => state;
     case 'successor': {
       const inner = evCompileHandlerOperand(operand.successor);
       return (state, event) => evSuccessor(inner(state, event));

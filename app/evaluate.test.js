@@ -4453,4 +4453,39 @@ function modelsWithScenarios() {
   });
 }
 
+// 11.0 removed scripted projections, currentValue, guarded emissions and
+// optional reads. A document saying one of the first two is refused
+// whole – nothing else in it can be trusted to decide what it decided –
+// and a command saying one of the last two is left out, and said, as
+// an `excluding` is: dropping it would change what the command decides.
+{
+  const refusal = (envelope) => {
+    resetStore();
+    try { importModelFromEnvelope(envelope); } catch (error) { return error instanceof sandbox.DomainError ? error.message : `threw ${error}`; }
+    return null;
+  };
+  const current = () => deepClone(buildShareEnvelope(build(SIMPLE), []));
+  const grouped = () => deepClone(buildShareEnvelope(build(GROUPED), []));
+
+  check('currentValue refuses the whole document', () => {
+    const envelope = current();
+    const capacity = envelope.projectionDefinitions.find((p) => p.name === 'CourseCapacity');
+    capacity.handlers.push({ event: 'StudentSubscribedToCourse', operation: 'set', value: { currentValue: true } });
+    eq(refusal(envelope), 'Projection "CourseCapacity" sets a value from currentValue – 11.0 has no currentValue, '
+      + 'so this model cannot be imported.', 'named, with the definition');
+    eq(Object.keys(sandbox.projectState()).length, 0, 'nothing loaded');
+  });
+
+  check('the write path refuses currentValue', () => {
+    const { id, model } = open_(SIMPLE);
+    const capacity = deepClone(model()['projection-definitions'].CourseCapacity);
+    let refused = null;
+    try {
+      updateDefinition('projection-definition', id, 'CourseCapacity',
+        { ...capacity, handlers: [{ event: 'CourseDefined', operation: 'set', value: { currentValue: true } }] });
+    } catch (error) { refused = error.message; }
+    eq(refused, 'Projection "CourseCapacity" sets a value from currentValue – 11.0 has no currentValue.', 'named');
+  });
+}
+
 finish();
