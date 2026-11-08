@@ -298,7 +298,30 @@ and prune what no longer holds.
   number, and the numeric ones skip it rather than erroring.
   **`where` reads no projection** – `value`, `value.field`, the names
   in scope and literals (`collectionProblem`) – so a collection's
-  query is its read's, and one fold per instance answers it.
+  query is its read's, and one fold per instance answers it. **An
+  alias already bound is a name in scope there** (the 11.0
+  acceptance, D3): `where value == partner` compares with the value
+  that alias read – a value, no read made inside the `where` – and
+  counts as consulting it, so pruning keeps it (`operandAliases`
+  walks a `where`). Refusing it cost the portal a projection tagged by
+  both parties, and the "unused" advisory threatened to drop the read
+  on the next edit. A group's projection through its alias stays
+  refused: that one would be a read.
+- **`list(P(x, *))` and `count(xs)` as a value** (the 11.0
+  acceptance, G1 and G3). `list` is one more collection function,
+  `{collect: 'list'}`: the one open tag's values, in the order of each
+  instance's first event, typed a list of that tag's type
+  (`collectionResultType`) – which is all a list needs to go where
+  lists go: an emission, `contains`, `count`, a loop's source. Two open
+  tags would make a list of pairs, which no type here says, so it is
+  refused. It closed the portal's last unresolved item: an event that
+  stores the ids it unassigned as a list. `count(xs)` of a list became
+  `{count: operand}` (`CountValue`), an integer wherever a value goes;
+  the rule `count(xs) == 3` (and `!=`, `<`, `>`) keeps its stored
+  predicate, so nothing stored changes and no import converts – the
+  parser reads that one position as the predicate, and a `{count}`
+  stored there prints as JSON. Walkers see what it counts in its place
+  (`forEachCommandOperand`, `uncounted` for a derived side).
 - **A fan-out emit is a step: `for each`** (11.0,
   dcb-events.github.io#103). `{forEach: [names], in, steps}` runs its
   steps once per element of an open read (present instances, in the
@@ -466,6 +489,15 @@ and prune what no longer holds.
   through `handlerArms` (model.js), so renames, enum members, the
   Lifecycle tab and the command page see every arm. `<` / `>` wait
   for a case.
+- **A handler's value may be a record's field one hop in** (the 11.0
+  acceptance, G2): `set event.data.signUp.emailAddress`, stored as
+  the condition's shape, `{eventProperty, property}`, for `set`,
+  `append`, `remove` and a record's fields. The same path was already
+  a tag and a condition, so refusing it only forced a record
+  projection read as `.emailAddress`. Held to nominal types by the
+  field's declared type (`handlerFieldType`); one hop, like every other
+  path here. The projection page shows such a handler read-only with
+  *Edit in code* (`handlerInCode`).
 - **An open tag reads every present instance** (11.0, #102). `P(x,
   *)` – `{open: true}` in the read's `tags` – leaves a tag of a
   multi-tag projection open, and is read only as a collection
@@ -605,6 +637,13 @@ and prune what no longer holds.
   vocabularies, so part of the major; no stored shape an older
   document says moved, so `EVENT_LOG_KEY` waits (schema revision
   11.0.7). The tool schemas write arithmetic compactly.
+  The 11.0 acceptance added three: a `where`'s `AliasPropertyValue`
+  (11.0.11), a handler's `EventPropertyValue.property`, one hop into
+  a record (11.0.12), and `collect: "list"` with `CountValue`
+  (11.0.13). Each a member an older 11.0 reader lacks, inside the
+  major; no stored shape moved – `count(xs) == 3` keeps its predicate
+  – so nothing converts and `EVENT_LOG_KEY` waits. The tool schemas
+  write a count compactly, as they do arithmetic.
   **6.1 is the contrast worth knowing**: entity `lifecycle` was additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -1384,13 +1423,17 @@ Watched, Decision, Store. Only the panel scrolls.
   So the failure is the read itself, wherever it happens (fold,
   rule, branch, `where`, emission, loop), and since reads are lazy
   (package 3) a field nobody needs may stay out. A then compares the
-  fields it lists (`evThenHolds`); one recorded from a run lists them
-  all. The text stores what it says (`canonicalScenario`'s `partial`);
+  fields it lists (`evThenHolds`) – into a record's value too, by the
+  model's types (the acceptance's D5), while an opaque `object` and a
+  list compare whole; one recorded from a run lists them all. The text stores what it says (`canonicalScenario`'s `partial`);
   the page's save still spells out null for what a draft left unset,
   since its editors show every field. The values a scenario does give
   are held to their types' constraints (`payloadValueProblems`, the
-  same rule `replay` applies to stored events) – a scenario showing a
-  value no type admits shows what cannot happen. An optional list is
+  one check `replay` applies to stored events too, since the
+  acceptance found the two had drifted apart: `typeof` called every
+  array "no array", D1) – a scenario showing a value no type admits
+  shows what cannot happen. A projection's initial value is held to
+  them as well (`validateInitialValue`, D6), as an advisory. An optional list is
   allowed since 11.0, its null its absence. Fixtures (shared givens)
   were deferred: partial events removed most of the repetition, and if
   they come they are scoped per `scenarios` block.
@@ -1466,11 +1509,13 @@ Watched, Decision, Store. Only the panel scrolls.
   is a read's value only inside the read a collection function
   collects – anywhere else it is a positioned error naming where it
   goes – so an open read is never a value of its own in the text
-  either. `count(…)` stays the count predicate over a list, and
+  either. `count(…)` over a list is a count – the count predicate in
+  `count(xs) == 3`, a `{count}` value anywhere else (G3) – and
   `min(a, b)` / `max(a, b)` a computation: which one it is shows inside
-  the parentheses – a `*` in a read's values or a `where` makes it a
-  collection (`collectionAhead`); `sum`, `average`, `any` and `all`
-  always are. `any(…)` and `all(…)` are booleans like any other, so a
+  the parentheses – a `*` in the read directly inside, or a `where`,
+  makes it a collection (`collectionAhead`; directly, so
+  `count(list(P(x, *)))` counts a list); `sum`, `average`, `any`, `all`
+  and `list` always are. `any(…)` and `all(…)` are booleans like any other, so a
   rule says `any(…) is true`: a bare value as a condition would be
   the one place the text infers a predicate. Inside a `where`, `value`
   is the instance's value – a name in scope called `value` cannot be

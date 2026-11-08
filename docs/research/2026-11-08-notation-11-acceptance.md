@@ -36,6 +36,10 @@ re-expressed copies stay outside the repository.
   seats, which closes the race the migration report described.
 - **Defects found:** 3 in the CLI or evaluator, plus 3 minor
   inconsistencies and 4 language gaps. See _Defects and gaps_.
+- **After the fixes** (see _After the fixes_): D1–D6 are fixed, and
+  G1–G3 added; G4 is deferred. The portal checks with 0 problems and 0
+  unresolved, after its last item was re-expressed with `list(…)`.
+  Courses checks with 1 problem, which the D6 fix found in the copy.
 
 ## Customer portal
 
@@ -47,9 +51,9 @@ re-expressed copies stay outside the repository.
 | Scenarios | 314 | 227 (about 90 rewritten as partial scenarios) |
 | Lines | 3,148 | 2,474 |
 | Tag types | 19 | 16 |
-| `@unresolved` | 8 in the report, 0 marked | 1 |
+| `@unresolved` | 8 in the report, 0 marked | 1 (0 with `list(…)`, G1) |
 | `@external` / `@assumption` / `@deprecated` | 0 / 0 / 0 | 14 / 6 / 4 |
-| `check` problems on 11.0 | 30 (10 without the array defect) | 20, all from the array defect (0 with it patched) |
+| `check` problems on 11.0 | 30 (10 without the array defect) | 20, all from the array defect (0 with it patched, and after the fixes) |
 
 Workarounds:
 
@@ -77,7 +81,7 @@ Unresolved items from section 4 of the migration report:
 
 | # | Item | After |
 |---|---|---|
-| 1 | `deleteCustomer`: unassign contracts and invoices | Contracts resolved with `for each … IsContractAssignedToCustomer(customerId, *)`. **Invoices still unresolved:** `InvoicesWereUnassigned` holds the ids as a list, and no list can be built from an open read (gap G1) |
+| 1 | `deleteCustomer`: unassign contracts and invoices | Contracts resolved with `for each … IsContractAssignedToCustomer(customerId, *)`. Invoices were unresolved: `InvoicesWereUnassigned` holds the ids as a list, and no list could be built from an open read (gap G1). **Resolved after G1**: per contract, `invoiceIds: list(InvoiceAssigned(contractId, *))` |
 | 2 | `deleteCustomer`: end shares, revoke invitations, both roles | Resolved: 4 loops over owner shares, invitee shares, issued invitations (with an `if` on status) and pending invitations to the address |
 | 3 | `unassignCustomerContract`: end the contract's shares | Resolved, `for each` over `ShareActiveOnContract(contractId, *)` |
 | 4 | `endAllContractSharesForContract` | Resolved, new command |
@@ -104,7 +108,7 @@ pattern, since there is no date type (G4).
 | Lines | 1,606 | 1,390 |
 | Unresolved | 7 in the report, 0 marked | 0 |
 | `@external` / `@assumption` | 0 / 0 | 7 / 1 |
-| `check` problems on 11.0 | 116 (2 without the array defect) | 16, all from the array defect (0 with it patched) |
+| `check` problems on 11.0 | 116 (2 without the array defect) | 16, all from the array defect (0 with it patched); 1 after the fixes (D6) |
 
 Shortening the payloads also cut the array defect's hits from 114 to 16,
 because most scenarios no longer give the array-typed fields.
@@ -173,14 +177,14 @@ re-expressed command:
 | # | Item | Status | Note |
 |---|---|---|---|
 | 1 | Conditional handlers | Fixed | Removes role tags, casts and the email split |
-| 2 | Tag paths, plain-list tags, computed formats | Changed | Nested tag paths and plain-list tags work, but a handler cannot `set` from a nested path (G2). Computed formats are replaced by `@sensitive` with a pattern, and the adapter hashes |
-| 3 | Fan-out emits | Fixed | `for each` resolved 7 of the portal's 8 items. A list built from an open read is still missing (G1) |
+| 2 | Tag paths, plain-list tags, computed formats | Changed | Nested tag paths and plain-list tags work, and since G2 a handler can `set` from a nested path. Computed formats are replaced by `@sensitive` with a pattern, and the adapter hashes |
+| 3 | Fan-out emits | Fixed | `for each` resolved 7 of the portal's 8 items, and `list(…)` (G1) the eighth |
 | 4 | Guarded emits, optional reads, OR | Fixed (in another form) | Branches, `or` and lazy reads. Merging removed 15 portal and 7 courses commands |
 | 5 | Keyed projections with aggregates | Fixed | Open tags, collection functions, `where` and record values |
 | 6 | `ref` and tag conversions | Changed | No `ref`, by decision: tag backfill instead. Courses needs 5 tag backfills (about 6,200 events), all derivable. The portal needs 1 |
 | 7 | Time | Changed | `datetime`, `duration` and `now` work, and expiry is data. Recorded-time rules stay outside, by decision (5 portal rules) |
 | 8 | Boundary-only reads | Changed | None, by decision. The revision pattern is dropped, and capabilities are `@external` |
-| 9 | Scenario fixtures | Changed | Partial scenarios instead. They cut scenario text by about a third, and no generator is needed. A nested record in `then` is still compared whole (D5) |
+| 9 | Scenario fixtures | Changed | Partial scenarios instead. They cut scenario text by about a third, and no generator is needed. A nested record in `then` was compared whole (D5, fixed) |
 | 10 | Stored notes, external rules | Fixed | `///`, `@unresolved` (counted), `@external`, `@assumption`, `@deprecated`, `@sensitive` |
 | 11 | Reactions | Changed | No construct, by decision. Chains became one append, and handlers are outer-layer `@external` |
 
@@ -208,8 +212,8 @@ Verified behaviour (10.1 table, rerun on 11.0):
 | `reservationId: null` into an optional tag | Unchanged: the boundary still prints `ReservationId:{null}` |
 | Read result as an emitted tag | Unchanged (works) |
 | Derived projection with a value type | Unchanged (works) |
-| Literal `0` into a constrained integer | Changed: caught when a scenario's `then` holds it. A projection's initial value is still not checked (D6) |
-| Type constraints in scenario values | Fixed: enforced. For arrays this is wrong (D1) |
+| Literal `0` into a constrained integer | Changed: caught when a scenario's `then` holds it, and since D6 in a projection's initial value |
+| Type constraints in scenario values | Fixed: enforced, arrays included since D1 |
 
 ## Defects and gaps
 
@@ -294,6 +298,41 @@ Language gaps that the migrations hit (no change proposed here):
   rejects on a missing element, run in both directions.
 - **G4.** There is no date type: a calendar date is a `string` with a
   pattern, compared as text.
+
+## After the fixes
+
+Run with `dcb.js` on `v11` after the defects were fixed and G1–G3
+added. The copies were changed only to resolve the portal's last item.
+
+| | Portal | Courses |
+|---|---|---|
+| `check` problems | 0 (was 20) | 1 (was 16) |
+| `@unresolved` | 0 (was 1) | 0 |
+| Scenarios holding | 227 of 227 (the cascade scenario now covers invoices) | 123 of 123 |
+
+The one courses problem is new and real: D6 now advises that
+`CourseSeatsTotal` starts at 0, below its type's minimum of 1. Fixing
+it is a modelling choice (a type admitting 0, or a separate total
+type), left to the model's owner.
+
+| Item | Status | How |
+|---|---|---|
+| D1 | Fixed | One shared value check (`payloadValueProblems`) names a value's JSON type properly; `replay` uses it too, list elements and record fields included |
+| D2 | Fixed | A binding's tags settle `address.city` as a record field, as steps do |
+| D3 | Fixed | A `where` reads aliases already bound; the read counts as consulted, so pruning keeps it |
+| D4 | Fixed | A value type's advice is to declare the event field as that type; a tag type's is still to tag the event |
+| D5 | Fixed | A partial `then` compares a nested record by its listed fields; an opaque object and a list compare whole |
+| D6 | Fixed | A projection's initial value is advised when its type's constraints refuse it |
+| G1 | Added | `list(P(x, *))`, one open tag, instance order |
+| G2 | Added | `set event.data.signUp.emailAddress`, one hop, nominal |
+| G3 | Added | `count(xs)` as a value; `count(xs) == 3` keeps its stored form |
+| G4 | Deferred | ISO dates compare correctly as text, and no rule needs date arithmetic yet |
+
+The portal's last item now reads, per contract in `DeleteCustomer`'s
+loop, `if count(InvoiceAssigned(contractId, *)) > 0 => emit
+InvoicesWereUnassigned { …, invoiceIds: list(InvoiceAssigned(contractId,
+*)) }`. Its boundary gains the per-contract invoice line, which the
+cascade has to read anyway.
 
 ## Method
 
