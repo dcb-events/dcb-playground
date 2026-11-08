@@ -185,6 +185,60 @@ and prune what no longer holds.
   DCB is their union. Reads stay removable, and removing one takes the
   rules about it while leaving reads further down the chain
   to dangle with an advisory — narrowing the boundary is never silent.
+- **Commands run top-down (11.0).** A body is one ordered list,
+  `steps`: rules, emissions, branches (`if … else if … else`, first
+  arm that holds) and, inside a branch, `reject`. Any rejection aborts
+  with no events; the emissions reached are one append, and none is
+  `then nothing`. `require c else reject "m"` stays a step of its own
+  – the shorthand for `if not c => reject "m"`, and the common case.
+  It replaced `conditions` (all checked first) and `publishes` (all
+  published after) because branch-only rejections and per-case emits
+  were what the migrations could not merge without a guard; guarded
+  emissions and optional reads, which tried, went in package 2. Every
+  walker of a command goes through the step helpers (`forEachStep`,
+  `commandRules`, `commandEmissions`, `commandConditionLeaves`,
+  model.js) and so into every branch: operands, reference reasons
+  (a branch condition is a `rule` reason), pruning, renames,
+  derivation, the slice, the rule map, the lifecycle tab, the code
+  view. Conditions join with `and` / `or` (`{all}` / `{any}`, the leaf
+  the predicate it always was); quantifying, zipping and the one fan
+  root apply per comparison.
+- **Reads are lazy (11.0).** An alias or a read in place is folded
+  the first time a step reached needs it (`evBound`, evaluate.js), so
+  a read behind a rule that refused, or in an arm not taken, never
+  happens – `alias b = Q(a)` with `a` unset no longer errors behind
+  `require a is not empty`. A read reached with a null tag still does.
+  The one read made up front is the one nothing consults
+  (serialisation): it is there for its boundary. `and` / `or` stop as
+  soon as the answer is known, for the same reason.
+- **Two boundaries, said apart.** At runtime the append condition
+  covers the reads the run made (`reads` and, through a port, `query`)
+  – a read not made decided nothing, and the reads that chose the way
+  through are still covered. The static boundary, every read any run
+  might make (`deriveDcb`, `boundarySummary`), is what the command page,
+  `check` and `conflicts` describe. The sandbox's Reads and Store
+  columns show the run's; Store says so when the condition is narrower
+  than what the dry runs fetched.
+- **Narrowing optional parameters (11.0).** Inside `if x is not empty`
+  and after `require x is not empty`, an optional `x` counts as
+  present (`walkPresence`, `conditionPresence`, model.js): emitting it
+  into a required field, or reading by it, is no advisory there. An
+  alias is judged at every place it is used, its chain included, since
+  that is where it is read.
+- **Scenarios owed (11.0).** One per rejection message (rules and
+  `reject`s, `commandRejections`) and one per way to succeed
+  (`commandSuccessesOwed`): plain success without branches, else each
+  arm that emits. A scenario shows an arm when it holds and its run
+  took it (`arms`, `commandCoverageGaps`, evaluate.js) – the command
+  page's gaps card and the skill's `check` both read that one function.
+- **Branches are edited in the code view – a follow-up.** The pages
+  edit the top-level rules and emissions as two lists (`commandLists`)
+  and put them back into the slots they came from
+  (`withCommandLists`, through `patch` in index.html), so an edit never
+  flattens or drops a branch. A branch shows as a read-only card with
+  a way to the code view; a rule joined with and / or likewise. Visual
+  editing of branches (arms, their conditions, a block's steps) is
+  still to do.
 - **No write coverage** (gone with entities, 11.0). It flagged an
   emitted tag whose value was read off an entity instance the command
   had not bound; a group names no instance an event writes, so there is
@@ -358,6 +412,14 @@ and prune what no longer holds.
   read is left out, the toast saying why, as one with `excluding` is.
   The write path refuses the same constructs (`assertStorableBody`),
   so a JSON body or an agent's edit cannot bring one back.
+  11.0 also made a command's body one list of `steps` in place of
+  `conditions` and `publishes`, with branches, `reject` and `all` /
+  `any` conditions (_Reads, rules and the rule adder_). The importer
+  lifts the two lists – 8.x to 10.x, and 11.0 documents exported
+  before the change – into steps, the rules then the emissions
+  (`liftCommandSteps`), which is how they evaluated; the write path
+  refuses them. Part of the same major, so `EVENT_LOG_KEY` waits for
+  the one bump at the merge to `main`.
   **6.1 is the contrast worth knowing**: entity `lifecycle` was additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -1039,6 +1101,14 @@ Watched, Decision, Store. Only the panel scrolls.
   A command is declared with `command`. Spelling it `handler` was
   tried and reverted the same day
   (`docs/research/2026-10-07-handler-keyword.md`).
+  A command's steps (11.0) print in written order, a blank line
+  between a run of rules, of emissions and of branches:
+  `if c => emit E { … }` / `else if c => { … }` / `else => reject "…"`,
+  an arm one `emit` or `reject` after its arrow and a block otherwise.
+  `and` binds tighter than `or`; a bracketed group is kept as a group,
+  so the printer brackets an `or` inside an `and` and a group inside
+  one of its own kind, and nothing else. `not` negates a comparison,
+  never a group – a group says its opposite instead.
   Printing is **lossless by contract**:
   each definition is printed, parsed back and compared
   (`sameDefinition`), and one that does not survive is written as its
@@ -1304,6 +1374,12 @@ Artboards: `design/dcb-queries/` (2026-10).
   leaves `types` out rather than writing it empty. A test holds every
   plan, read and append condition of the shipped models and fixtures
   to it.
+- **The query follows the reads made (11.0).** Reads are lazy, so the
+  deciding run asks only for what its way through the steps needed,
+  and `query` – the append condition – is that. The dry runs still
+  walk every step and every arm, past every refusal, so they fetch
+  what any way might read: more bandwidth for a branching command,
+  never a second round for the arm that was taken.
 - **Held by a test.** Every command scenario of the shipped models
   and the fixtures decides the same through a port as over the log,
   and the call counts above are asserted (evaluate.test.js).
@@ -1571,6 +1647,14 @@ Artboards: `design/dcb-queries/` (2026-10).
      core can shed the log and the editing commands. Held by a test
      that every fixture and shipped model reads the same both ways –
      editing commands and the reader are two routes to one model.
+- **What a consumer reads off a command changed with 11.0.** Its
+  rules and emissions are `steps`, walked through `forEachStep` and
+  its siblings (model.js) – a runtime reading `conditions` or
+  `publishes` finds nothing. A decision reports the arms it took
+  (`arms`) beside its reads, and its `failedRule` names the refusing
+  step by `path` as well as its index among the rules; a `reject`
+  has no index. The append condition is the reads the run made
+  (_The read port_), so a runtime keeps taking `query` as it is.
 - **One attempt; the retry is the caller's (2026-10).** A lost race
   comes back as `conflict` rather than being decided again in here.
   Retrying well means waiting – a backoff, jitter – and this layer is

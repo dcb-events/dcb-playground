@@ -23,6 +23,7 @@ Apply each move wherever it fits, and quote the evidence:
 - **A lifecycle step that exists to reach another step** goes: look at what follows it in the history.
 - **Events no rule tells apart** merge: name, email and phone become contact details.
 - **A rare variant** folds into the common path when it can take that path: an optional reservation becomes a required one.
+- **Commands split per case** merge into one with branches when they decide on the same reads: `if … => emit A { … }  else if … => emit B { … }  else => reject "…"`. A case that takes other parameters keeps them optional, read inside `if x is not empty => …`.
 - **A value fixed at the point of decision** is stored there, so later commands read less.
 - **Definitions no core rule reads** split out, along with their side effects: catalogue data, notes, emails.
 
