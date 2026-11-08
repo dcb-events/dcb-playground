@@ -6809,9 +6809,10 @@ function ruleOperandRef(slice, row, operand, text) {
 // dragged into the order they are checked in.
 function ruleRow(model, slice, condition, i, draggable) {
   // Comparisons joined by and / or (11.0) are not something the rule
-  // editor writes: shown as a sentence, edited in the code view, and
-  // still removable and reorderable here.
-  if (isCompoundCondition(condition)) {
+  // editor writes, nor is a collection function or a record's field:
+  // shown as a sentence, edited in the code view, and still removable
+  // and reorderable here.
+  if (isCompoundCondition(condition) || conditionBeyondEditors(condition)) {
     return h('div', { class: 'rule-row', 'data-rule': draggable ? i : null },
       draggable ? ruleGrip(slice, i) : null,
       qrow('div', { cls: 'row wraps', key: 'rule:' + i },
@@ -6819,7 +6820,9 @@ function ruleRow(model, slice, condition, i, draggable) {
         rejectionMark(condition),
         h('span', { class: 'grow' }),
         reveal(
-          codeViewButton('Edit this rule in the code view – the rule editor writes one comparison'),
+          codeViewButton(isCompoundCondition(condition)
+            ? 'Edit this rule in the code view – the rule editor writes one comparison'
+            : 'Edit this rule in the code view – the rule editor writes no collection function or record field'),
           h('button', {
             class: 'btn tiny danger',
             onclick: () => patchSlice((b) => { b.conditions.splice(i, 1); }),
@@ -7889,6 +7892,10 @@ function eventFields(model, emission, event) {
       h('span', { class: 'nm' }, propertyWords(p.name)),
       h('span', { class: 'muted tiny' }, readable(typeLabel(p))),
       h('span', { class: 'muted tiny' }, '←'),
+      // A collection function or a record's field (11.0) is no choice
+      // the picker has: said as it is, and edited in the code view.
+      operandBeyondEditors(bound) ? h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
+        codeViewButton('This value is edited in the code view')) :
       pick([['', 'unset'], ...fieldOptions], bound === undefined ? '' : JSON.stringify(bound),
         (v) => patchSlice((b) => {
           const e = b.publishes.find((x) => x.name === emission.name);
@@ -8092,7 +8099,7 @@ function changeAdder(model, eventName, emission) {
     if (!projection || derivedOf(projection)) return false;
     // A handler that branches on this event (11.0) is the code view's
     // to edit; writing one operation here would replace its branches.
-    if ((projection.handlers || []).some((x) => x && x.event === eventName && isConditionalHandler(x))) return false;
+    if ((projection.handlers || []).some((x) => x && x.event === eventName && handlerInCode(x))) return false;
     if (!emission) return true;
     const { reads, unreached } = changeArguments(model, emission, name);
     return reads.length > 0 || !unreached.length;
@@ -9722,12 +9729,17 @@ function unhandledEventChoices(eventNames, handlers, current) {
   return (eventNames || []).filter((name) => !taken.has(name));
 }
 
-// A branched handler (11.0) stays in the draft as it is stored: the
+// A handler the row editor cannot write – one that branches, or sets
+// a record whole (11.0) – stays in the draft as it is stored: the
 // editor shows it and leaves it to the code view, so a save never
 // flattens or drops it.
+function handlerInCode(handler) {
+  return isConditionalHandler(handler) || (!!handler && operandSource(handler.value) === 'record');
+}
+
 function projectionDraftFrom(body) {
   const draft = deepClone(body);
-  draft.handlers = (draft.handlers || []).map((handler) => (isConditionalHandler(handler) ? handler
+  draft.handlers = (draft.handlers || []).map((handler) => (handlerInCode(handler) ? handler
     : draftFromOperand({ event: handler.event, operation: handler.operation }, 'value', handler.value)));
   return draft;
 }
@@ -9759,8 +9771,15 @@ function cleanProjectionBody(draft) {
       for (const [key, value] of Object.entries(o.arguments || {})) {
         if (value !== undefined && value !== '') (cleaned.arguments = cleaned.arguments || {})[key] = value;
       }
+      if (o.field !== undefined) cleaned.field = o.field;
       return cleaned;
     };
+    // One operand held as it is (11.0) – a collection's result, a
+    // record's field – holds what its author typed it as.
+    if (derivedHolds(draft.derived)) {
+      return { ...parameters, valueType: draft.valueType, isList: !!draft.isList,
+        derived: { leftHandSide: operand(draft.derived.leftHandSide) } };
+    }
     const computes = draft.derived.operator !== undefined;
     const derived = computes
       ? {
@@ -9798,9 +9817,10 @@ function cleanProjectionBody(draft) {
     // through here, including the one between picking the event and
     // picking the value.
     handlers: handlers
-      .filter((handler) => isConditionalHandler(handler) || draftOperand(handler, 'value') !== undefined)
-      .map((handler) => (isConditionalHandler(handler)
-        ? { event: handler.event, steps: handler.steps }
+      .filter((handler) => handlerInCode(handler) || draftOperand(handler, 'value') !== undefined)
+      .map((handler) => (handlerInCode(handler)
+        ? (isConditionalHandler(handler) ? { event: handler.event, steps: handler.steps }
+          : { event: handler.event, operation: handler.operation, value: handler.value })
         : {
             event: handler.event,
             operation: handler.operation,
@@ -10377,7 +10397,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     // is built from it, and a value of the old type is not a value
     // of the new one.
     for (const handler of draft.handlers || []) {
-      if (!isConditionalHandler(handler)) { handler.value = ''; handler.valueText = ''; }
+      if (!handlerInCode(handler)) { handler.value = ''; handler.valueText = ''; }
     }
     draft.initialValue = defaultInitialValue(model, draft);
   };
@@ -10425,7 +10445,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       draft.initialValue = defaultInitialValue(model, draft);
       const allowed = operationsFor(model, draft);
       for (const handler of draft.handlers || []) {
-        if (!isConditionalHandler(handler) && !allowed.includes(handler.operation)) handler.operation = 'set';
+        if (!handlerInCode(handler) && !allowed.includes(handler.operation)) handler.operation = 'set';
       }
       render();
     });
@@ -10506,7 +10526,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
   };
 
   const declaredHandlerRows = (draft.handlers || []).map((handler, i) => {
-    if (isConditionalHandler(handler)) return branchedHandlerRow(model, draft, handler, i);
+    if (handlerInCode(handler)) return branchedHandlerRow(model, draft, handler, i);
     const event = model['event-definitions'][handler.event];
     const operations = operationsFor(model, draft);
     if (!operations.includes(handler.operation)) handler.operation = operations[0];
@@ -10548,8 +10568,9 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
   });
 
   // A branched handler (11.0): its event, then a line per arm – what it
-  // is applied under and what it does – shown, never edited here. The
-  // code view edits it; this row can still remove it.
+  // is applied under and what it does – shown, never edited here; so is
+  // one that sets a record whole. The code view edits it; this row can
+  // still remove it.
   function branchedHandlerRow(model, draft, handler, i) {
     return h('div', { class: 'phandler phandler-branched' },
       h('span', { class: 'pk' }, 'on'),
@@ -10560,7 +10581,8 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
           h('span', { class: 'pk' }, ' ⇒ '),
           h('span', { class: 'verb tok' }, arm.operation || '?'), ' ',
           operandWords(arm.value)))),
-      codeViewButton('A handler\'s branches are edited in the code view'),
+      codeViewButton(isConditionalHandler(handler) ? 'A handler\'s branches are edited in the code view'
+        : 'A record set whole is edited in the code view'),
       h('button', {
         class: 'btn tiny danger', title: 'Remove this handler',
         onclick: () => { draft.handlers.splice(i, 1); render(); },
@@ -10613,7 +10635,18 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     render();
   };
 
-  const derivedSection = !draft.derived ? null : projectionSection('derived',
+  // What the side editors cannot write (11.0) – one operand held as it
+  // is, a collection function, a record's field – is shown as the code
+  // view writes it and edited there.
+  const derivedInCode = !!draft.derived && (derivedHolds(draft.derived)
+    || derivedOperands(draft.derived).some(operandBeyondEditors));
+  const derivedSection = !draft.derived ? null : derivedInCode ? projectionSection('derived',
+    hint('proj-derived', 'Derived', [
+      'One value over other projections – a comparison, a computation, a collection function over an open read, a record\'s field.',
+      'Their queries are its query, so reading it guards the append exactly as reading them would.',
+    ]), null,
+    h('div', { class: 'adder' }, h('code', { class: 'op' }, derivedText(draft.derived)),
+      codeViewButton('Edit what it derives in the code view – the editors here write one comparison or computation of two reads'))) : projectionSection('derived',
     hint('proj-derived', 'Derived', [
       'One comparison or computation over other projections – read by this one\'s parameters – and its own parameters.',
       'A comparison holds a boolean; a computation (+, -, *, min, max) a number, null while a side is null.',

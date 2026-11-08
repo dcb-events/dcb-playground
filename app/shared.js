@@ -921,6 +921,12 @@ function lifecycleReadOf(operand, body, projectionName) {
     return { key: JSON.stringify(entries), each: entries.some(([, value]) => operandSource(value) === 'each') };
   };
   const source = operandSource(operand);
+  // A collection function over an open read (11.0) reads every present
+  // instance – no one instance is meant, as with `each`.
+  if (source === 'collection') {
+    const read = operandRead(operand);
+    return read && read.projection === projectionName ? { key: JSON.stringify(readTagEntries(read)), each: true } : null;
+  }
   if (source === 'projection-read') return operand.projection === projectionName ? instance(operand.tags) : null;
   if (source !== 'alias-property') return null;
   const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
@@ -1897,16 +1903,19 @@ function operandWords(operand) {
     return operand.length ? operand.map(operandWords).join(', ') : '[]';
   }
   switch (operandSource(operand)) {
-    case 'alias-property':
+    case 'alias-property': {
       // No property means a bound projection's single value, which the
       // alias already names. A group member's arguments are its own,
-      // so they follow it, the way a read in place's do.
-      if (!operand.property) return propertyWords(operand.alias);
+      // so they follow it, the way a read in place's do. A record
+      // value's field (11.0) follows the way a member does.
+      const field = (words) => (operand.field === undefined ? words : memberWords(words, operand.field));
+      if (!operand.property) return field(propertyWords(operand.alias));
       if (operand.arguments && Object.keys(operand.arguments).length) {
-        return memberWords(operand.alias, operand.property) + ' (' + Object.entries(operand.arguments)
-          .map(([name, value]) => `${name} = ${operandWords(value)}`).join(', ') + ')';
+        return field(memberWords(operand.alias, operand.property) + ' (' + Object.entries(operand.arguments)
+          .map(([name, value]) => `${name} = ${operandWords(value)}`).join(', ') + ')');
       }
-      return memberWords(operand.alias, operand.property);
+      return field(memberWords(operand.alias, operand.property));
+    }
     case 'parameter':
       return operand.property
         ? memberWords(propertyWords(operand.parameterName), operand.property)
@@ -1931,10 +1940,19 @@ function operandWords(operand) {
     case 'projection-read': {
       const { name, values, member, memberValues } = projectionReadParts(operand);
       const call = (head, list) => (list.length ? `${head} (${list.map((v) => v.words).join(', ')})` : head);
-      return member === undefined ? call(name, values) : `${call(name, values)} · ${call(member, memberValues)}`;
+      const read = member === undefined ? call(name, values) : `${call(name, values)} · ${call(member, memberValues)}`;
+      return operand.field === undefined ? read : memberWords(read, operand.field);
     }
     case 'tag-literal': return operandText(operand);
     case 'each': return 'each ' + operandWords(operand.each);
+    // A collection function, an open tag, a where's value and a record
+    // set whole (11.0) read as the code view writes them: constructs
+    // the pages show and leave to the code view to edit.
+    case 'collection':
+    case 'open':
+    case 'instance-value':
+    case 'record':
+      return operandText(operand);
     default:
       if (typeof operand === 'string') return `"${operand}"`;
       // A record is a static value with no operand shape – it reads as
@@ -1977,6 +1995,23 @@ const PREDICATE_WORDS = {
   isTrue: ['holds', 'does not hold'],
   isFalse: ['does not hold', 'holds'],
 };
+
+// Whether an operand is one only the code view writes (11.0): a
+// collection function, a record value's field, a record set whole –
+// shown on the pages, edited in the code view, never dropped by them.
+function operandBeyondEditors(operand) {
+  if (Array.isArray(operand)) return operand.some(operandBeyondEditors);
+  const source = operandSource(operand);
+  if (['collection', 'open', 'instance-value', 'record'].includes(source)) return true;
+  if (operand && typeof operand === 'object' && operand.field !== undefined) return true;
+  if (source === 'projection-read') return readTagOperands(operand).some(operandBeyondEditors);
+  return false;
+}
+
+// Whether a condition holds such an operand anywhere.
+function conditionBeyondEditors(condition) {
+  return conditionLeaves(condition).some((leaf) => conditionOperands(leaf).some(operandBeyondEditors));
+}
 
 // A condition as a sentence. Returns parts so a renderer can style the
 // operands without re-parsing the text. `model` and `body` are accepted

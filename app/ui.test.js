@@ -6417,6 +6417,154 @@ command Open(accountId: AccountId) {
   sandbox.clearActiveModelId();
 }
 
+// ---------------------------------------------------------------
+// Open reads, collection functions and record values (11.0): every
+// page shows them as written, read-only with the way to the code
+// view, and an edit on the page never drops one.
+// ---------------------------------------------------------------
+{
+  const SEATS = `model "Seats"
+
+tag type CourseId = string
+tag type ReservationId = string
+tag type CustomerId = string
+type Seats = integer
+record Address { street: string, city: string }
+
+event SeatsWereReserved { tag courseId: CourseId, tag reservationId: ReservationId, numberOfSeatsReserved: Seats }
+event SeatReservationWasCancelled { tag courseId: CourseId, tag reservationId: ReservationId }
+event CustomerMoved { tag customerId: CustomerId, address: Address }
+event CustomerRelocated { tag customerId: CustomerId, street: string, city: string }
+event ParcelSent { tag customerId: CustomerId, city: string }
+
+projection ReservationSeats (tag courseId: CourseId, tag reservationId: ReservationId): Seats = 0 {
+  on SeatsWereReserved => set event.data.numberOfSeatsReserved
+  on SeatReservationWasCancelled => set 0
+}
+
+derived projection CourseSeatsReserved (tag courseId: CourseId): integer {
+  sum(ReservationSeats(courseId, *))
+}
+
+projection CustomerAddress (tag customerId: CustomerId): Address = null {
+  on CustomerMoved => set event.data.address
+  on CustomerRelocated => set { street: event.data.street, city: event.data.city }
+}
+
+command ReserveSeats(courseId: CourseId, reservationId: ReservationId, seats: Seats) {
+  require count(ReservationSeats(courseId, *) where value > 2) < 3
+    else reject "Too many big reservations"
+  require seats > 0
+    else reject "No seats"
+
+  emit SeatsWereReserved { courseId, reservationId, numberOfSeatsReserved: seats }
+}
+
+command SendParcel(customerId: CustomerId, city: string) {
+  alias address = CustomerAddress(customerId)
+
+  require address.city == city
+    else reject "Wrong city"
+
+  emit ParcelSent { customerId, city: address.city }
+}
+
+command Cancel(courseId: CourseId, reservationId: ReservationId) {
+  emit SeatReservationWasCancelled { courseId, reservationId }
+}
+
+command Move(customerId: CustomerId, address: Address) {
+  emit CustomerMoved { customerId, address }
+}
+
+command Relocate(customerId: CustomerId, street: string, city: string) {
+  emit CustomerRelocated { customerId, street, city }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Seats');
+  sandbox.applyModelSource(id, SEATS);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+  const page = (name, tab = 'definition') => {
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+    sandbox.state.projTab = tab;
+    sandbox.renderProjections(model(), main);
+    return textOf(main);
+  };
+
+  check('the projection pages show a collection function and a record set whole, with the way to edit them', () => {
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const derived = page('CourseSeatsReserved');
+    eq(derived.includes('sum(ReservationSeats(courseId, *))'), true, derived.slice(0, 400));
+    eq(derived.includes('Edit in code'), true, 'and the way to edit it');
+    const address = page('CustomerAddress');
+    eq(address.includes('{ street: event.data.street, city: event.data.city }'), true, address.slice(0, 600));
+    eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'].CustomerAddress.handlers,
+      'painting it changed nothing');
+    eq(page('CustomerAddress', 'lifecycle').length > 0, true, 'the Lifecycle tab paints');
+    eq(page('ReservationSeats', 'lifecycle').length > 0, true, 'and for the projection an open read collects');
+    sandbox.state.projDraft = null;
+    sandbox.state.projTab = 'definition';
+  });
+
+  check('an unrelated edit on the projection page keeps a record set whole and a collection function', () => {
+    const before = model()['projection-definitions'].CustomerAddress.handlers;
+    const draft = projectionDraftFrom(model()['projection-definitions'].CustomerAddress);
+    draft.handlers = draft.handlers.filter((h) => h.event !== 'CustomerMoved');
+    sandbox.updateDefinition('projection-definition', id, 'CustomerAddress', cleanProjectionBody(draft));
+    eq(model()['projection-definitions'].CustomerAddress.handlers, [before[1]], 'the record kept whole');
+    const derived = model()['projection-definitions'].CourseSeatsReserved;
+    const kept = projectionDraftFrom(derived);
+    sandbox.updateDefinition('projection-definition', id, 'CourseSeatsReserved', cleanProjectionBody(kept));
+    eq(model()['projection-definitions'].CourseSeatsReserved, derived, 'the collection kept, and what it holds');
+    sandbox.addDefinition('projection-definition', id, 'CustomerCity', {
+      tags: [{ name: 'customerId', tagType: 'CustomerId' }], valueType: 'string', isList: false,
+      derived: { leftHandSide: { projection: 'CustomerAddress', tags: { customerId: { parameterName: 'customerId' } }, field: 'city' } },
+    });
+    const city = model()['projection-definitions'].CustomerCity;
+    sandbox.updateDefinition('projection-definition', id, 'CustomerCity', cleanProjectionBody(projectionDraftFrom(city)));
+    eq(model()['projection-definitions'].CustomerCity, city, 'a field kept');
+    sandbox.applyModelSource(id, SEATS);
+  });
+
+  check('the command page shows a collection function and a field, read-only, and every view paints', () => {
+    sandbox.state.slice = 'ReserveSeats';
+    const slice = sandbox.sliceOf(model(), 'ReserveSeats');
+    const decision = textOf(sandbox.stepDecision(model(), slice));
+    eq(decision.includes('count(ReservationSeats(courseId, *) where value > 2)'), true, decision.slice(0, 600));
+    eq(decision.includes('Edit in code'), true, 'edited in the code view');
+    const parcel = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SendParcel')));
+    eq(parcel.includes('address · city'), true, parcel.slice(0, 600));
+    sandbox.state.slice = 'SendParcel';
+    sandbox.state.openEvent = 'ParcelSent';
+    const emits = textOf(sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'SendParcel')));
+    eq(emits.includes('address · city') && emits.includes('Edit in code'), true, emits.slice(0, 600));
+    sandbox.state.openEvent = null;
+    sandbox.state.slice = 'ReserveSeats';
+    for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
+      sandbox[fn](model(), sandbox.document.createElement('div'));
+    }
+    const map = (() => { const main = sandbox.document.createElement('div'); sandbox.renderRuleMap(model(), main); return textOf(main); })();
+    eq(map.includes('ReservationSeats'), true, 'the rule map names the projection an open read reads');
+  });
+
+  check('editing the rules on the command page keeps a collection function', () => {
+    sandbox.state.slice = 'ReserveSeats';
+    const before = model()['command-definitions'].ReserveSeats.steps[0];
+    sandbox.patch('command-definition', 'ReserveSeats', (b) => { b.conditions.splice(1, 1); });
+    const steps = model()['command-definitions'].ReserveSeats.steps;
+    eq(steps[0], before, 'the collection rule unchanged');
+    eq(steps.filter((step) => sandbox.stepKind(step) === 'rule').length, 1, 'the other rule gone');
+    sandbox.applyModelSource(id, SEATS);
+  });
+
+  sandbox.clearActiveModelId();
+}
+
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the
 // link is unpacked the moment it is opened.
