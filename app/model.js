@@ -3599,9 +3599,11 @@ function readArgumentsProblem(projection, read, label, chained = () => null) {
 //   lists only an isbn);
 // - a handled event lists one of those types twice (an assignment
 //   naming both the new holder and the one replaced), so it reaches
-//   both instances and a declarative handler fires for both: the
+//   both instances and an unconditional handler fires for both: the
 //   instructor being replaced would "gain" the course their successor
-//   was just assigned.
+//   was just assigned. A branched handler (11.0) whose every chain
+//   compares a carrying field with the tag tells them apart, and clears
+//   it (`handlerTellsCarriersApart`).
 function projectionTagProblem(model, projectionName) {
   const projection = projectionsOf(model)[projectionName];
   const tagTypes = projectionTagTypes(model, projectionName);

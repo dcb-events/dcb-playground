@@ -356,10 +356,38 @@ and prune what no longer holds.
 - **One handler per event type, per projection** — and it is a real
   constraint, not a convenience: tag matching is by _value_, whichever
   listed property carries it, so an event listing one identifier type
-  in two properties reaches both reads by that type and a handler fires
-  for both. A declarative handler cannot tell them apart; the fix is to
-  list only one or split the event (one fact each), and an advisory on the projection points at the ambiguity
-  (`projectionTagProblem`). The editors offer only unhandled events.
+  in two properties (a transfer's `from` and `to`, an owner and an
+  invitee) reaches both reads by that type and an unconditional
+  handler fires for both. Since 11.0 the handler itself tells them
+  apart: it branches on the event (`on E { if event.data.from ==
+  accountId => decrement …  if event.data.to == accountId => increment
+  … }`, dcb-events.github.io#99), and the advisory on the projection
+  (`projectionTagProblem`) clears when every chain of that handler
+  compares a carrying field with the tag (`handlerTellsCarriersApart`)
+  — simple and safe: an `else` counts only inside a chain that names
+  one. Its message suggests the condition first, then splitting the
+  event or listing one tag. Role tag types and split events are no
+  longer needed for this; they remain the way to a *narrower
+  boundary*, since a condition filters the fold and never the query —
+  a read of `Balance(a1)` still conflicts with every transfer naming
+  `a1`, either side. The editors offer only unhandled events.
+- **A branched handler's conditions read the event and the
+  projection's own tags, nothing else** (11.0). A leaf is an event
+  field — a record's field one hop in, `event.data.address.city`,
+  as a parameter's is — `==` or `!=` a tag by name
+  (`{parameterName}`) or a literal, joined with `and` / `or`
+  (`all` / `any`, package 3's combinators). Not another projection
+  and not the state: a fold stays self-contained, its query is its
+  handled types, and evaluation needs nothing but the read's tag
+  values (`evCompileBranchedHandler`). Separate `if`s all apply in
+  written order, so a self-transfer nets 0; a chain applies its first
+  match. One operation per arm, because a second would act on the
+  same value — it is a second `if`. Two separate `if`s that both `set`
+  on one event are advised (`handlerAdvisories`): both may match, and
+  the last one wins. Everything that reads a handler's operations goes
+  through `handlerArms` (model.js), so renames, enum members, the
+  Lifecycle tab and the command page see every arm. `<` / `>` wait
+  for a case.
   The opposite case is zero carriers: a handled event listing no tag of
   a type the projection is tagged by never reaches it. That is an
   advisory on the *projection* too (`projectionTagProblem`, via
@@ -420,6 +448,14 @@ and prune what no longer holds.
   (`liftCommandSteps`), which is how they evaluated; the write path
   refuses them. Part of the same major, so `EVENT_LOG_KEY` waits for
   the one bump at the merge to `main`.
+  11.0 also lets a handler branch: `{event, steps}` in place of
+  `{event, operation, value}`, each step an `if` chain
+  (`HandlerBranchStep`: `branches` of `{condition, operation, value}`,
+  `otherwise` one `{operation, value}`) — the command's branch step
+  with one operation where a command's arm holds steps, and one handler
+  entry per `on E` block. A reader without it finds a handler with no
+  operation, so it is part of the major; no older document has one,
+  so nothing is converted (schema revision 11.0.4).
   **6.1 is the contrast worth knowing**: entity `lifecycle` was additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -587,6 +623,17 @@ on Projections, inside a group's section, and in the definition modals.
 - **`+ handler` sits under the handlers**, not in the section's
   heading: with a few rows the heading's button read as belonging to
   none of them, and the next handler goes at the bottom anyway.
+- **A branched handler is shown, not edited, here** (11.0,
+  `branchedHandlerRow`): its event, then a line per arm – `if
+  event.data.from == accountId ⇒ decrement event.data.amount` – with
+  `Edit in code` and `×`, as a command's branches are on its page. The
+  draft carries it as stored (`projectionDraftFrom`) and
+  `cleanProjectionBody` writes it back untouched, so an edit elsewhere
+  on the projection never flattens or drops it. A visual editor for
+  arms was left out: conditions are rare, short and read best as text.
+  The command page's change rows say each arm the same way, and the
+  change adder does not offer a projection whose handler for that event
+  branches – writing one operation would replace the branches.
 - **A projection with handlers has a Lifecycle tab** (`projectionLifecycle`
   and `projectionMovements`, index.html; `lifecycleOf`, shared.js),
   beside Definition and Checks: how its value moves. Nothing is stored
@@ -600,7 +647,9 @@ on Projections, inside a group's section, and in the definition modals.
   through other projections as a rule. In the machine, states are the
   members or `false`/`true` (`null` first when it starts or can be set
   there); a handler setting
-  a member is an arrow, starting where its publishers' rules allow
+  a member is an arrow – each arm of a branched one its own, labelled
+  with what it is applied under (`if event.data.seats == 0`, `else`),
+  and the movements list arms the same way – starting where its publishers' rules allow
   (`require`, read as a direct read or a group alias alike). A command nothing guards gets the pink dot, and
   its arrow starts at the initial state, dashed – or, when it leads
   back there, at every other state reached. What cannot be read
@@ -1109,6 +1158,15 @@ Watched, Decision, Store. Only the panel scrolls.
   so the printer brackets an `or` inside an `and` and a group inside
   one of its own kind, and nothing else. `not` negates a comparison,
   never a group – a group says its opposite instead.
+  A handler's branches (11.0) print the same way inside `on E { … }`,
+  one line per arm and one operation each, every `if` opening a chain
+  of its own: `if event.data.from == accountId => decrement
+  event.data.amount`. The parser reads a comparison of its own there
+  (`handlerComparison`): an event field on the left, `==` / `!=`, a tag
+  of the projection or a literal on the right, so a read of another
+  projection, `state`, an unknown name, an ordering, a second operation
+  or a block is an error at the token that says it. Completion offers
+  `if` / `else`, `event.data`, the tags and the operations there.
   Printing is **lossless by contract**:
   each definition is printed, parsed back and compared
   (`sameDefinition`), and one that does not survive is written as its

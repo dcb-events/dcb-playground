@@ -3601,9 +3601,11 @@ function readArgumentsProblem(projection, read, label, chained = () => null) {
 //   lists only an isbn);
 // - a handled event lists one of those types twice (an assignment
 //   naming both the new holder and the one replaced), so it reaches
-//   both instances and a declarative handler fires for both: the
+//   both instances and an unconditional handler fires for both: the
 //   instructor being replaced would "gain" the course their successor
-//   was just assigned.
+//   was just assigned. A branched handler (11.0) whose every chain
+//   compares a carrying field with the tag tells them apart, and clears
+//   it (`handlerTellsCarriersApart`).
 function projectionTagProblem(model, projectionName) {
   const projection = projectionsOf(model)[projectionName];
   const tagTypes = projectionTagTypes(model, projectionName);
@@ -8393,9 +8395,11 @@ function loadPredefinedModel(index) {
 // `projectFromStore`, one attempt each (_Through a store_, below).
 //
 // **Closures, not generated code.** Every handler compiles to a small
-// JavaScript function `(state, event) => state`, one per handler per
-// projection, built by walking the declarative operand tree and
-// closing over it. What this deliberately avoids is emitting source: a
+// JavaScript function `(state, event, tags) => state`, one per handler
+// per projection, built by walking the declarative operand tree and
+// closing over it – a branched one (11.0) over its chains, its
+// conditions reading the event and the values the read gave the
+// projection's tags, nothing else. What this deliberately avoids is emitting source: a
 // generated fold would be a third copy of semantics that `deriveDcb`
 // and validation already hold, and the only copy of the three you
 // could not read, grep or breakpoint. No authored code runs here at

@@ -22,6 +22,7 @@ Apply each move wherever it fits, and quote the evidence:
 - **A state no rule reads** moves to a read model. Calculate it from what remains: paid from payments.
 - **A lifecycle step that exists to reach another step** goes: look at what follows it in the history.
 - **Events no rule tells apart** merge: name, email and phone become contact details.
+- **Events split only to name a role** merge back: a projection's handler tells the sides of one event apart, `if event.data.owner == customerId => …`. Keep a role tag type only where a narrower boundary is worth it, since a condition never narrows the query.
 - **A rare variant** folds into the common path when it can take that path: an optional reservation becomes a required one.
 - **Commands split per case** merge into one with branches when they decide on the same reads: `if … => emit A { … }  else if … => emit B { … }  else => reject "…"`. A case that takes other parameters keeps them optional, read inside `if x is not empty => …`.
 - **A value fixed at the point of decision** is stored there, so later commands read less.

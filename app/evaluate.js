@@ -28,9 +28,11 @@
 // `projectFromStore`, one attempt each (_Through a store_, below).
 //
 // **Closures, not generated code.** Every handler compiles to a small
-// JavaScript function `(state, event) => state`, one per handler per
-// projection, built by walking the declarative operand tree and
-// closing over it. What this deliberately avoids is emitting source: a
+// JavaScript function `(state, event, tags) => state`, one per handler
+// per projection, built by walking the declarative operand tree and
+// closing over it – a branched one (11.0) over its chains, its
+// conditions reading the event and the values the read gave the
+// projection's tags, nothing else. What this deliberately avoids is emitting source: a
 // generated fold would be a third copy of semantics that `deriveDcb`
 // and validation already hold, and the only copy of the three you
 // could not read, grep or breakpoint. No authored code runs here at
