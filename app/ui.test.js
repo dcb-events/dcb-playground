@@ -2821,6 +2821,45 @@ check('importing an older model with entities says what became of them', () => {
     roundTrips();
   });
 
+  check('a for each is renamed on the page, every use inside following, and its source changed', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourses';
+    sandbox.patch('command-definition', 'ArchiveCourses', (b) => {
+      b.properties.push({ name: 'otherIds', propertyType: 'CourseId', isOptional: false, isList: true });
+    });
+    const at = cmd('ArchiveCourses').steps.findIndex((s) => sandbox.stepKind(s) === 'loop');
+    button('ArchiveCourses', 'Edit', 0).onclick();
+    eq(sandbox.state.editStep, 'loop:' + at, 'the loop\'s head is open');
+    eq(sandbox.state.loopDraft, { source: 'list:' + JSON.stringify({ parameterName: 'courseIds' }), tags: {}, names: { _: 'courseId' } }, 'opened answered');
+    const name = () => findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'input' && /loop-name/.test(n.className || ''))[0];
+    name().oninput({ target: { value: 'archived' } });
+    button('ArchiveCourses', 'Save').onclick();
+    const loop = () => cmd('ArchiveCourses').steps[at];
+    eq(loop().forEach, ['archived'], 'renamed');
+    eq(printed('ArchiveCourses').includes('for each archived in courseIds {\n    if CourseStatus(archived) == Existent => emit CourseArchived { courseId: archived }\n  }'),
+      true, 'every use inside follows: ' + printed('ArchiveCourses'));
+    // A new source: the element proposed from it, the uses following.
+    button('ArchiveCourses', 'Edit', 0).onclick();
+    const source = findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'select')[0];
+    source.onchange({ target: { value: 'list:' + JSON.stringify({ parameterName: 'otherIds' }) } });
+    eq(name().attributes.placeholder, 'otherId', 'named after the list');
+    button('ArchiveCourses', 'Save').onclick();
+    eq([loop().forEach, loop().in], [['otherId'], { parameterName: 'otherIds' }], 'its source and name');
+    eq(printed('ArchiveCourses').includes('if CourseStatus(otherId) == Existent => emit CourseArchived { courseId: otherId }'), true, printed('ArchiveCourses'));
+    eq(advisedOtherwise(model()).filter((a) => a.name === 'ArchiveCourses'), [], 'advisory-clean');
+    eq(textOf(paintAll('ArchiveCourses')).includes('Edit in code'), false, 'nothing left to the code view');
+    roundTrips();
+  });
+
+  check('a name of a loop outside it is no use of it: a rename leaves a payload name alone', () => {
+    const body = sandbox.deepClone(cmd('ArchiveCourses'));
+    body.steps.unshift({ condition: { leftHandSide: { parameterName: 'otherIds' }, predicate: 'isNotEmpty' }, rejection: 'None' });
+    body.steps.push({ forEach: ['otherIds'], in: { parameterName: 'courseIds' }, steps: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'otherIds' } } }] });
+    sandbox.setLoopHead(body, [body.steps.length - 1], { names: ['c'] });
+    eq(body.steps[0].condition.leftHandSide, { parameterName: 'otherIds' }, 'the rule outside keeps its name');
+    eq(body.steps[body.steps.length - 1].steps[0].parameters.courseId, { parameterName: 'c' }, 'the use inside follows');
+  });
+
   check('a for each over an open read names each open tag', () => {
     sandbox.applyModelSource(id, swap(sandbox.modelToSource(model()), '// Commands', [
       'projection Seat (tag courseId: CourseId, tag studentId: StudentId): boolean = false {',

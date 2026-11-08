@@ -7456,9 +7456,10 @@ function codeViewButton(title) {
 // `emit` with the emission's own field editor, `reject` with its
 // message, and, outside a loop, `require` and another `if`. Inside a
 // loop an arm is one `emit` or one `reject`, so its adders go once it
-// has one. What no editor here writes – a collection function in a
-// condition, a loop's source once made – shows as the code view
-// writes it, with the way there.
+// has one. A loop's head is changed in the questions that made it
+// (`loopAdder`'s `edit`). What no editor here writes – a comparison no
+// picker offers a side of – shows as the code view writes it, with the
+// way there.
 const stepPathKey = (path) => path.join('/');
 
 // ↑ / ↓ for a step or an arm among `count` siblings, and its ×.
@@ -7670,10 +7671,11 @@ function branchEditor(model, slice, branch, path, { loop = null, count = 1 } = {
   return out;
 }
 
-// A loop: what it runs over, under which names, and its steps. Its head
-// is set when it is made; changing the source or a name afterwards is
-// the code view's, since every step inside names them.
+// A loop: what it runs over, under which names, and its steps. Edit
+// opens its head in the questions that made it (`loopAdder`); a name
+// renamed there is renamed wherever the steps inside read it.
 function loopEditor(model, slice, loop, path, { count = 1 } = {}) {
+  const key = 'loop:' + stepPathKey(path);
   return [
     h('div', { class: 'row' },
       h('span', { class: 'muted tiny' }, 'For each – once per element, in order'),
@@ -7683,10 +7685,14 @@ function loopEditor(model, slice, loop, path, { count = 1 } = {}) {
         class: 'btn tiny danger', title: 'Remove this for each and what it emits',
         onclick: () => patchSlice((b) => removeStepAt(b, path)),
       }, '×')),
-    qrow('div', { cls: 'row wraps arm-line', key: 'loop:' + stepPathKey(path) },
-      h('span', { class: 'sentence' }, h('span', { class: 'verb' }, loopWords(loop))),
-      h('span', { class: 'grow' }),
-      reveal(codeViewButton('A for each’s names and source are changed in the code view – the steps inside name them'))),
+    state.editStep === key ? h('div', { class: 'card arm-editor' }, loopAdder(model, slice, { path, loop }))
+      : qrow('div', { cls: 'row wraps arm-line', key },
+        h('span', { class: 'sentence' }, h('span', { class: 'verb' }, loopWords(loop))),
+        h('span', { class: 'grow' }),
+        reveal(h('button', {
+          class: 'btn tiny', title: 'Change what it runs over, or rename its names – every use inside follows',
+          onclick: () => { closeForms(); state.editStep = key; render(); },
+        }, 'Edit'))),
     h('div', { class: 'arm-body' }, ...stepsEditor(model, slice, loopSteps(loop), [...path, 'each'], { loop })),
   ];
 }
@@ -7862,13 +7868,38 @@ function loopSourceChoices(model, slice) {
   return [...lists, ...open];
 }
 
-function loopAdder(model, slice) {
-  const draft = state.loopDraft || (state.loopDraft = { source: '', tags: {}, names: {} });
+// The same questions change a loop once made (`edit`: its path and the
+// loop), opened answered (`loopDraftFrom`): a new source, new names, or
+// both, written by `setLoopHead` – every use of a renamed name inside
+// follows, and a name the steps read cannot be dropped by a source
+// that gives fewer.
+function loopDraftFrom(loop) {
+  const source = loop.in;
+  const names = loopNames(loop);
+  if (operandSource(source) === 'projection-read' && readTagOperands(source).some((tag) => operandSource(tag) === 'open')) {
+    const entries = readTagEntries(source);
+    const open = entries.filter(([, value]) => operandSource(value) === 'open').map(([name]) => name);
+    return {
+      source: 'open:' + source.projection,
+      tags: Object.fromEntries(entries.map(([name, value]) => [name, operandSource(value) === 'open' ? '*' : JSON.stringify(value)])),
+      names: Object.fromEntries(open.map((name, i) => [name, names[i] || ''])),
+    };
+  }
+  return { source: 'list:' + JSON.stringify(source), tags: {}, names: { _: names[0] || '' } };
+}
+
+function loopAdder(model, slice, edit = null) {
+  const draft = state.loopDraft || (state.loopDraft = edit ? loopDraftFrom(edit.loop) : { source: '', tags: {}, names: {} });
   const rows = loopSourceChoices(model, slice);
+  // A loop's own source is on offer even where the choices would not
+  // list it so – it is what the loop runs over now.
+  if (edit && draft.source.startsWith('list:') && !rows.some(([v]) => v === draft.source)) {
+    rows.unshift([draft.source, operandWords(edit.loop.in)]);
+  }
   if (draft.source && !rows.some(([v]) => v === draft.source)) draft.source = '';
   const scope = operandChoicesAbove(model, slice);
   const taken = [...(slice.payload || []).map((p) => p && p.name), ...(slice.reads || []).map((b) => b && b.alias)].filter(Boolean);
-  const close = () => { state.loopDraft = null; state.adder = null; render(); };
+  const close = () => { state.loopDraft = null; state.adder = null; state.editStep = null; render(); };
 
   // The source as it would be stored, and the names it asks for.
   let source = null;
@@ -7913,8 +7944,15 @@ function loopAdder(model, slice) {
   const submit = () => {
     if (!source) return toast(draft.source ? 'Leave at least one tag open (*) and one bound.' : 'Pick what it runs over.', true);
     if (problem) return toast(problem, true);
+    if (edit) {
+      const read = [...loopNamesRead(slice.body, edit.path)];
+      const lost = read.filter((name) => loopNames(edit.loop).indexOf(name) >= names.length);
+      if (lost.length) return toast(`"${lost[0]}" is read inside – a source with fewer names would leave it naming nothing.`, true);
+    }
     state.loopDraft = null;
     state.adder = null;
+    state.editStep = null;
+    if (edit) { patchSlice((b) => setLoopHead(b, edit.path, { names, source })); return; }
     patchSlice((b) => insertStepAt(b, [], { forEach: names, in: source, steps: [] }, newStepIndex(b, 'loop')));
   };
   const stageRow = (label, ...controls) => h('div', { class: 'rule-stage' },
@@ -7943,7 +7981,7 @@ function loopAdder(model, slice) {
         oninput: (e) => { draft.names[slot.key] = e.target.value; },
       }))) : null,
     h('div', { class: 'adder' },
-      source ? h('button', { class: 'btn primary', onclick: submit }, 'Add for each')
+      source ? h('button', { class: 'btn primary', onclick: submit }, edit ? 'Save' : 'Add for each')
         : h('span', { class: 'muted tiny' }, 'Pick one to go on.'),
       h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel')));
 }

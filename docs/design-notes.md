@@ -448,9 +448,15 @@ and prune what no longer holds.
   derived from what is answered, no Next. Its body takes `emit` and
   `if`; an arm inside it is one `emit` or one `reject`, so its adders
   go once it has one, and a condition there has the loop's names first
-  in scope. A loop's source and names, once made, are changed in the
-  code view: every step inside names them, and renaming them is the
-  language service's F2.
+  in scope. **A loop's head is edited where it is**: Edit opens the
+  same questions answered (`loopDraftFrom`), and Save writes the new
+  source and names (`setLoopHead`, model.js). An element is stored as a
+  parameter reference, so a rename is the command property's rename
+  held to the loop – every reference its steps make follows, a payload
+  property of the same name read outside stays – and a new source
+  proposes its names afresh, the uses following by position. A source
+  giving fewer names than the steps read is refused in the editor
+  (`loopNamesRead`): the uses would be left naming nothing.
 
 ## Tags: events, projections, handlers
 

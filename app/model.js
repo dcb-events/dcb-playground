@@ -2514,6 +2514,48 @@ function setBranchOtherwise(body, path, present) {
   if (!present) delete branch.otherwise;
 }
 
+// A loop's head changed where it stands (11.0): its source, its names,
+// or both. Each element is stored as a parameter reference
+// (`{parameterName}`), so a name renamed is the command property's
+// rename held to the loop: every reference its steps make follows –
+// in a condition, an emission's field, a read's tags, a `where` – and
+// one outside the loop, which reads a payload property of that name,
+// stays. `names` are the new names in the loop's order; one missing
+// keeps its name.
+function setLoopHead(body, path, { names, source } = {}) {
+  const loop = stepAtPath(body, path);
+  if (stepKind(loop) !== 'loop') return;
+  if (Array.isArray(names)) {
+    const previous = loopNames(loop);
+    const renames = new Map(previous.map((name, i) => [name, names[i]]).filter(([from, to]) => to && from !== to));
+    if (renames.size) {
+      forEachCommandOperand(body, (operand, meta) => {
+        if (meta.loop !== loop || meta.loopSource) return;
+        if (operandSource(operand) === 'parameter' && renames.has(operand.parameterName)) {
+          operand.parameterName = renames.get(operand.parameterName);
+        }
+      });
+    }
+    loop.forEach = names.map((name, i) => name || previous[i]).filter(Boolean);
+  }
+  if (source !== undefined) loop.in = source;
+}
+
+// The names a loop's steps read, of those it gives – a name no step
+// reads may go when its source changes; one read may not.
+function loopNamesRead(body, path) {
+  const loop = stepAtPath(body, path);
+  const read = new Set();
+  if (stepKind(loop) !== 'loop') return read;
+  const names = loopNames(loop);
+  forEachCommandOperand(body, (operand, meta) => {
+    if (meta.loop === loop && !meta.loopSource && operandSource(operand) === 'parameter' && names.includes(operand.parameterName)) {
+      read.add(operand.parameterName);
+    }
+  });
+  return read;
+}
+
 // Where a new branch or loop goes at the top: after every step that
 // decides – before the first emission written after them – so it reads
 // in the order the code view prints: rules, then branches, then what
