@@ -310,11 +310,24 @@ and prune what no longer holds.
   then into its `where`), so the query, references, renames, the rule
   map and the metro treat it as a read of that projection with no
   case of their own; `operandRead` gives it to those that ask one
-  operand. The rule editor writes none of these, nor a record value's
-  field: a rule, an emission field or a derived side holding one is
-  shown as the code view writes it with *Edit in code*
-  (`operandBeyondEditors`, shared.js) and kept through every other
-  edit, as package 3's branches are. Visual editing waits for a case.
+  operand. **The pages write them**: a rule's first
+  question offers `count(…, *)`, `sum(…, *)` and the rest beside the
+  reads, and answering one asks which instances – the projection, `*`
+  or a value in scope per tag (the first one in scope bound, the rest
+  open), the numeric field of a record – and `+ where`, comparisons of
+  `value` / `value.field` with a parameter, an alias's value, a member
+  or a typed value, joined one way (`collectionStages`, index.html).
+  The draft holds it beside the side's picker under a sentinel
+  (`COLLECT`; `ARITH` for `a + b` on the right) that `draftOperand`
+  reads through, so every reader of a draft side sees the operand
+  built, or nothing while it is unfinished, and no stage needs a Next.
+  A record value's field and a list's count are rows of the pickers
+  beside the value (`valueRowsBeyondReads`), rules and emission fields
+  alike. What the editors cannot say – a collection on the right, a
+  `where` nesting and / or, arithmetic on the left or over three values
+  – is shown as the code view writes it with *Edit in code*
+  (`collectionEditable`, `arithmeticEditable`, `conditionBeyondEditors`,
+  shared.js) and kept through every other edit.
   **Over nothing**: `count` and `sum` 0, `min` / `max` / `average`
   null, `any` false, `all` true. **Without a `where`**, `any` asks
   whether an instance is present and `all` holds – every present
@@ -531,8 +544,11 @@ and prune what no longer holds.
   a tag and a condition, so refusing it only forced a record
   projection read as `.emailAddress`. Held to nominal types by the
   field's declared type (`handlerFieldType`); one hop, like every other
-  path here. The projection page shows such a handler read-only with
-  *Edit in code* (`handlerInCode`).
+  path here. The handler row offers it beside the event's own fields
+  (`handlerValueChoices`), and a record set whole from the event's
+  fields is `a record from the event…`, one picker per field of the
+  record (`RECORD`, `recordOfEventFields`); a record built of anything
+  else stays the code view's (`handlerInCode`).
 - **An open tag reads every present instance** (11.0, #102). `P(x,
   *)` – `{open: true}` in the read's `tags` – leaves a tag of a
   multi-tag projection open, and is read only as a collection
@@ -1851,8 +1867,16 @@ Artboards: `design/dcb-queries/` (2026-10).
   `all` keep whole instances.
 - **On the pages**: the type pickers list both among the built-ins; a
   payload field takes a datetime with its offset or an ISO duration
-  and says why it refuses anything else; a duration and arithmetic read
-  as the code view writes them, read-only with the way to the code view.
+  and says why it refuses anything else. A typed value that reads as a
+  duration literal (`15m`, `1h30m`) is one (`draftOperand`), in a rule
+  and in a derived projection's side. A rule compared with a time or a
+  number, and an emission field of one, take `a sum or difference…` –
+  two sides from scope or typed and `+` / `-` (`arithmeticControls`,
+  `arithmeticFieldControls`). A derived projection computing a time
+  offers `+` and `-` only and keeps its time type when the operator
+  changes: retyping it a number was the bug that once made it
+  read-only. A derived projection may also hold one read's value
+  (`holds`), or one field of a record it reads.
 
 ## Descriptions and notes
 

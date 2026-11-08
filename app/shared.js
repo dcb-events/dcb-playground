@@ -2008,22 +2008,65 @@ const PREDICATE_WORDS = {
   isFalse: ['does not hold', 'holds'],
 };
 
-// Whether an operand is one only the code view writes (11.0): a
-// collection function (`list(…)` among them), a count as a value, a
-// record value's field, a record set whole, a duration, arithmetic –
-// shown on the pages, edited in the code view, never dropped by them.
+// Whether an operand is one no picker offers (11.0): a collection
+// function (`list(…)` among them), a record set whole, arithmetic, an
+// open tag or a where's `value` – shown on the pages, edited where an
+// editor of its own takes it (`collectionEditable`,
+// `arithmeticEditable`) and in the code view otherwise, never dropped.
+// A count of a list, a record value's field and a duration are values
+// the pickers offer (`valueRowsBeyondReads`, a duration typed as one).
 function operandBeyondEditors(operand) {
   if (Array.isArray(operand)) return operand.some(operandBeyondEditors);
   const source = operandSource(operand);
-  if (['collection', 'count', 'open', 'instance-value', 'record', 'arithmetic', 'duration'].includes(source)) return true;
-  if (operand && typeof operand === 'object' && operand.field !== undefined) return true;
+  if (['collection', 'open', 'instance-value', 'record', 'arithmetic'].includes(source)) return true;
+  if (source === 'count') return operandBeyondEditors(operand.count);
+  if (operand && typeof operand === 'object' && operand.field !== undefined
+    && !['projection-read', 'alias-property'].includes(source)) return true;
   if (source === 'projection-read') return readTagOperands(operand).some(operandBeyondEditors);
   return false;
 }
 
-// Whether a condition holds such an operand anywhere.
+// The where comparisons and the arithmetic the editors write: one
+// level, sides the pickers offer or literals.
+const WHERE_PREDICATES = ['equals', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals'];
+
+function simpleSide(operand) {
+  return operand === null || ['string', 'number', 'boolean'].includes(typeof operand) || !operandBeyondEditors(operand);
+}
+
+// A collection function the rule editor's collection questions write:
+// a read of a top-level projection, each tag open or a value in scope,
+// a record's field for the numeric ones, and a `where` of comparisons
+// of `value` (or `value.field`) joined one way.
+function collectionEditable(operand) {
+  if (operandSource(operand) !== 'collection' || !COLLECTION_FUNCTIONS.includes(operand.collect)) return false;
+  const read = operand.read;
+  if (operandSource(read) !== 'projection-read' || read.arguments) return false;
+  if (!readTagOperands(read).every((tag) => operandSource(tag) === 'open' || !operandBeyondEditors(tag))) return false;
+  if (operand.where === undefined) return true;
+  const flat = flatCondition(operand.where);
+  return !!flat && flat.members.every((leaf) => WHERE_PREDICATES.includes(leaf.predicate)
+    && operandSource(leaf.leftHandSide) === 'instance-value' && simpleSide(leaf.rightHandSide));
+}
+
+// `a + b` / `a - b` over two sides a picker or a typed value gives –
+// a duration among them (`now + 15m`).
+function arithmeticEditable(operand) {
+  return operandSource(operand) === 'arithmetic' && ['add', 'subtract'].includes(operand.operator)
+    && !Array.isArray(operand.leftHandSide) && simpleSide(operand.leftHandSide) && typeof operand.leftHandSide === 'object'
+    && operandSource(operand.rightHandSide) !== 'arithmetic' && simpleSide(operand.rightHandSide);
+}
+
+// Whether a condition holds an operand no editor here writes: a
+// collection is edited on the left, arithmetic on the right.
 function conditionBeyondEditors(condition) {
-  return conditionLeaves(condition).some((leaf) => conditionOperands(leaf).some(operandBeyondEditors));
+  return conditionLeaves(condition).some((leaf) => {
+    const left = leaf.leftHandSide;
+    const right = leaf.rightHandSide;
+    const leftBeyond = operandBeyondEditors(left) && !collectionEditable(left);
+    const rightBeyond = right !== undefined && operandBeyondEditors(right) && !arithmeticEditable(right);
+    return leftBeyond || rightBeyond;
+  });
 }
 
 // A condition as a sentence. Returns parts so a renderer can style the

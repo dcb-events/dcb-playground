@@ -6811,13 +6811,27 @@ command Relocate(customerId: CustomerId, street: string, city: string) {
     eq(derived.includes('sum(ReservationSeats(courseId, *))'), true, derived.slice(0, 400));
     eq(derived.includes('Edit in code'), true, 'and the way to edit it');
     const address = page('CustomerAddress');
-    eq(address.includes('{ street: event.data.street, city: event.data.city }'), true, address.slice(0, 600));
+    eq(address.includes('a record from the event…') && address.includes('street:') && !address.includes('Edit in code'), true,
+      'a record built from the event\'s fields, field by field: ' + address.slice(0, 600));
     eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'].CustomerAddress.handlers,
       'painting it changed nothing');
     eq(page('CustomerAddress', 'lifecycle').length > 0, true, 'the Lifecycle tab paints');
     eq(page('ReservationSeats', 'lifecycle').length > 0, true, 'and for the projection an open read collects');
     sandbox.state.projDraft = null;
     sandbox.state.projTab = 'definition';
+  });
+
+  check('a handler sets a record built from the event, field by field, and a record\'s field one hop in', () => {
+    const stored = model()['projection-definitions'].CustomerAddress.handlers.find((h) => sandbox.operandSource(h.value) === 'record');
+    const draft = projectionDraftFrom(model()['projection-definitions'].CustomerAddress);
+    const row = draft.handlers.find((h) => h.event === stored.event);
+    eq(row.value, ' record', 'opens as a record from the event');
+    eq(sandbox.draftOperand(row, 'value'), stored.value, 'no loss');
+    row.valueRecord.city = JSON.stringify({ eventProperty: 'street' });
+    eq(cleanProjectionBody(draft).handlers.find((h) => h.event === stored.event).value.record.city, { eventProperty: 'street' }, 'a field re-picked');
+    const moved = model()['event-definitions'].CustomerMoved;
+    const rows = sandbox.handlerValueChoices(model(), { valueType: 'string', isList: false }, moved, 'set').map(([v]) => v);
+    eq(rows.includes(JSON.stringify({ eventProperty: 'address', property: 'city' })), true, 'event.data.address.city offered: ' + rows);
   });
 
   check('an unrelated edit on the projection page keeps a record set whole and a collection function', () => {
@@ -6840,18 +6854,21 @@ command Relocate(customerId: CustomerId, street: string, city: string) {
     sandbox.applyModelSource(id, SEATS);
   });
 
-  check('the command page shows a collection function and a field, read-only, and every view paints', () => {
+  check('the command page edits a collection function and a field, and every view paints', () => {
     sandbox.state.slice = 'ReserveSeats';
     const slice = sandbox.sliceOf(model(), 'ReserveSeats');
     const decision = textOf(sandbox.stepDecision(model(), slice));
     eq(decision.includes('count(ReservationSeats(courseId, *) where value > 2)'), true, decision.slice(0, 600));
-    eq(decision.includes('Edit in code'), true, 'edited in the code view');
+    eq(decision.includes('Edit in code'), false, 'edited through the rule\'s questions');
     const parcel = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SendParcel')));
     eq(parcel.includes('address · city'), true, parcel.slice(0, 600));
     sandbox.state.slice = 'SendParcel';
     sandbox.state.openEvent = 'ParcelSent';
-    const emits = textOf(sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'SendParcel')));
-    eq(emits.includes('address · city') && emits.includes('Edit in code'), true, emits.slice(0, 600));
+    const emitsTree = sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'SendParcel'));
+    const emits = textOf(emitsTree);
+    eq(!emits.includes('Edit in code') && findAll(emitsTree, (n) => n.tag === 'option'
+      && n.value === JSON.stringify({ alias: 'address', field: 'city' })).length > 0, true,
+      'a record\'s field is a value the picker offers: ' + emits.slice(0, 600));
     sandbox.state.openEvent = null;
     sandbox.state.slice = 'ReserveSeats';
     for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
@@ -6973,7 +6990,7 @@ command ChangeHold(courseId: CourseId, hold: duration) {
     eq(decision.includes('Edit in code'), true, 'edited in the code view');
     sandbox.state.openEvent = 'SeatsWereReserved';
     const emits = textOf(sandbox.stepEmits(model(), slice));
-    eq(emits.includes('+ 15m') && emits.includes('Edit in code'), true, emits.slice(0, 600));
+    eq(emits.includes('now + 15m') && emits.includes('Edit') && !emits.includes('Edit in code'), true, 'the arithmetic, edited beside the field: ' + emits.slice(0, 600));
     sandbox.state.openEvent = null;
     sandbox.state.slice = 'ChangeHold';
     const hold = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ChangeHold')));
@@ -6991,6 +7008,98 @@ command ChangeHold(courseId: CourseId, hold: duration) {
     }
   });
 
+  check('a collection function is written through the rule’s questions, where and all, and opens again whole', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.adder = 'rule';
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    const selects = () => findAll(paint(), (n) => n.tag === 'select');
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const targets = findAll(selects()[0], (n) => n.tag === 'option').map((n) => n.value);
+    eq(targets.includes('collect:sum') && targets.includes('collect:count') && !targets.includes('collect:list'), true, targets.join());
+    selects()[0].onchange({ target: { value: 'collect:sum' } });
+    const collect = sandbox.state.ruleDraft.leftCollect;
+    const projectionPicker = selects().find((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'Reservation'));
+    projectionPicker.onchange({ target: { value: 'Reservation' } });
+    paint();
+    eq(collect.tags, { courseId: JSON.stringify({ parameterName: 'courseId' }), reservationId: '*' }, 'the course bound, every reservation');
+    eq(collect.field, 'seats', 'a sum over a record sums one of its fields');
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === '+ where')[0].onclick();
+    Object.assign(collect.where[0], { left: JSON.stringify({ instanceValue: true, field: 'expiresAt' }), predicate: 'greaterThan',
+      right: JSON.stringify({ parameterName: 'now' }) });
+    eq(/What must be true of it\?/.test(textOf(paint())), true, 'complete: on to the test');
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'lessThan', right: ' literal', rightText: '20', rejection: 'Too many held' });
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    const steps = model()['command-definitions'].ReserveSeats.steps;
+    const rule = steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    eq(rule.condition, {
+      leftHandSide: { collect: 'sum', read: { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } }, field: 'seats' },
+        where: { leftHandSide: { instanceValue: true, field: 'expiresAt' }, predicate: 'greaterThan', rightHandSide: { parameterName: 'now' } } },
+      predicate: 'lessThan', rightHandSide: 20,
+    }, 'stored as the code view reads it');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('require sum(Reservation(courseId, *).seats where value.expiresAt > now) < 20'), true, text.slice(text.indexOf('command ReserveSeats'), text.indexOf('command ReserveSeats') + 500));
+    // Opened again: the collection's questions, answered.
+    const draft = sandbox.draftFromCondition(rule.condition);
+    eq(draft.left, ' collect', 'opens as a collection');
+    eq(sandbox.collectionFromDraft(draft.leftCollect), rule.condition.leftHandSide, 'no loss');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a rule compares with a sum or a difference, a duration typed as one', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ChangeHold';
+    const rule = model()['command-definitions'].ChangeHold.steps[0];
+    eq(sandbox.draftOperand(sandbox.draftFromCondition(rule.condition), 'right'), { duration: 'PT1H' }, 'a duration opens as its literal and back');
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    findAll(paint(), (n) => n.tag === 'select')[0].onchange({ target: { value: 'projection:LastExpiry' } });
+    sandbox.state.ruleDraft.predicate = 'lessThan';
+    const right = findAll(paint(), (n) => n.tag === 'select').find((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === ' arith'));
+    eq(!!right, true, 'a datetime is compared with a sum or a difference');
+    right.onchange({ target: { value: ' arith' } });
+    paint();
+    Object.assign(sandbox.state.ruleDraft.rightArith, { left: JSON.stringify({ parameterName: 'now' }), operator: 'add', right: ' literal', rightText: '15m' });
+    sandbox.state.ruleDraft.rejection = 'Held too long';
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    const added = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    eq(added.condition.rightHandSide, { operator: 'add', leftHandSide: { parameterName: 'now' }, rightHandSide: { duration: 'PT15M' } }, 'stored');
+    eq(sandbox.modelToSource(model()).includes('require LastExpiry(courseId) < now + 15m'), true, 'printed');
+    eq(sandbox.parseModelSource(sandbox.modelToSource(model())).diagnostics, [], 'and parses back');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('an emission field is set to a sum, and a stored one opens with its sides', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.openEvent = 'SeatsWereReserved';
+    const paint = () => sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Edit')[0].onclick();
+    eq(sandbox.state.fieldArith.draft, { left: JSON.stringify({ parameterName: 'now' }), operator: 'add', right: ' literal', rightText: '15m' }, 'now + 15m opened');
+    sandbox.state.fieldArith.draft.rightText = '30m';
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Set')[0].onclick();
+    const emission = model()['command-definitions'].ReserveSeats.steps.find((s) => s.name === 'SeatsWereReserved');
+    eq(emission.parameters.expiresAt, { operator: 'add', leftHandSide: { parameterName: 'now' }, rightHandSide: { duration: 'PT30M' } }, 'set');
+    sandbox.state.openEvent = null;
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a record value’s field and a list’s count are values the pickers offer', () => {
+    const slice = { ...sandbox.sliceOf(model(), 'ReserveSeats') };
+    const rows = sandbox.valueRowsBeyondReads(model(), [
+      [JSON.stringify({ projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { parameterName: 'reservationId' } } }), 'r'],
+      [JSON.stringify({ parameterName: 'ids' }), 'ids'],
+    ], { boundary: [], commandProperties: [{ name: 'ids', propertyType: 'ReservationId', isOptional: false, isList: true }], model: model() });
+    eq(rows.map(([v]) => JSON.parse(v)), [
+      { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { parameterName: 'reservationId' } }, field: 'seats' },
+      { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { parameterName: 'reservationId' } }, field: 'expiresAt' },
+      { count: { parameterName: 'ids' } },
+    ], 'each field, the count');
+    eq(!!slice, true, 'slice');
+  });
+
   check('editing on the pages keeps a duration and arithmetic', () => {
     sandbox.state.slice = 'ReserveSeats';
     const before = model()['command-definitions'].ReserveSeats.steps;
@@ -7004,10 +7113,10 @@ command ChangeHold(courseId: CourseId, hold: duration) {
   });
 
   // A derived computation over a datetime parameter and a duration
-  // parameter has no literal to give it away, and the editors here
-  // write numbers: it is shown as written, edited in the code view, and
-  // its type survives an edit on the page.
-  check('a derived time computation from parameters is shown read-only and keeps its type', () => {
+  // parameter has no literal to give it away: it is edited as `+` /
+  // `-`, and its type survives the edit – retyping it a number was the
+  // bug that once made it read-only.
+  check('a derived time computation from parameters is edited and keeps its type', () => {
     sandbox.applyModelSource(id, swap(TIME, 'command ReserveSeats',
       'derived projection Ends (tag courseId: CourseId, start: datetime, hold: duration): datetime {\n  start + hold\n}\n\ncommand ReserveSeats'));
     const derived = model()['projection-definitions'].Ends;
@@ -7018,10 +7127,16 @@ command ChangeHold(courseId: CourseId, hold: duration) {
     sandbox.state.projTab = 'definition';
     sandbox.renderProjections(model(), main);
     const text = textOf(main);
-    eq(text.includes('start + hold') && text.includes('Edit in code'), true, text.slice(0, 600));
+    eq(!text.includes('Edit in code'), true, text.slice(0, 600));
+    const operator = findAll(main, (n) => n.tag === 'select').find((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'o:subtract'));
+    eq(findAll(operator, (o) => o.tag === 'option').some((o) => o.value === 'o:multiply'), false, 'a time is only added to or taken from');
+    operator.onchange({ target: { value: 'o:subtract' } });
+    const body = cleanProjectionBody(sandbox.state.projDraft.body);
+    eq([body.valueType, body.derived.operator], ['datetime', 'subtract'], 'still a datetime');
     sandbox.state.projDraft = null;
     sandbox.updateDefinition('projection-definition', id, 'Ends', cleanProjectionBody(projectionDraftFrom(derived)));
     eq(model()['projection-definitions'].Ends, derived, 'kept whole');
+    eq(sandbox.modelToSource(model()).includes('start + hold'), true, 'printed');
     sandbox.applyModelSource(id, TIME);
   });
 
@@ -7213,7 +7328,7 @@ command Return(memberId: MemberId, bookId: BookId) {
   check('the pages show list, count and a record\'s field from the event, with the way to edit them', () => {
     eq(advisedOtherwise(model()), [], 'advisory-clean');
     const room = page('BookRoom');
-    eq(room.includes('event.data.shelf.room') && room.includes('Edit in code'), true, room.slice(0, 600));
+    eq(room.includes('shelf.room') && !room.includes('Edit in code'), true, 'a record\'s field one hop in, picked in the row: ' + room.slice(0, 600));
     eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'].BookRoom.handlers, 'painting it changed nothing');
     const derived = page('LentCount');
     eq(derived.includes('count(list(Lent(memberId, *)))') && derived.includes('Edit in code'), true, derived.slice(0, 600));

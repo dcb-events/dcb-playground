@@ -4793,9 +4793,22 @@ const LITERAL = ' literal';
 function draftOperand(draft, key) {
   const choice = draft[key];
   if (choice === undefined || choice === '') return undefined;
+  if (choice === COLLECT) return collectionFromDraft(draft[key + 'Collect']);
+  if (choice === ARITH) return arithmeticFromDraft(draft[key + 'Arith']);
+  if (choice === RECORD) {
+    const fields = draft[key + 'Record'] || {};
+    if (!Object.keys(fields).length || Object.values(fields).some((v) => !v)) return undefined;
+    return { record: Object.fromEntries(Object.entries(fields).map(([name, v]) => [name, JSON.parse(v)])) };
+  }
   if (choice !== LITERAL) return JSON.parse(choice);
   const text = (draft[key + 'Text'] || '').trim();
   if (text === '') return undefined;
+  // A number straight followed by a unit is a duration (11.0), as the
+  // code view lexes it: `15m`, `1h30m`.
+  if (/^\d+[a-z]/.test(text)) {
+    const duration = durationFromLiteral(text);
+    if (duration.value) return { duration: duration.value };
+  }
   // Untyped here on purpose: the operand has no declared type of its
   // own, and the model checks it against whatever it is compared with.
   if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
@@ -4807,6 +4820,26 @@ function draftOperand(draft, key) {
 // an editor shows what is there rather than a blank.
 function draftFromOperand(draft, key, operand) {
   if (operand === undefined) { draft[key] = ''; return draft; }
+  if (collectionEditable(operand)) {
+    draft[key] = COLLECT;
+    draft[key + 'Collect'] = collectionDraftFrom(operand);
+    return draft;
+  }
+  if (recordOfEventFields(operand)) {
+    draft[key] = RECORD;
+    draft[key + 'Record'] = Object.fromEntries(Object.entries(operand.record).map(([name, v]) => [name, JSON.stringify(v)]));
+    return draft;
+  }
+  if (arithmeticEditable(operand)) {
+    draft[key] = ARITH;
+    draft[key + 'Arith'] = arithmeticDraftFrom(operand);
+    return draft;
+  }
+  if (operandSource(operand) === 'duration' && durationLiteralText(operand.duration) !== null) {
+    draft[key] = LITERAL;
+    draft[key + 'Text'] = durationLiteralText(operand.duration);
+    return draft;
+  }
   if (operand !== null && typeof operand === 'object') {
     draft[key] = JSON.stringify(operand);
   } else {
@@ -4814,6 +4847,187 @@ function draftFromOperand(draft, key, operand) {
     draft[key + 'Text'] = String(operand);
   }
   return draft;
+}
+
+// ---------- values beyond a read: collections and arithmetic (11.0) ----------
+//
+// A side of a rule may be a collection function over an open read (on
+// the left: what the rule is about) or `a + b` / `a - b` (on the
+// right: what it is compared with). Each is a draft of its own beside
+// the side's picker, the picker holding a sentinel (`COLLECT`, `ARITH`)
+// that `draftOperand` reads through, so every reader of a draft side
+// sees the operand it builds, or nothing while it is unfinished.
+const COLLECT = ' collect';
+const ARITH = ' arith';
+const RECORD = ' record';
+
+function collectionDraftFrom(operand) {
+  const read = operand.read;
+  const flat = operand.where === undefined ? null : flatCondition(operand.where);
+  return {
+    fn: operand.collect,
+    projection: read.projection,
+    tags: Object.fromEntries(readTagEntries(read).map(([name, value]) =>
+      [name, operandSource(value) === 'open' ? '*' : JSON.stringify(value)])),
+    field: read.field || '',
+    joiner: flat ? flat.joiner : null,
+    where: flat ? flat.members.map((leaf) => draftFromOperand({
+      left: JSON.stringify(leaf.leftHandSide), predicate: leaf.predicate, negate: !!leaf.negate,
+    }, 'right', leaf.rightHandSide)) : [],
+  };
+}
+
+function collectionFromDraft(draft) {
+  if (!draft || !draft.fn || !draft.projection) return undefined;
+  const entries = Object.entries(draft.tags || {});
+  if (!entries.length || entries.some(([, value]) => !value)) return undefined;
+  const read = { projection: draft.projection,
+    tags: Object.fromEntries(entries.map(([name, value]) => [name, value === '*' ? { open: true } : JSON.parse(value)])) };
+  if (draft.field) read.field = draft.field;
+  const operand = { collect: draft.fn, read };
+  if ((draft.where || []).length) {
+    const members = draft.where.map((comparison) => {
+      const right = draftOperand(comparison, 'right');
+      if (!comparison.left || right === undefined) return undefined;
+      const leaf = { leftHandSide: JSON.parse(comparison.left), predicate: comparison.predicate, rightHandSide: right };
+      if (comparison.negate) leaf.negate = true;
+      return leaf;
+    });
+    if (members.some((member) => member === undefined)) return undefined;
+    operand.where = joinedCondition(draft.joiner, members);
+  }
+  return operand;
+}
+
+function arithmeticDraftFrom(operand) {
+  return draftFromOperand({ left: JSON.stringify(operand.leftHandSide), operator: operand.operator }, 'right', operand.rightHandSide);
+}
+
+function arithmeticFromDraft(draft) {
+  if (!draft || !draft.left) return undefined;
+  const right = draftOperand(draft, 'right');
+  if (right === undefined) return undefined;
+  return { operator: draft.operator || 'add', leftHandSide: JSON.parse(draft.left), rightHandSide: right };
+}
+
+// The projections a collection reads or a loop runs over: top-level,
+// folded, tagged by several – one tag stays bound, one at least open.
+function openReadableProjections(model) {
+  return Object.keys(model['projection-definitions']).sort().filter((name) => {
+    const projection = projectionsOf(model)[name];
+    return projection && !derivedOf(projection) && projectionTagParams(projection).length >= 2;
+  });
+}
+
+// What a collection draft asks, as stages of the rule editor: which
+// function over which instances (and which field of a record), then
+// what each instance must satisfy. `values` are the operands in scope;
+// a `where` compares with parameters, aliases' values and literals –
+// never a read.
+function collectionStages(model, slice, values, typeScope, collect, stageRow) {
+  const changed = () => { collect.touched = true; render(); };
+  const projectionRows = openReadableProjections(model).map((name) => [name, readable(name)]);
+  if (collect.projection && !projectionRows.some(([v]) => v === collect.projection)) collect.projection = '';
+  const projection = collect.projection ? projectionsOf(model)[collect.projection] : null;
+  const tags = projection ? projectionTagParams(projection) : [];
+  const tagControls = tags.flatMap((tag) => {
+    const offered = choicesOfType(model, slice, values, tag.tagType);
+    const options = [['*', '* every ' + propertyWords(tag.name)], ...offered];
+    if (!options.some(([v]) => v === collect.tags[tag.name])) {
+      const boundYet = tags.slice(0, tags.indexOf(tag)).some((t) => collect.tags[t.name] && collect.tags[t.name] !== '*');
+      collect.tags[tag.name] = !boundYet && offered.length ? offered[0][0] : '*';
+    }
+    return [h('span', { class: 'muted tiny' }, propertyWords(tag.name)),
+      pick(options, collect.tags[tag.name], (v) => { collect.tags[tag.name] = v; changed(); })];
+  });
+  for (const name of Object.keys(collect.tags)) if (!tags.some((tag) => tag.name === name)) delete collect.tags[name];
+  // A numeric function over a record sums one of its fields.
+  const fields = projection && !projection.isList ? (compositeFieldsOf(model, projection.valueType) || []) : [];
+  const numeric = ['sum', 'min', 'max', 'average'].includes(collect.fn);
+  const fieldRows = numeric ? fields.filter((f) => !f.isList && numericBaseOf(model, f.propertyType)).map((f) => [f.name, '.' + f.name]) : [];
+  if (collect.field && !fieldRows.some(([v]) => v === collect.field)) collect.field = '';
+  if (!collect.field && fieldRows.length) collect.field = fieldRows[0][0];
+  const open = tags.filter((tag) => collect.tags[tag.name] === '*').length;
+  const shapeNote = projection && (!open || open === tags.length)
+    ? h('span', { class: 'muted tiny' }, 'leave at least one open (*) and one bound') : null;
+
+  // `where`: `value` or one of its fields, compared with a value in
+  // scope of its type, a member, or a typed value.
+  const valueType = projection ? { propertyType: projection.valueType, isList: !!projection.isList } : null;
+  const leftRows = !valueType ? [] : [
+    [JSON.stringify({ instanceValue: true }), 'value', null, { group: 'value' }],
+    ...fields.map((f) => [JSON.stringify({ instanceValue: true, field: f.name }), 'value.' + f.name, null, { group: 'value' }]),
+  ];
+  const comparisonControls = (comparison, k) => {
+    if (!leftRows.some(([v]) => v === comparison.left)) comparison.left = leftRows.length ? leftRows[0][0] : '';
+    const left = comparison.left ? JSON.parse(comparison.left) : null;
+    const leftType = !left ? null : left.field === undefined ? valueType : recordFieldType(model, valueType.propertyType, left.field);
+    const rightRows = values.filter(([v]) => {
+      const operand = JSON.parse(v);
+      if (!['parameter', 'alias-property'].includes(operandSource(operand)) || operand.property !== undefined) return false;
+      const resolved = resolveOperandType(operand, typeScope);
+      return leftType && resolved && resolved.propertyType === leftType.propertyType && resolved.isList === leftType.isList;
+    });
+    const members = leftType ? enumMembersFor(model, leftType.propertyType) : null;
+    const rows = [...rightRows, ...(members || []).map((m) => [JSON.stringify({ enumMember: m }), readable(m)])];
+    const ordered = leftType && predicatesForType(leftType, model).includes('lessThan');
+    const predicateRows = [['equals', '=='], [' notEquals', '!='],
+      ...(ordered ? [['lessThan', '<'], ['lessThanOrEquals', '<='], ['greaterThan', '>'], ['greaterThanOrEquals', '>=']] : [])];
+    const shown = comparison.predicate === 'equals' && comparison.negate ? ' notEquals' : comparison.predicate;
+    return [
+      k ? h('span', { class: 'pk' }, collect.joiner === 'any' ? 'or' : 'and') : null,
+      pick(leftRows, comparison.left, (v) => { comparison.left = v; comparison.right = ''; changed(); }),
+      pick(predicateRows, shown, (v) => {
+        comparison.negate = v === ' notEquals';
+        comparison.predicate = v === ' notEquals' ? 'equals' : v;
+        changed();
+      }),
+      ...operandPicker(rows, comparison, 'right', { allowLiteral: !members }),
+      h('button', { class: 'btn tiny ghost', title: 'Remove this comparison', onclick: () => {
+        collect.where.splice(k, 1);
+        if (collect.where.length < 2) collect.joiner = null;
+        changed();
+      } }, '×'),
+    ];
+  };
+  const addComparison = (joiner) => {
+    if (collect.where.length) collect.joiner = joiner;
+    // A record's instances are compared by a field, so the first one is
+    // proposed rather than the whole value.
+    const first = leftRows[fields.length ? 1 : 0];
+    collect.where.push({ left: first ? first[0] : '', predicate: 'equals', negate: false, right: '' });
+    changed();
+  };
+  const fnRows = COLLECTION_FUNCTIONS.map((fn) => [fn, fn]);
+  return [
+    stageRow('Over which instances?',
+      pick(fnRows, collect.fn, (v) => { collect.fn = v; changed(); }),
+      pick(projectionRows, collect.projection, (v) => { collect.projection = v; collect.tags = {}; collect.field = ''; collect.where = []; changed(); }, 'projection'),
+      ...tagControls,
+      fieldRows.length ? pick(fieldRows, collect.field, (v) => { collect.field = v; changed(); }) : null,
+      shapeNote),
+    projection ? stageRow('Where',
+      ...collect.where.flatMap(comparisonControls),
+      ...(collect.where.length ? (collect.joiner ? [collect.joiner] : ['all', 'any']) : ['all']).map((joiner) =>
+        h('button', { class: 'btn ghost tiny', onclick: () => addComparison(joiner) },
+          !collect.where.length ? '+ where' : joiner === 'all' ? '+ and' : '+ or'))) : null,
+  ];
+}
+
+// `a + b` / `a - b`: a value in scope that computes – a number, a
+// datetime, a duration – and what it adds or takes away: another, or a
+// typed number or duration (`15m`).
+function arithmeticControls(model, values, typeScope, arith) {
+  const computes = values.filter(([v]) => {
+    const resolved = resolveOperandType(JSON.parse(v), typeScope);
+    return resolved && !resolved.isList && arithmeticBaseOf(model, resolved.propertyType);
+  });
+  if (!computes.some(([v]) => v === arith.left)) arith.left = computes.length ? computes[0][0] : '';
+  return [
+    pick(computes, arith.left, (v) => { arith.left = v; render(); }, computes.length ? 'what?' : 'nothing here computes'),
+    pick([['add', '+'], ['subtract', '-']], arith.operator || 'add', (v) => { arith.operator = v; render(); }),
+    ...operandPicker(computes.filter(([v]) => v !== arith.left), arith, 'right', { placeholder: 'what?' }),
+  ];
 }
 
 // The draft a stored rule opens as. An `equalsAny` right-hand
@@ -4948,6 +5162,29 @@ function membershipControls(draft, enumMembers) {
 // payload, and the bindings declared *above* this one. A binding may
 // only draw from what came before it, so the list is what makes that
 // rule visible instead of only enforced.
+// What a value in scope offers beyond itself (11.0): a record's field
+// (`address.city`, `Customer(customerId).address`) and a list's count
+// (`count(ids)`), each a row of its own beside the value.
+function valueRowsBeyondReads(model, rows, typeScope) {
+  const out = [];
+  for (const [v, label, ...rest] of rows) {
+    const operand = JSON.parse(v);
+    const source = operandSource(operand);
+    if (!['projection-read', 'alias-property', 'parameter'].includes(source) || operand.field !== undefined) continue;
+    const resolved = resolveOperandType(operand, typeScope);
+    if (!resolved) continue;
+    if (resolved.isList) {
+      out.push([JSON.stringify({ count: operand }), 'count' + GROUP_SEP + label, ...rest]);
+      continue;
+    }
+    if (source === 'parameter') continue;
+    for (const field of compositeFieldsOf(model, resolved.propertyType) || []) {
+      out.push([JSON.stringify({ ...operand, field: field.name }), memberWords(label, field.name), ...rest]);
+    }
+  }
+  return out;
+}
+
 function operandChoicesAbove(model, slice, index) {
   const out = [...payloadChoices(model, slice.payload)];
   // The projections this command already reads in place (8.0) – a rule
@@ -4966,6 +5203,9 @@ function operandChoicesAbove(model, slice, index) {
     }
     out.push(...groupMemberChoices(model, slice, b, out));
   });
+  if (index === undefined) {
+    out.push(...valueRowsBeyondReads(model, out, { boundary: slice.reads, commandProperties: slice.payload, model }));
+  }
   return out;
 }
 
@@ -5436,7 +5676,7 @@ const FORM_KEYS = [
 // that filled them – a folded-away adder leaves its half-written row
 // behind – so they are cleared with the forms but never taken as
 // evidence that one is open.
-const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft', 'loopDraft',
+const DRAFT_KEYS = ['bindingDraft', 'ruleDraft', 'changeDraft', 'loopDraft', 'fieldArith',
   'watchDraft', 'fieldDraft'];
 
 // The projection a definition modal edits holds `projDraft` for as
@@ -7720,10 +7960,17 @@ function ruleEditor(model, sliceIn, index, target = null) {
     'already read' + GROUP_SEP + b.alias,
     b.group ? groupIcon(model, b.group) : null,
   ]);
+  // A collection function over every instance of an open read (11.0):
+  // the rule is about the count, the sum, whether any holds…
+  const collectionRows = openReadableProjections(model).length
+    ? COLLECTION_FUNCTIONS.filter((fn) => fn !== 'list')
+      .map((fn) => ['collect:' + fn, 'collection' + GROUP_SEP + fn + '(…, *)'])
+    : [];
   const targetRows = [
     ...aliasRows,
     ...groupRows,
     ...projectionRows,
+    ...collectionRows,
     [NEW_DEFINITION, NEW_PROJECTION_LABEL],
   ];
   const chooseTarget = !editingExisting;
@@ -7742,7 +7989,7 @@ function ruleEditor(model, sliceIn, index, target = null) {
   // switching target cannot leave a half-built read of the old one
   // behind.
   if (chooseTarget) {
-    if (chosenTarget && !chosenTarget.startsWith('alias:') && chosenTarget !== NEW) {
+    if (chosenTarget && !chosenTarget.startsWith('alias:') && !chosenTarget.startsWith('collect:') && chosenTarget !== NEW) {
       if (!draft.newRead || draft.newRead.target !== chosenTarget) {
         draft.newRead = { target: chosenTarget, args: {}, tags: {} };
       }
@@ -7820,7 +8067,7 @@ function ruleEditor(model, sliceIn, index, target = null) {
     if ('parameterName' in operand) return false;
     return aboutAlias ? operand.alias === aboutAlias : true;
   });
-  if (draft.left && !leftScope.some(([v]) => v === draft.left)) draft.left = '';
+  if (draft.left && draft.left !== COLLECT && !leftScope.some(([v]) => v === draft.left)) draft.left = '';
 
   const leftRows = leftScope;
   // One row is an answer already. Answered before the picker reads it,
@@ -7889,10 +8136,15 @@ function ruleEditor(model, sliceIn, index, target = null) {
     ? enumMembers.map((m) =>
         [JSON.stringify({ enumMember: m }), propertyWords(leftPropertyName) + ' · ' + readable(m)])
     : [];
-  const rightRows = [...rightScope, ...enums];
+  // A sum or a difference (11.0) is compared with anything that
+  // computes: `now + 15m`, `capacity - 2`.
+  const computes = !!leftType && !leftType.isList && !!arithmeticBaseOf(model, leftType.propertyType)
+    && !['countEquals', 'countLessThan', 'countGreaterThan'].includes(draft.predicate);
+  const rightRows = [...rightScope, ...enums, ...(computes ? [[ARITH, 'a sum or difference…']] : [])];
   if (draft.right && draft.right !== LITERAL && !rightRows.some(([v]) => v === draft.right)) {
     draft.right = '';
   }
+  if (draft.right === ARITH && !draft.rightArith) draft.rightArith = { operator: 'add', left: '', right: '' };
   // "Is one of" also takes a list held in data – the project's required
   // seniorities, not only values typed here. The rule stays about the
   // one value, so that is how it is asked; it is stored as `contains`
@@ -8087,6 +8339,10 @@ function ruleEditor(model, sliceIn, index, target = null) {
           // second question back into the unanswered state the stage is
           // derived from.
           draft.left = '';
+          if (v.startsWith('collect:')) {
+            draft.left = COLLECT;
+            draft.leftCollect = { fn: v.slice('collect:'.length), projection: '', tags: {}, field: '', where: [], joiner: null };
+          }
           draft.touched = true;
           render();
         }, 'what?'),
@@ -8130,7 +8386,7 @@ function ruleEditor(model, sliceIn, index, target = null) {
       && isProjectionRead(storedLeft.alias))
     || operandSource(storedLeft) === 'projection-read'
     || (!!editingExisting && operandSource(leftNow) === 'projection-read');
-  const valueStage = stage < VALUE_STAGE || (oneValue && valueSettled) ? null
+  const valueStage = stage < VALUE_STAGE || (oneValue && valueSettled) || draft.left === COLLECT ? null
     : stageRow('Which of its values?',
         ...operandPicker(leftRows, draft, 'left',
           {
@@ -8184,8 +8440,10 @@ function ruleEditor(model, sliceIn, index, target = null) {
                 : []),
               ...(fromData ? [] : membershipControls(draft, enumMembers)),
             ]
-          : operandPicker(rightRows, draft, 'right',
-            { placeholder: 'what?', allowLiteral: !enums.length })));
+          : [
+              ...operandPicker(rightRows, draft, 'right', { placeholder: 'what?', allowLiteral: !enums.length }),
+              ...(draft.right === ARITH ? arithmeticControls(model, [...scope, ...readRows], typeScope, draft.rightArith) : []),
+            ]));
 
   // ---------- and what is it refused with? ----------
   //
@@ -8223,7 +8481,9 @@ function ruleEditor(model, sliceIn, index, target = null) {
       submit();
     },
   },
-    readStage, valueStage, testStage, rejectionStage,
+    readStage,
+    ...(draft.left === COLLECT ? collectionStages(model, slice, scope, typeScope, draft.leftCollect, stageRow) : []),
+    valueStage, testStage, rejectionStage,
     h('div', { class: 'adder' },
       // Only once there is a rule to write. Until then the row is a
       // question waiting for an answer, and a button that could only
@@ -8464,6 +8724,8 @@ function eventFields(model, emission, event, { edit, loop = null } = {}) {
     }),
   ];
 
+  options.push(...valueRowsBeyondReads(model, options, { boundary, commandProperties, model }));
+  const fieldKey = (p) => [state.slice, JSON.stringify(edit ? 'step' : 'top'), emission.name, p.name].join(':');
   const rows = (event.properties || []).map((p) => {
     const bound = (emission.parameters || {})[p.name];
     // Only options whose resolved type actually matches this field are
@@ -8476,18 +8738,27 @@ function eventFields(model, emission, event, { edit, loop = null } = {}) {
       h('span', { class: 'nm' }, propertyWords(p.name)),
       h('span', { class: 'muted tiny' }, readable(typeLabel(p))),
       h('span', { class: 'muted tiny' }, '←'),
-      // A collection function or a record's field (11.0) is no choice
+      // A sum or a difference (11.0) – `now + 15m`, `count(ids) + 1` –
+      // is built beside the field and set as a whole.
+      arithmeticFieldControls(model, p, bound, fieldKey(p), options, { boundary, commandProperties, model },
+        (operand) => patchSlice((b) => write(b, (e) => {
+          e.parameters = e.parameters || {};
+          e.parameters[p.name] = operand;
+        })))
+      // A collection function or a record set whole (11.0) is no choice
       // the picker has: said as it is, and edited in the code view.
-      operandBeyondEditors(bound) ? h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
+      || (operandBeyondEditors(bound) ? h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
         codeViewButton('This value is edited in the code view')) :
-      pick([['', 'unset'], ...fieldOptions], bound === undefined ? '' : JSON.stringify(bound),
-        (v) => patchSlice((b) => write(b, (e) => {
+      pick([['', 'unset'], ...fieldOptions, ...(computesField(model, p) ? [[ARITH, 'a sum or difference…']] : [])],
+        bound === undefined ? '' : JSON.stringify(bound),
+        (v) => v === ARITH ? (() => { state.fieldArith = { key: fieldKey(p), draft: { operator: 'add', left: '', right: '' } }; render(); })()
+          : patchSlice((b) => write(b, (e) => {
           e.parameters = e.parameters || {};
           // '' is unset, not an operand – a choice like any other, so a
           // bound property can be unbound again.
           if (v === '') delete e.parameters[p.name];
           else e.parameters[p.name] = JSON.parse(v);
-        }))));
+        })))));
   });
 
   // What the command was given but this event does not yet carry. A
@@ -8535,6 +8806,35 @@ function eventFields(model, emission, event, { edit, loop = null } = {}) {
         class: 'btn ghost tiny',
         onclick: () => goToEvent(emission.name),
       }, 'Rename, retype or add fields on ' + readable(emission.name) + ' →')));
+}
+
+// Whether an event field takes a sum or a difference: a number, a
+// datetime or a duration.
+function computesField(model, field) {
+  return !field.isList && !!arithmeticBaseOf(model, field.propertyType);
+}
+
+// An emission field's arithmetic: while it is being built (or is
+// opened again), the two sides and the operator, and Set; a stored one
+// as it reads, with Edit. Null where the field holds no arithmetic and
+// none is being built – the picker shows then.
+function arithmeticFieldControls(model, field, bound, key, options, typeScope, set) {
+  const open = state.fieldArith && state.fieldArith.key === key ? state.fieldArith : null;
+  if (open) {
+    const done = () => {
+      const operand = arithmeticFromDraft(open.draft);
+      if (operand === undefined) return toast('Pick both sides.', true);
+      state.fieldArith = null;
+      set(operand);
+    };
+    return h('span', { class: 'adder field-arith' },
+      ...arithmeticControls(model, options, typeScope, open.draft),
+      h('button', { class: 'btn tiny primary', onclick: done }, 'Set'),
+      h('button', { class: 'btn tiny ghost', onclick: () => { state.fieldArith = null; render(); } }, 'Cancel'));
+  }
+  if (!arithmeticEditable(bound)) return null;
+  return h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
+    h('button', { class: 'btn tiny', onclick: () => { state.fieldArith = { key, draft: arithmeticDraftFrom(bound) }; render(); } }, 'Edit'));
 }
 
 function stepChanges(model, slice) {
@@ -10276,9 +10576,22 @@ function handlerValueChoices(model, draft, event, operation) {
   // after true" on a boolean fold, which stored fine and then failed
   // validation.
   const successors = operation === 'set' && !draft.isList && offersSuccessor(model, draft.valueType);
+  // A record's field one hop in (11.0, `event.data.signUp.emailAddress`)
+  // where it fits, as the event's own fields do.
+  const nested = (event ? (event.properties || []) : []).filter((p) => !p.isList).flatMap((p) =>
+    (compositeFieldsOf(model, p.propertyType) || [])
+      .filter((f) => fieldFitsValueType(model, f.propertyType, draft.valueType) && !!f.isList === !!draft.isList)
+      .map((f) => [JSON.stringify({ eventProperty: p.name, property: f.name }), p.name + '.' + f.name, null,
+        { group: 'event', before: 'event.data.' }]));
+  // A record set whole from the event's fields (11.0): built field by
+  // field beside the row.
+  const record = operation === 'set' && !draft.isList && compositeFieldsOf(model, draft.valueType) && event
+    ? [[RECORD, 'a record from the event…']] : [];
   const out = [
     ...properties.map(eventFieldChoice),
+    ...nested,
     ...(successors ? properties.filter((p) => !p.isList).map(successorChoice) : []),
+    ...record,
   ];
   const enumMembers = enumMembersFor(model, draft.valueType);
   if (enumMembers) {
@@ -10324,11 +10637,10 @@ function unhandledEventChoices(eventNames, handlers, current) {
 function handlerInCode(handler) {
   if (!handler || handler.chains) return false;
   if (isConditionalHandler(handler)) return true;
-  const value = operandSource(handler.value) === 'successor' ? handler.value.successor : handler.value;
-  // A record set whole, and a record's field one hop into the event
-  // (11.0, `event.data.signUp.emailAddress`): the row's picker offers
-  // the event's own fields only.
-  return operandSource(value) === 'record' || (operandSource(value) === 'event-property' && value.property !== undefined);
+  // A record set whole from anything but the event's fields stays the
+  // code view's; one built of them, and a record's field one hop into
+  // the event (`event.data.signUp.emailAddress`), the row writes.
+  return !handlerArmValueEditable(handler.value);
 }
 
 function projectionDraftFrom(body) {
@@ -10360,7 +10672,15 @@ function handlerComparisonEditable(leaf) {
 
 function handlerArmValueEditable(value) {
   const inner = operandSource(value) === 'successor' ? value.successor : value;
-  return operandSource(inner) !== 'record' && !(operandSource(inner) === 'event-property' && inner.property !== undefined);
+  if (operandSource(inner) === 'record') return recordOfEventFields(inner);
+  return true;
+}
+
+// A record set whole whose every field is a field of the event – what
+// `a record from the event…` builds.
+function recordOfEventFields(operand) {
+  return operandSource(operand) === 'record' && !!operand.record && typeof operand.record === 'object'
+    && Object.values(operand.record).every((value) => operandSource(value) === 'event-property');
 }
 
 function conditionalHandlerEditable(handler) {
@@ -10839,12 +11159,14 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
     } else {
       nodes.push(h('input', {
         type: 'text', style: 'width:140px',
-        value: current === undefined || current === null || typeof current === 'object'
-          ? '' : String(current),
+        value: operandSource(current) === 'duration' ? (durationLiteralText(current.duration) || '')
+          : current === undefined || current === null || typeof current === 'object' ? '' : String(current),
         placeholder: 'a value',
         onblur: (e) => {
           const text = e.target.value.trim();
-          if (/^-?\d+(\.\d+)?$/.test(text)) derived[side] = Number(text);
+          const duration = /^\d+[a-z]/.test(text) ? durationFromLiteral(text) : {};
+          if (duration.value) derived[side] = { duration: duration.value };
+          else if (/^-?\d+(\.\d+)?$/.test(text)) derived[side] = Number(text);
           else if (/^(true|false)$/i.test(text)) derived[side] = /^true$/i.test(text);
           else derived[side] = text;
         },
@@ -10853,6 +11175,21 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
     }
   }
   return nodes;
+}
+
+// A derived projection that holds one read (11.0) may hold one field
+// of a record it reads: the read's whole value, or `.field`.
+function derivedFieldPicker(model, draft) {
+  const read = draft.derived.leftHandSide;
+  const target = read && read.projection ? projectionsOf(model)[read.projection] : null;
+  const fields = target && !target.isList ? compositeFieldsOf(model, target.valueType) || [] : [];
+  if (!fields.length) return [];
+  return [pick([['', 'all of it'], ...fields.map((f) => [f.name, '.' + f.name])], read.field || '', (v) => {
+    if (v) read.field = v; else delete read.field;
+    const type = v ? recordFieldType(model, target.valueType, v) : { propertyType: target.valueType, isList: !!target.isList };
+    if (type) { draft.valueType = type.propertyType; draft.isList = type.isList; }
+    render();
+  })];
 }
 
 // What produces a projection's value: its handlers fold events
@@ -11273,7 +11610,32 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       ...(event
         ? operandPicker(values, handler, 'value', { allowLiteral: !enumMembers })
         : [pick([], '', () => {}, 'pick an event first')]),
+      ...(handler.value === RECORD ? recordFieldControls(handler, event) : []),
     ];
+  };
+
+  // A record built from the event (11.0): one picker per field of the
+  // projection's record, offering the event's values of that field's
+  // type – its own fields, or a record's field one hop in.
+  const recordFieldControls = (handler, event) => {
+    const fields = compositeFieldsOf(model, draft.valueType) || [];
+    const held = handler.valueRecord || (handler.valueRecord = {});
+    for (const name of Object.keys(held)) if (!fields.some((f) => f.name === name)) delete held[name];
+    return [h('span', { class: 'pk' }, '{'), ...fields.flatMap((field, k) => {
+      const rows = ((event && event.properties) || []).flatMap((p) => [
+        ...(p.propertyType === field.propertyType && !!p.isList === !!field.isList ? [eventFieldChoice(p)] : []),
+        ...(p.isList ? [] : (compositeFieldsOf(model, p.propertyType) || [])
+          .filter((f) => f.propertyType === field.propertyType && !!f.isList === !!field.isList)
+          .map((f) => [JSON.stringify({ eventProperty: p.name, property: f.name }), p.name + '.' + f.name, null,
+            { group: 'event', before: 'event.data.' }])),
+      ]);
+      if (held[field.name] === undefined) {
+        const same = rows.find(([v]) => JSON.parse(v).eventProperty === field.name && JSON.parse(v).property === undefined);
+        held[field.name] = same ? same[0] : rows.length ? rows[0][0] : '';
+      }
+      return [h('span', { class: 'pk' }, (k ? ', ' : '') + field.name + ':'),
+        pick(rows, held[field.name], (v) => { held[field.name] = v; render(); }, rows.length ? 'what?' : 'nothing fits')];
+    }), h('span', { class: 'pk' }, '}')];
   };
 
   // One comparison of a handler's condition (11.0): a field of the
@@ -11451,14 +11813,33 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
   // what computes (and holds a number). Picking one sets the type to
   // what it yields; a computation's stays editable.
   const computes = !!draft.derived && draft.derived.operator !== undefined;
-  const derivedChoice = !draft.derived ? '' : computes ? 'o:' + draft.derived.operator : 'p:' + draft.derived.predicate;
+  // Time arithmetic (11.0) is written here as `+` / `-` – the picker
+  // offers nothing else over a time, and keeps the time type – and one
+  // read held as it is, a record's field of it too.
+  const timeComputes = computes && (!!timeBaseOf(model, draft.valueType) || derivedOperands(draft.derived).some((o) => {
+    const own = operandSource(o) === 'parameter' && (draft.arguments || []).find((a) => a && a.name === o.parameterName);
+    return !!own && !!timeBaseOf(model, own.propertyType);
+  }));
+  const holdsRead = !!draft.derived && derivedHolds(draft.derived)
+    && operandSource(draft.derived.leftHandSide) === 'projection-read' && !operandBeyondEditors({ ...draft.derived.leftHandSide, field: undefined });
+  const derivedChoice = !draft.derived ? '' : computes ? 'o:' + draft.derived.operator
+    : derivedHolds(draft.derived) ? 'h:' : 'p:' + draft.derived.predicate;
   const derivedChoices = [
     ...DERIVED_PREDICATES.map((p) => ['p:' + p, `compare → boolean${GROUP_SEP}${p}`]),
-    ...DERIVED_OPERATORS.map((o) => ['o:' + o,
+    ['h:', `holds${GROUP_SEP}one read's value`],
+    ...DERIVED_OPERATORS.filter((o) => !timeComputes || ['add', 'subtract'].includes(o)).map((o) => ['o:' + o,
       `compute → number${GROUP_SEP}${DERIVED_OPERATOR_SYMBOL[o] ? `${DERIVED_OPERATOR_SYMBOL[o]} (${o})` : `${o}(a, b)`}`]),
   ];
   const pickDerived = (v) => {
     const derived = draft.derived;
+    if (v === 'h:') {
+      // One read held as it is: its value, of its type.
+      for (const key of ['predicate', 'operator', 'negate', 'rightHandSide']) delete derived[key];
+      const read = operandSource(derived.leftHandSide) === 'projection-read' ? projectionsOf(model)[derived.leftHandSide.projection] : null;
+      if (read) { draft.valueType = read.valueType; draft.isList = !!read.isList; }
+      render();
+      return;
+    }
     if (v.startsWith('p:')) {
       derived.predicate = v.slice(2);
       delete derived.operator;
@@ -11467,7 +11848,10 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       derived.operator = v.slice(2);
       delete derived.predicate;
       delete derived.negate;
+      // A time moved by a duration stays a time – retyping it a number
+      // was the bug that made this read-only once.
       draft.valueType = derivedResultBase(model, derived, draft)
+        || (timeBaseOf(model, draft.valueType) && ['add', 'subtract'].includes(derived.operator) ? draft.valueType : null)
         || (numericBaseOf(model, draft.valueType) ? draft.valueType : 'integer');
     }
     draft.isList = false;
@@ -11479,12 +11863,9 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
   // shown as the code view writes it and edited there. Time arithmetic
   // needs no literal to be there (`start + hold` over two parameters),
   // and the operator picker here computes numbers: it would retype it.
-  const derivedInCode = !!draft.derived && (derivedHolds(draft.derived)
+  const derivedInCode = !!draft.derived && ((derivedHolds(draft.derived) && !holdsRead)
     || derivedOperands(draft.derived).some(operandBeyondEditors)
-    || (computes && (!!timeBaseOf(model, draft.valueType) || derivedOperands(draft.derived).some((o) => {
-      const own = operandSource(o) === 'parameter' && (draft.arguments || []).find((a) => a && a.name === o.parameterName);
-      return !!own && !!timeBaseOf(model, own.propertyType);
-    }))));
+    || (timeComputes && !['add', 'subtract'].includes(draft.derived.operator)));
   const derivedSection = !draft.derived ? null : derivedInCode ? projectionSection('derived',
     hint('proj-derived', 'Derived', [
       'One value over other projections – a comparison, a computation, a collection function over an open read, a record\'s field.',
@@ -11497,9 +11878,10 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       'A comparison holds a boolean; a computation (+, -, *, min, max) a number, null while a side is null.',
       'Their queries are its query, so reading it guards the append exactly as reading them would.',
     ]), null,
-    h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'leftHandSide', { allowLiteral: computes })),
+    h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'leftHandSide', { allowLiteral: computes }),
+      ...(holdsRead ? derivedFieldPicker(model, draft) : [])),
     h('div', { class: 'adder' },
-      computes ? null : h('label', { class: 'tiny muted' }, h('input', {
+      computes || holdsRead ? null : h('label', { class: 'tiny muted' }, h('input', {
         type: 'checkbox', checked: !!draft.derived.negate,
         onchange: (e) => {
           if (e.target.checked) draft.derived.negate = true;
@@ -11507,7 +11889,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
         },
       }), ' not'),
       pick(derivedChoices, derivedChoice, pickDerived)),
-    h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'rightHandSide', { allowLiteral: true })));
+    holdsRead ? null : h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'rightHandSide', { allowLiteral: true })));
 
   // ---- advanced ----
   //
