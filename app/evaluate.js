@@ -202,6 +202,63 @@ function evAsNumber(value, where) {
   return v;
 }
 
+// Two times in order (11.0): -1, 0 or 1 when both are datetimes –
+// ordered as the instants they name, whatever their offsets – or both
+// durations, by length; null for anything else, which compares as it
+// always did. Nothing here knows a type, so a time is known by its value
+// (see _Time_, model.js).
+function evTimeOrder(l, r) {
+  let a = datetimeInstant(l);
+  let b = a === null ? null : datetimeInstant(r);
+  if (a === null || b === null) {
+    a = durationSeconds(l);
+    b = a === null ? null : durationSeconds(r);
+  }
+  if (a === null || b === null) return null;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// `left operator right` over two values (11.0): numbers as numbers, a
+// datetime moved by a duration – written in UTC – and two durations
+// added or taken apart. A null side yields null: "not known yet" stays
+// unknown rather than counting as zero. `label` names what computes.
+function evArithmetic(operator, left, right, label) {
+  const l = evNormalize(left);
+  const r = evNormalize(right);
+  if (l === null || l === undefined || r === null || r === undefined) return null;
+  if (typeof l === 'number' && typeof r === 'number') {
+    switch (operator) {
+      case 'add': return l + r;
+      case 'subtract': return l - r;
+      case 'multiply': return l * r;
+      case 'min': return Math.min(l, r);
+      case 'max': return Math.max(l, r);
+      default: return fail(`"${operator}" is not an operator this can compute.`);
+    }
+  }
+  const at = { datetime: datetimeInstant, duration: durationSeconds };
+  const kind = (value) => (at.datetime(value) !== null ? 'datetime' : at.duration(value) !== null ? 'duration' : null);
+  const [lk, rk] = [kind(l), kind(r)];
+  const result = arithmeticResultBase(operator, lk, rk);
+  if (!result) {
+    const odd = !lk ? l : !rk ? r : null;
+    return fail(odd !== null
+      ? `${label} computes over ${JSON.stringify(odd)}, which is no number, datetime or duration.`
+      : `${label} computes ${typeArticle(lk)} ${lk} ${operator} ${typeArticle(rk)} ${rk}, which means nothing.`);
+  }
+  if (operator === 'min' || operator === 'max') {
+    const order = evTimeOrder(l, r);
+    return (operator === 'min') === (order <= 0) ? l : r;
+  }
+  if (result === 'datetime') {
+    const [instant, seconds] = lk === 'datetime' ? [at.datetime(l), at.duration(r)] : [at.datetime(r), at.duration(l)];
+    return datetimeText(instant + (operator === 'subtract' ? -1 : 1) * seconds * 1000);
+  }
+  const seconds = at.duration(l) + (operator === 'subtract' ? -1 : 1) * at.duration(r);
+  if (seconds < 0) fail(`${label} takes ${r} from ${l} – a duration is never below zero.`);
+  return durationText(seconds);
+}
+
 // ============================================================
 // Tags.
 //
@@ -391,6 +448,8 @@ function evCompileHandlerCondition(condition) {
         };
       case 'enum-member':
         return () => operand.enumMember;
+      case 'duration':
+        return () => operand.duration;
       case 'static':
         return () => evNormalize(operand);
       default:
@@ -591,6 +650,7 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
     : operandSource(value) === 'tag-literal' ? value.tagValue : evNormalize(value));
   const readOperand = (operand) => {
     if (operandSource(operand) === 'parameter') return parameter(operand);
+    if (operandSource(operand) === 'duration') return operand.duration;
     if (operandSource(operand) === 'collection') {
       const read = operand.read || {};
       const tags = {};
@@ -614,26 +674,11 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
   return evApplyPredicate(derived, left, right);
 }
 
-// One computation over two numbers. A null side yields null – "not
-// known yet" stays unknown rather than counting as zero – and a side
-// that is no number at all is an error the advisory named first.
+// One computation over two numbers, or a time and a duration (11.0;
+// `evArithmetic`). A null side yields null, and a side that computes
+// with nothing is an error the advisory named first.
 function evApplyOperator(projectionName, derived, left, right) {
-  const l = evNormalize(left);
-  const r = evNormalize(right);
-  if (l === null || l === undefined || r === null || r === undefined) return null;
-  if (typeof l !== 'number' || typeof r !== 'number') {
-    return fail(`Projection "${projectionName}" computes "${derivedText(derived)}" over `
-      + `${JSON.stringify(typeof l !== 'number' ? l : r)}, which is no number.`);
-  }
-  switch (derived.operator) {
-    case 'add': return l + r;
-    case 'subtract': return l - r;
-    case 'multiply': return l * r;
-    case 'min': return Math.min(l, r);
-    case 'max': return Math.max(l, r);
-    default:
-      return fail(`"${derived.operator}" is not an operator this can compute.`);
-  }
+  return evArithmetic(derived.operator, left, right, `Projection "${projectionName}"'s "${derivedText(derived)}"`);
 }
 
 // ============================================================
@@ -734,7 +779,9 @@ function evCollect(operand, instances, parameter) {
   const label = `"${operandText(operand)}"`;
   const holds = operand.where === undefined ? null : evCompileWhere(operand.where, parameter, label);
   const kept = holds ? instances.filter((instance) => holds(instance.value)) : instances;
-  const numbers = () => kept.map((instance) => evNormalize(instance.value)).filter((value) => value !== null).map((value) => {
+  // Over a record's field (11.0), `sum(P(x, *).seats)`: that field of each.
+  const field = operand.read && operand.read.field;
+  const numbers = () => kept.map((instance) => evNormalize(evField(instance.value, field))).filter((value) => value !== null).map((value) => {
     if (typeof value !== 'number') fail(`${label} computes over ${JSON.stringify(value)}, which is no number.`);
     return value;
   });
@@ -766,6 +813,7 @@ function evCompileWhere(condition, parameter, label) {
       case 'instance-value': return (value) => evField(evNormalize(value), operand.field);
       case 'parameter': return () => evField(parameter(operand), operand.property);
       case 'enum-member': return () => operand.enumMember;
+      case 'duration': return () => operand.duration;
       case 'static': return () => evNormalize(operand);
       default:
         return () => fail(`${label} has a where that reads ${operandText(operand)} – a where reads value, parameters and literals, never a projection.`);
@@ -878,6 +926,14 @@ function evReadOperand(operand, scope) {
     }
     case 'enum-member':
       return operand.enumMember;
+    // A duration literal (11.0), `15m`: the ISO 8601 duration it stores.
+    case 'duration':
+      return operand.duration;
+    // Arithmetic (11.0): both sides read, left first – a read in either
+    // made as anywhere – and computed.
+    case 'arithmetic':
+      return evArithmetic(operand.operator, evReadOperand(operand.leftHandSide, scope),
+        evReadOperand(operand.rightHandSide, scope), `"${operandText(operand)}"`);
     // An inline read is folded where it is first needed and once per
     // spelling – the same read written in two rules is one query – and
     // reported beside the aliases, under how it reads.
@@ -1160,14 +1216,15 @@ function evApplyPredicate(condition, left, right) {
     case 'isNotEmpty': held = !evIsEmpty(l); break;
     case 'isTrue': held = l === true; break;
     case 'isFalse': held = l === false; break;
-    case 'equals': held = evDeepEqual(l, r); break;
+    // Two times are equal when they name one instant, or are as long.
+    case 'equals': held = evTimeOrder(l, r) === 0 || evDeepEqual(l, r); break;
     case 'equalsAny':
       // Membership is repeated equality – a null left is simply not a
       // member unless listed – and an empty list holds for nothing
       // (negated: for everything), which the advisory said ahead of
       // time. A non-list right (a defect the advisories flag) wraps to
       // one entry rather than erroring: a defective model evaluates.
-      held = evAsList(r).some((entry) => evDeepEqual(l, entry));
+      held = evAsList(r).some((entry) => evTimeOrder(l, entry) === 0 || evDeepEqual(l, entry));
       break;
     case 'countEquals': held = evAsList(l).length === r; break;
     case 'countLessThan': held = evAsList(l).length < r; break;
@@ -1194,10 +1251,16 @@ function evApplyPredicate(condition, left, right) {
       if (l === null || l === undefined || r === null || r === undefined) {
         return fail(`"${conditionText(condition)}" orders against no value (null) – an ordering needs both sides.`);
       }
-      if (condition.predicate === 'lessThan') held = l < r;
-      else if (condition.predicate === 'lessThanOrEquals') held = l <= r;
-      else if (condition.predicate === 'greaterThan') held = l > r;
-      else held = l >= r;
+      {
+        // Two times by the instants they name or by length (11.0) – a
+        // datetime's text would order `11:30+02:00` after `10:00Z`.
+        const order = evTimeOrder(l, r);
+        const [a, b] = order === null ? [l, r] : [order, 0];
+        if (condition.predicate === 'lessThan') held = a < b;
+        else if (condition.predicate === 'lessThanOrEquals') held = a <= b;
+        else if (condition.predicate === 'greaterThan') held = a > b;
+        else held = a >= b;
+      }
       break;
     case 'startsWith':
     case 'endsWith':
@@ -1387,6 +1450,10 @@ function evDecide(model, events, commandName, args, collect) {
     }
     scope.args[property.name] = evNormalize(evOwn(supplied, property.name));
   }
+  // A time given is a time (11.0): a datetime without an offset names
+  // no instant, and nothing could compare it.
+  const untimely = payloadTimeProblems(model, body.properties, scope.args)[0];
+  if (untimely) fail(`"${commandName}" was given ${untimely.name}: ${untimely.problem}`);
 
   // A read nothing consults – the parameterless projection a command
   // binds to be serialised – is made up front: it is there for its
@@ -1697,6 +1764,8 @@ function deriveThen(model, scenario) {
         );
       }
     }
+    const untimely = payloadTimeProblems(model, definition.properties, step.data)[0];
+    if (untimely) fail(`Given step ${index + 1} ("${step.event}") carries ${untimely.name}: ${untimely.problem}`);
   });
 
   const result = evaluateCommand(
@@ -1814,6 +1883,8 @@ function deriveProjectionScenarioThen(model, spec) {
         );
       }
     }
+    const untimely = payloadTimeProblems(model, definition.properties, step.data)[0];
+    if (untimely) fail(`Given step ${index + 1} ("${step.event}") carries ${untimely.name}: ${untimely.problem}`);
   });
 
   if (!evOwn(projectionsOf(model), spec.projection)) {

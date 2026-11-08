@@ -220,10 +220,12 @@ function modelEventName(model, type, map) {
 
 // Why a value does not fit a property's declared type, or null. The type's
 // own constraints count here: stored values, unlike scenario values, are real.
+// A datetime or a duration is a string, whose time `replay` checks apart.
 function valueProblem(model, property, value) {
   if (property.isList) return Array.isArray(value) ? null : 'not a list';
   const custom = (model['custom-type-definitions'] || {})[property.propertyType];
-  const schema = custom ? (custom.schema || {}) : { type: property.propertyType };
+  const time = ['datetime', 'duration'].includes(property.propertyType);
+  const schema = custom ? (custom.schema || {}) : { type: time ? 'string' : property.propertyType };
   const type = schema.type;
   const actual = Array.isArray(value) ? 'array' : typeof value;
   if (type === 'integer' ? !Number.isInteger(value) : (type && type !== actual)) return `not of type ${type}`;
@@ -266,6 +268,11 @@ function replay(playground, model, exportFile, map, reads) {
       }
       const problem = valueProblem(model, property, value);
       if (problem) mismatch(`${name}.${property.name}: ${problem}`);
+    }
+    // A datetime without its offset names no instant; a duration is ISO
+    // 8601 in days, hours, minutes and seconds (11.0).
+    for (const { name: field, problem } of playground.payloadTimeProblems(model, definition.properties, exported.data)) {
+      mismatch(`${name}.${field}: ${problem.replace(/"[^"]*"/, 'a value')}`);
     }
   }
   const out = [`${events.length} event(s) of ${Object.keys(counts).length} model type(s)`];

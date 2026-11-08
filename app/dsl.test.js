@@ -2376,6 +2376,26 @@ projection Taken (tag courseId: CourseId): integer = 0 {
     eq(mapped.status, 0, mapped.stdout);
   });
 
+  check('the skill\'s replay flags a datetime without an offset and a duration that is none', () => {
+    const model = write('timed.dcb', `model "Timed"
+tag type CourseId = string
+record Slot { startsAt: datetime, length: duration }
+event SeatsReserved { tag courseId: CourseId, expiresAt: datetime, hold: duration, slots: Slot[] }
+`);
+    const lines = write('timed.ndjson', [
+      { type: 'SeatsReserved', data: { courseId: 'c1', expiresAt: '2026-01-01T10:15:00+02:00', hold: 'PT15M', slots: [] } },
+      { type: 'SeatsReserved', data: { courseId: 'c1', expiresAt: '2026-01-01T10:15:00', hold: '15m',
+        slots: [{ startsAt: '2026-01-01T10:00:00Z', length: 'P1M' }] } },
+    ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const result = spawnSync(process.execPath, [CLI, 'replay', model, lines], { encoding: 'utf8' });
+    eq(result.status, 1, result.stdout);
+    for (const expected of ['SeatsReserved.expiresAt: a value has no offset, so it names no instant', 'SeatsReserved.hold: a value is no duration',
+      'SeatsReserved.slots.length: a value is no duration']) {
+      eq(result.stdout.includes(expected), true, `${expected}: ${result.stdout}`);
+    }
+    eq(result.stdout.includes('not of type'), false, 'a time is a string');
+  });
+
   check('the skill\'s JSON is stable, round trips and keeps a sandbox', () => {
     const notation = write('m.dcb', MODEL);
     const json = run('json', notation).stdout;
@@ -3028,6 +3048,138 @@ command EndShares(customerId: CustomerId, note: string, locked: ContractId) {
     eq(labels(head).includes('for each'), true, 'a for each to start a step');
     eq(labels(head + 'for each id in ').includes('ids'), true, 'a list to run over');
     eq(labels(head + 'for each id in ids => ').includes('emit'), true, 'emit after the arrow');
+  });
+}
+
+// ---------------------------------------------------------------
+// Time (11.0): `datetime` and `duration`, duration literals, and values
+// added and subtracted in rules, emissions and derived projections.
+// ---------------------------------------------------------------
+{
+  const TIME = `model "Time"
+
+// Types
+tag type CourseId = string
+tag type ReservationId = string
+tag type OptInToken = string
+type Deadline = datetime
+type RetryWindow = duration
+record ReservationInfo { seats: integer, expiresAt: datetime }
+
+// Events
+event CourseDefined { tag courseId: CourseId, capacity: integer }
+
+event SeatsWereReserved {
+  tag courseId: CourseId
+  tag reservationId: ReservationId
+  seats: integer
+  expiresAt: datetime
+}
+
+event OptInIssued { tag token: OptInToken, issuedAt: datetime, window: duration }
+event SignUpConfirmed { tag token: OptInToken }
+
+// Projections
+projection CourseCapacity (tag courseId: CourseId): integer = 0 {
+  on CourseDefined => set event.data.capacity
+}
+
+projection Reservation (tag courseId: CourseId, tag reservationId: ReservationId): ReservationInfo = null {
+  on SeatsWereReserved => set { seats: event.data.seats, expiresAt: event.data.expiresAt }
+}
+
+projection OptInIssuedAt (tag token: OptInToken): datetime = null {
+  on OptInIssued => set event.data.issuedAt
+}
+
+projection WeekLongWindows (tag token: OptInToken): integer = 0 {
+  on OptInIssued {
+    if event.data.window == 7d => increment 1
+  }
+}
+
+derived projection OptInExpiresAt (tag token: OptInToken): datetime {
+  OptInIssuedAt(token) + 24h
+}
+
+derived projection ActiveSeats (tag courseId: CourseId, now: datetime): integer {
+  sum(Reservation(courseId, *).seats where value.expiresAt > now)
+}
+
+// Commands
+command ReserveSeats(
+  courseId: CourseId,
+  reservationId: ReservationId,
+  seats: integer,
+  now: datetime,
+) {
+  require CourseCapacity(courseId) - sum(Reservation(courseId, *).seats where value.expiresAt > now) >= seats
+    else reject "Not enough seats"
+
+  emit SeatsWereReserved { courseId, reservationId, seats, expiresAt: now + 15m }
+}
+
+command ConfirmSignUp(token: OptInToken, now: datetime) {
+  require OptInIssuedAt(token) + 24h > now
+    else reject "Token expired"
+  require OptInIssuedAt(token) - 1h30m < now - 30s + 1d
+    else reject "Not yet"
+
+  emit SignUpConfirmed { token }
+}
+`;
+
+  check('time prints as written and parses back equal', () => {
+    const { model } = buildText(TIME);
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const text = modelToSource(model());
+    eq(text, TIME, 'printed as written');
+    const parsed = parseModelSource(text);
+    eq(parsed.diagnostics, [], 'it reads');
+    assertSameModel(model(), parsed, 'package 7');
+    const reserve = model()['command-definitions'].ReserveSeats.steps;
+    eq(reserve[0].condition.leftHandSide.operator, 'subtract', 'a rule computes');
+    eq(reserve[1].parameters.expiresAt, { operator: 'add', leftHandSide: { parameterName: 'now' }, rightHandSide: { duration: 'PT15M' } }, 'now + 15m');
+    const later = model()['command-definitions'].ConfirmSignUp.steps[1].condition.rightHandSide;
+    eq([later.operator, later.leftHandSide.operator, later.rightHandSide], ['add', 'subtract', { duration: 'P1D' }], 'left to right');
+    eq(model()['custom-type-definitions'].Deadline.schema, { type: 'string', format: 'date-time' }, 'a type that is a datetime');
+    eq(model()['projection-definitions'].OptInExpiresAt.derived.rightHandSide, { duration: 'PT24H' }, 'a duration in a derived projection');
+  });
+
+  const errorOf = (from, to) => {
+    const { diagnostics } = parseModelSource(swap(TIME, from, to));
+    return diagnostics.map((d) => `${d.line}:${d.col} ${d.message}`);
+  };
+  const lineOf = (needle) => TIME.split('\n').findIndex((line) => line.includes(needle)) + 1;
+
+  check('a misspelt duration is a positioned error', () => {
+    const at = lineOf('expiresAt: now + 15m');
+    eq(errorOf('now + 15m', 'now + 15x'), [`${at}:77 "x" is no duration unit – a duration counts d, h, m and s: 30s, 15m, 24h, 7d.`], 'an unknown unit');
+    eq(errorOf('now + 15m', 'now + 1mo'), [`${at}:77 "1mo" – a duration has no years, months or weeks, which have no fixed length; count days: 30d.`], 'a month');
+    eq(errorOf('now + 15m', 'now + 1.5h'), [`${at}:77 "1.5h" is no duration – write a whole number and a unit: 30s, 15m, 24h, 7d.`], 'a fraction');
+    eq(errorOf('now + 15m', 'now + 30m1h'), [`${at}:77 "30m1h" – write each unit once, largest first: 1d2h30m.`], 'units out of order');
+  });
+
+  check('the code view names what arithmetic reads', () => {
+    const parsed = parseModelSource(TIME);
+    const symbols = sandbox.sourceSymbols(parsed).occurrences;
+    const at = (symbol) => symbols.filter((o) => o.symbol === symbol && !o.decl).map((o) => o.token.line);
+    eq(at('projection CourseCapacity').includes(lineOf('require CourseCapacity(courseId) -')), true, 'a read on the left');
+    eq(at('projection Reservation').includes(lineOf('require CourseCapacity(courseId) -')), true, 'and the collection on the right');
+    eq(at('commandProperty ReserveSeats now').includes(lineOf('expiresAt: now + 15m')), true, 'a parameter inside a sum');
+    const renamed = renameAt(TIME, 'expiresAt: now + 15m', 'expiresAt: '.length + 2, 'at');
+    eq(parseModelSource(renamed.text).diagnostics, [], `now renames: ${renamed.error || ''}`);
+    eq(renamed.text.includes('expiresAt: at + 15m') && renamed.text.includes('where value.expiresAt > at'), true, 'and follows its uses');
+  });
+
+  check('completion offers datetime and duration as types', () => {
+    const labels = completeAt(TIME.slice(0, TIME.indexOf('// Commands')) + 'command X(when: |) {}\n').labels;
+    eq(labels.includes('datetime') && labels.includes('duration'), true, 'both built-in');
+  });
+
+  check('the language reference covers time', () => {
+    const reference = sandbox.sourceLanguageReference();
+    for (const word of ['datetime', 'duration', 'now + 15m', '24h']) eq(reference.includes(word), true, word);
   });
 }
 

@@ -5014,4 +5014,229 @@ function modelsWithScenarios() {
   });
 }
 
+// ---------------------------------------------------------------
+// Time (11.0): `datetime` and `duration` are built-in types, `now` an
+// ordinary parameter, and a datetime moves by a duration – in rules,
+// emissions and derived projections. Numbers add and subtract in a
+// rule too.
+// ---------------------------------------------------------------
+{
+  const one = (name, propertyType, extra = {}) => ({ name, propertyType, isOptional: false, isList: false, ...extra });
+  const param = (name) => ({ parameterName: name });
+  const tag = (name, tagType) => ({ name, tagType });
+  const minutes = (n) => ({ duration: `PT${n}M` });
+  const capacity = { projection: 'CourseCapacity', tags: { courseId: param('courseId') } };
+  const activeSeats = { collect: 'sum', read: { projection: 'Reservation', tags: { courseId: param('courseId'), reservationId: { open: true } }, field: 'seats' },
+    where: { leftHandSide: { instanceValue: true, field: 'expiresAt' }, predicate: 'greaterThan', rightHandSide: param('now') } };
+  const openTime = () => {
+    const { id, model } = openBlank('Time');
+    for (const type of ['CourseId', 'ReservationId', 'OptInToken']) {
+      addDefinition('custom-type-definition', id, type, { schema: { type: 'string' }, isTag: true });
+    }
+    addDefinition('custom-type-definition', id, 'ReservationInfo', { properties: [one('seats', 'integer'), one('expiresAt', 'datetime')] });
+    addTaggedEvent(id, 'CourseDefined', { properties: [one('courseId', 'CourseId'), one('capacity', 'integer')] });
+    addTaggedEvent(id, 'SeatsWereReserved', { properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId'),
+      one('seats', 'integer'), one('expiresAt', 'datetime')] });
+    addTaggedEvent(id, 'OptInIssued', { properties: [one('token', 'OptInToken'), one('issuedAt', 'datetime')] });
+    addTaggedEvent(id, 'SignUpConfirmed', { properties: [one('token', 'OptInToken')] });
+    addTaggedEvent(id, 'RetryWindowChanged', { properties: [one('courseId', 'CourseId'), one('window', 'duration')] });
+    addDefinition('projection-definition', id, 'CourseCapacity', {
+      tags: [tag('courseId', 'CourseId')], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'CourseDefined', operation: 'set', value: { eventProperty: 'capacity' } }],
+    });
+    addDefinition('projection-definition', id, 'Reservation', {
+      tags: [tag('courseId', 'CourseId'), tag('reservationId', 'ReservationId')], valueType: 'ReservationInfo', isList: false, initialValue: null,
+      handlers: [{ event: 'SeatsWereReserved', operation: 'set',
+        value: { record: { seats: { eventProperty: 'seats' }, expiresAt: { eventProperty: 'expiresAt' } } } }],
+    });
+    addDefinition('projection-definition', id, 'OptInIssuedAt', {
+      tags: [tag('token', 'OptInToken')], valueType: 'datetime', isList: false, initialValue: null,
+      handlers: [{ event: 'OptInIssued', operation: 'set', value: { eventProperty: 'issuedAt' } }],
+    });
+    addDefinition('projection-definition', id, 'OptInExpiresAt', {
+      tags: [tag('token', 'OptInToken')], valueType: 'datetime', isList: false,
+      derived: { leftHandSide: { projection: 'OptInIssuedAt', tags: { token: param('token') } }, operator: 'add', rightHandSide: { duration: 'PT24H' } },
+    });
+    addDefinition('command-definition', id, 'ReserveSeats', {
+      properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId'), one('seats', 'integer'), one('now', 'datetime')],
+      boundary: [],
+      steps: [
+        { condition: { leftHandSide: { operator: 'subtract', leftHandSide: capacity, rightHandSide: activeSeats },
+          predicate: 'greaterThanOrEquals', rightHandSide: param('seats') }, rejection: 'Not enough seats' },
+        { name: 'SeatsWereReserved', parameters: { courseId: param('courseId'), reservationId: param('reservationId'), seats: param('seats'),
+          expiresAt: { operator: 'add', leftHandSide: param('now'), rightHandSide: minutes(15) } } },
+      ],
+    });
+    addDefinition('command-definition', id, 'ConfirmSignUp', {
+      properties: [one('token', 'OptInToken'), one('now', 'datetime')], boundary: [],
+      steps: [
+        { condition: { leftHandSide: { operator: 'add', leftHandSide: { projection: 'OptInIssuedAt', tags: { token: param('token') } }, rightHandSide: { duration: 'PT24H' } },
+          predicate: 'greaterThan', rightHandSide: param('now') }, rejection: 'Token expired' },
+        { name: 'SignUpConfirmed', parameters: { token: param('token') } },
+      ],
+    });
+    addDefinition('command-definition', id, 'ChangeRetryWindow', {
+      properties: [one('courseId', 'CourseId'), one('window', 'duration'), one('from', 'datetime'), one('until', 'datetime')], boundary: [],
+      steps: [
+        { condition: { leftHandSide: param('from'), predicate: 'lessThan', rightHandSide: param('until') }, rejection: 'From is not before until' },
+        { condition: { leftHandSide: param('window'), predicate: 'lessThanOrEquals', rightHandSide: { duration: 'PT168H' } }, rejection: 'Window too long' },
+        { name: 'RetryWindowChanged', parameters: { courseId: param('courseId'), window: param('window') } },
+      ],
+    });
+    addDefinition('command-definition', id, 'Allocate', {
+      properties: [one('courseId', 'CourseId'), one('total', 'integer'), one('used', 'integer'), one('wanted', 'integer')], boundary: [],
+      steps: [
+        { condition: { leftHandSide: { operator: 'subtract', leftHandSide: param('total'), rightHandSide: param('used') },
+          predicate: 'greaterThanOrEquals', rightHandSide: param('wanted') }, rejection: 'Too little left' },
+        { name: 'CourseDefined', parameters: { courseId: param('courseId'), capacity: { operator: 'add', leftHandSide: param('total'), rightHandSide: 1 } } },
+      ],
+    });
+    return { id, model };
+  };
+  const defined = (capacity) => ({ type: 'CourseDefined', data: { courseId: 'c1', capacity } });
+  const reserved = (reservationId, seats, expiresAt) => ({ type: 'SeatsWereReserved', data: { courseId: 'c1', reservationId, seats, expiresAt } });
+  const window = (args) => ({ courseId: 'c1', window: 'PT1H', from: '2026-01-01T10:00:00Z', until: '2026-01-01T11:00:00Z', ...args });
+  const evaluationError = (run) => {
+    try { run(); } catch (error) {
+      if (error.name !== 'EvaluationError') throw error;
+      return error.message;
+    }
+    return null;
+  };
+
+  check('a model using datetime, duration and arithmetic is advisory-clean', () => {
+    const { model } = openTime();
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+  });
+
+  check('datetimes compare as instants, whatever their offsets', () => {
+    const { model } = openTime();
+    const run = (from, until) => evaluateCommand(model(), [], 'ChangeRetryWindow', window({ from, until })).outcome;
+    eq(run('2026-01-01T11:30:00+02:00', '2026-01-01T10:00:00Z'), 'published', '11:30+02:00 is 09:30Z, before 10:00Z');
+    eq(run('2026-01-01T10:00:00Z', '2026-01-01T11:30:00+02:00'), 'rejected', 'and 10:00Z is not before 09:30Z');
+    eq(run('2026-01-01T12:00:00+02:00', '2026-01-01T10:00:00Z'), 'rejected', 'one instant is not before itself');
+  });
+
+  check('now + 15m is emitted in UTC', () => {
+    const { model } = openTime();
+    const result = evaluateCommand(model(), [defined(10)], 'ReserveSeats',
+      { courseId: 'c1', reservationId: 'r1', seats: 2, now: '2026-01-01T10:00:00+02:00' });
+    eq(result.outcome, 'published', 'published');
+    eq(result.events[0].data.expiresAt, '2026-01-01T08:15:00Z', 'fifteen minutes on, written in UTC');
+  });
+
+  check('a rule over a stored datetime plus 24h holds before it and refuses after', () => {
+    const { model } = openTime();
+    const log = [{ type: 'OptInIssued', data: { token: 't1', issuedAt: '2026-01-01T10:00:00+01:00' } }];
+    const confirm = (now) => evaluateCommand(model(), log, 'ConfirmSignUp', { token: 't1', now });
+    eq(confirm('2026-01-02T08:59:59Z').outcome, 'published', 'a second before the day is up');
+    const late = confirm('2026-01-02T09:00:00Z');
+    eq([late.outcome, late.failedRule.rejection], ['rejected', 'Token expired'], 'refused once 24h are up');
+    eq(foldProjection(model(), log, 'OptInExpiresAt', { tags: { token: 't1' } }), '2026-01-02T09:00:00Z',
+      'a derived projection moves a datetime by a duration');
+  });
+
+  check('a sum over an open read keeps the instances its where holds for, against now', () => {
+    const { model } = openTime();
+    const log = [defined(10), reserved('r1', 5, '2026-01-01T10:15:00Z'), reserved('r2', 3, '2026-01-01T12:30:00+02:00')];
+    const reserve = (seats, now) => evaluateCommand(model(), log, 'ReserveSeats', { courseId: 'c1', reservationId: 'r3', seats, now });
+    eq(reserve(2, '2026-01-01T10:00:00Z').outcome, 'published', 'both reservations hold: 2 seats free');
+    eq(reserve(3, '2026-01-01T10:00:00Z').failedRule.rejection, 'Not enough seats', 'not 3');
+    eq(reserve(7, '2026-01-01T10:20:00Z').outcome, 'published', 'r1 expired: 7 free');
+    eq(reserve(8, '2026-01-01T10:20:00Z').outcome, 'rejected', 'not 8');
+    eq(reserve(10, '2026-01-01T10:30:00Z').outcome, 'published', 'r2 expires at 10:30Z: all free');
+    const boundary = sandbox.deriveDcb(model(), model()['command-definitions'].ReserveSeats).items.map((item) => item.types.join()).sort();
+    eq(boundary, ['CourseDefined', 'SeatsWereReserved'], 'both sides of the subtraction are in the boundary');
+  });
+
+  check('7d is 168h, and a duration is a parameter and an event field', () => {
+    const { model } = openTime();
+    const change = (w) => evaluateCommand(model(), [], 'ChangeRetryWindow', window({ window: w }));
+    const week = change('P7D');
+    eq([week.outcome, week.events[0].data.window], ['published', 'P7D'], '7d is no longer than 168h, and emitted as given');
+    eq(change('P7DT1S').failedRule.rejection, 'Window too long', 'a second more is');
+    eq(change('PT90M').outcome, 'published', '90m');
+    eq(sandbox.durationFromLiteral('7d').value, 'P7D', 'the literal 7d');
+    eq(sandbox.durationSeconds('P7D'), sandbox.durationSeconds('PT168H'), 'a day is exactly 24 hours');
+    eq(sandbox.durationFromLiteral('1h30m').value, 'PT1H30M', 'combined units');
+    eq(sandbox.durationLiteralText('PT1H30M'), '1h30m', 'and back');
+  });
+
+  check('a datetime without an offset is an error where it is given, and an advisory where it is written', () => {
+    const { id, model } = openTime();
+    const message = evaluationError(() => evaluateCommand(model(), [], 'ChangeRetryWindow', window({ from: '2026-01-01T10:00:00' })));
+    eq(/from: .*has no offset/.test(message || ''), true, 'a command given one errors');
+    eq(/window: .*no duration/.test(evaluationError(() => evaluateCommand(model(), [], 'ChangeRetryWindow', window({ window: '15m' }))) || ''),
+      true, 'and a duration that is none');
+    const scenario = { command: 'ConfirmSignUp', given: [{ event: 'OptInIssued', data: { token: 't1', issuedAt: '2026-01-01T10:00:00' } }],
+      when: { arguments: { token: 't1', now: '2026-01-01T10:00:00Z' } }, then: null };
+    const run = runScenario(model(), scenario);
+    eq([run.status, /Given step 1 \("OptInIssued"\) carries issuedAt: .*has no offset/.test(run.reason)], ['broken', true], 'a scenario given one is broken');
+    const projection = runProjectionScenario(model(), { projection: 'OptInIssuedAt', tags: { token: { tagType: 'OptInToken', tagValue: 't1' } },
+      given: scenario.given, then: null });
+    eq(projection.status, 'broken', 'a projection scenario too');
+  });
+
+  check('number arithmetic in a rule and in an emission', () => {
+    const { model } = openTime();
+    const run = (total, used, wanted) => evaluateCommand(model(), [], 'Allocate', { courseId: 'c1', total, used, wanted });
+    eq(run(10, 3, 7).outcome, 'published', '10 - 3 >= 7');
+    eq(run(10, 3, 8).failedRule.rejection, 'Too little left', 'not >= 8');
+    eq(run(10, 3, 7).events[0].data.capacity, 11, 'a + 1 emitted');
+  });
+
+  check('time and arithmetic are type-checked', () => {
+    const { id, model } = openTime();
+    const advised = (steps, properties) => {
+      updateDefinition('command-definition', id, 'Allocate', { properties: properties || [one('courseId', 'CourseId'), one('total', 'integer'),
+        one('used', 'integer'), one('now', 'datetime'), one('wait', 'duration')], boundary: [], steps: [...steps,
+        { name: 'CourseDefined', parameters: { courseId: param('courseId'), capacity: 1 } }] });
+      return sandbox.modelAdvisories(model()).filter((a) => a.name === 'Allocate').map((a) => a.message).join('; ');
+    };
+    const rule = (leftHandSide, predicate, rightHandSide) => ({ condition: { leftHandSide, predicate, rightHandSide }, rejection: 'No' });
+    const sum = (operator, l, r) => ({ operator, leftHandSide: l, rightHandSide: r });
+    eq(advised([rule(sum('add', param('now'), param('wait')), 'greaterThan', param('now'))]), '', 'now + w > now');
+    eq(/datetime plus a datetime means nothing/.test(advised([rule(sum('add', param('now'), param('now')), 'greaterThan', param('now'))])), true, 'two datetimes');
+    eq(/integer minus a duration/.test(advised([rule(sum('subtract', param('total'), param('wait')), 'greaterThan', 1)])), true, 'a number and a duration');
+    eq(/compares a datetime with a duration/.test(advised([rule(param('now'), 'lessThan', param('wait'))])), true, 'a datetime against a duration');
+    eq(/has no offset/.test(advised([rule(param('now'), 'lessThan', '2026-01-01T10:00:00')])), true, 'a literal without an offset');
+    eq(advised([rule(param('now'), 'lessThan', '2026-01-01T10:00:00+02:00')]), '', 'one with an offset');
+    eq(/adds \(\+\) and subtracts/.test(advised([rule(sum('multiply', param('total'), param('used')), 'greaterThan', 1)])), true, 'no multiply in a command');
+    updateDefinition('command-definition', id, 'Allocate', { properties: [one('courseId', 'CourseId'), one('now', 'datetime')], boundary: [],
+      steps: [{ name: 'CourseDefined', parameters: { courseId: param('courseId'), capacity: sum('add', param('now'), minutes(1)) } }] });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Allocate').map((a) => a.message).join('; '),
+      '"CourseDefined.capacity" is declared integer, but takes its value from "now + 1m", which is datetime.', 'an emission is typed by what it computes');
+    updateDefinition('projection-definition', id, 'OptInExpiresAt', { tags: [tag('token', 'OptInToken')], valueType: 'integer', isList: false,
+      derived: { leftHandSide: { projection: 'OptInIssuedAt', tags: { token: param('token') } }, operator: 'add', rightHandSide: { duration: 'PT24H' } } });
+    eq(/computes a datetime, but holds an integer – declare it a datetime/.test(
+      sandbox.modelAdvisories(model()).filter((a) => a.name === 'OptInExpiresAt').map((a) => a.message).join()), true, 'a derived datetime is declared one');
+    updateDefinition('projection-definition', id, 'OptInIssuedAt', { tags: [tag('token', 'OptInToken')], valueType: 'datetime', isList: false,
+      initialValue: '2026-01-01T10:00:00', handlers: [] });
+    eq(/has no offset/.test(sandbox.modelAdvisories(model()).filter((a) => a.name === 'OptInIssuedAt').map((a) => a.message).join()), true,
+      'an initial datetime without an offset');
+  });
+
+  check('a time\'s value schema states its format', () => {
+    const { model } = openTime();
+    const schema = sandbox.eventPayloadSchema(model(), 'SeatsWereReserved');
+    eq([schema.properties.expiresAt.type, schema.properties.expiresAt.format], ['string', 'date-time'], 'a datetime');
+    const window = sandbox.eventPayloadSchema(model(), 'RetryWindowChanged').properties.window;
+    eq([window.type, window.format], ['string', 'duration'], 'a duration');
+    eq(new RegExp(window.pattern).test('PT15M') && !new RegExp(window.pattern).test('P1M'), true, 'no months');
+    eq(new RegExp(schema.properties.expiresAt.pattern).test('2026-01-01T10:00:00Z')
+      && !new RegExp(schema.properties.expiresAt.pattern).test('2026-01-01T10:00:00'), true, 'an offset required');
+  });
+
+  check('renaming now follows it into arithmetic', () => {
+    const { id, model } = openTime();
+    sandbox.renameMember('command-definition', id, 'ConfirmSignUp', 'property', 'now', 'at');
+    const rule = sandbox.commandRules(model()['command-definitions'].ConfirmSignUp)[0];
+    eq(rule.condition.rightHandSide, param('at'), 'the compared side');
+    sandbox.renameMember('command-definition', id, 'ReserveSeats', 'property', 'now', 'at');
+    const emission = sandbox.commandEmissions(model()['command-definitions'].ReserveSeats)[0];
+    eq(emission.parameters.expiresAt.leftHandSide, param('at'), 'inside the arithmetic');
+    eq(sandbox.modelAdvisories(model()), [], 'still advisory-clean');
+  });
+}
+
 finish();

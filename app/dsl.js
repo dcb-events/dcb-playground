@@ -340,6 +340,10 @@ const SOURCE_SECTION = {
 // object out: JSON Schema's own `type` keywords.
 const SOURCE_BASE_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array', 'null'];
 
+// A time a value type may be (11.0), `type Deadline = datetime`: the
+// JSON Schema format of the string it is.
+const SOURCE_TIME_FORMATS = { datetime: 'date-time', duration: 'duration' };
+
 // Which annotation goes on which kind, and the body field it fills.
 const SOURCE_ANNOTATIONS = {
   icon: ['group-definition', 'event-definition', 'command-definition'],
@@ -377,11 +381,12 @@ function sourcePut(target, key, value) {
 const SOURCE_PUNCT = ['=>', '==', '!=', '<=', '>=', '<', '>', '=', '{', '}', '(', ')', '[', ']', ',', ':', '.', '?', '@', '+', '-', '*'];
 const SOURCE_NUMBER_RE = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
 const SOURCE_WORD_RE = /[\p{L}_][\p{L}\p{M}\p{Nd}_]*/uy;
+const SOURCE_DURATION_RE = /-?[\d.]+[\p{L}_][\p{L}\p{M}\p{Nd}_]*/uy;
 
 // Whether a token closes a value, so a `-` straight after it subtracts
 // rather than starting a negative number: `A(x) -1`, `3 -1`.
 function endsValue(token) {
-  return !!token && ((token.t === 'punct' && (token.v === ')' || token.v === ']')) || token.t === 'number');
+  return !!token && ((token.t === 'punct' && (token.v === ')' || token.v === ']')) || token.t === 'number' || token.t === 'duration');
 }
 
 function lexSource(text) {
@@ -448,11 +453,24 @@ function lexSource(text) {
     } else if ((c >= '0' && c <= '9') || (c === '-' && text[i + 1] >= '0' && text[i + 1] <= '9' && !endsValue(tokens[tokens.length - 1]))) {
       SOURCE_NUMBER_RE.lastIndex = i;
       const match = SOURCE_NUMBER_RE.exec(text);
-      advanceTo(i + match[0].length);
-      token = { t: 'number', v: Number(match[0]) };
-      // Past what a double holds, a number reads as Infinity – and is
-      // stored as null, JSON having no Infinity.
-      if (!Number.isFinite(token.v)) report('This number is too large to store.', start);
+      // A number straight followed by a letter is a duration (11.0):
+      // `15m`, `7d`, `1h30m` – the ISO 8601 duration it stores, its
+      // units as written. Anything else so written is an error here.
+      if (/[\p{L}_]/u.test(text[i + match[0].length] || '')) {
+        SOURCE_DURATION_RE.lastIndex = i;
+        const raw = SOURCE_DURATION_RE.exec(text)[0];
+        advanceTo(i + raw.length);
+        const read = raw.startsWith('-') ? { error: `"${raw}" – a duration is never negative; subtract it instead: now - ${raw.slice(1)}.` }
+          : durationFromLiteral(raw);
+        if (read.error) report(read.error, start);
+        token = { t: 'duration', v: read.value === undefined ? null : read.value, raw };
+      } else {
+        advanceTo(i + match[0].length);
+        token = { t: 'number', v: Number(match[0]) };
+        // Past what a double holds, a number reads as Infinity – and is
+        // stored as null, JSON having no Infinity.
+        if (!Number.isFinite(token.v)) report('This number is too large to store.', start);
+      }
     } else if (/[\p{L}_]/u.test(String.fromCodePoint(text.codePointAt(i)))) {
       SOURCE_WORD_RE.lastIndex = i;
       const match = SOURCE_WORD_RE.exec(text);
@@ -493,6 +511,7 @@ class SourceError extends Error {
 function describeToken(token) {
   if (token.t === 'eof') return 'the end of the text';
   if (token.t === 'string') return 'a string';
+  if (token.t === 'duration') return `the duration ${token.raw}`;
   if (token.t === 'code') return 'a code block';
   return `"${token.v}"`;
 }
@@ -744,6 +763,7 @@ function parseModelSourceText(text, options) {
   // payload property.
   const commandOperand = () => {
     const token = peek();
+    if (token.t === 'duration') return durationLiteral();
     if (startsCollection()) return collection(commandOperand);
     // `value` inside a loop over an open read (11.0): the instance's.
     if (loopRead && loopRead.value && token.t === 'ident' && token.v === 'value' && !is('(', 1)) {
@@ -769,6 +789,30 @@ function parseModelSourceText(text, options) {
     }
     if (token.t === 'ident' && !startsLiteral()) return nameRef();
     return literalValue();
+  };
+
+  // A value a rule compares or an emission writes (11.0): an operand,
+  // or operands added and subtracted, left to right – `now + 15m`,
+  // `CourseCapacity(courseId) - sum(…)`. Only there: a read's values and
+  // a where's sides are never computed.
+  const commandValue = () => {
+    let value = commandOperand();
+    while (is('+') || is('-')) {
+      const op = next();
+      enter();
+      value = { operator: SOURCE_OPERATORS[op.v], leftHandSide: value, rightHandSide: commandOperand() };
+      depth -= 1;
+      mark(value, 'operator', op);
+    }
+    return value;
+  };
+  // `15m`, `7d`, `1h30m` (11.0): the ISO 8601 duration it stores. A
+  // misspelt one was reported where it was lexed.
+  const durationLiteral = () => {
+    const token = next();
+    const out = { duration: token.v };
+    mark(out, 'duration', token);
+    return out;
   };
 
   // `Name(a, each b)`: the values in order – `each` marking the one a
@@ -898,6 +942,7 @@ function parseModelSourceText(text, options) {
   // parameter, `x.field` of a record one – or a literal. Never a read.
   const whereOperand = () => {
     const token = peek();
+    if (token.t === 'duration') return durationLiteral();
     const never = () => fail('A where reads value, parameters and literals – never a projection.', token);
     if (token.t === 'ident' && token.v === 'value') {
       next();
@@ -971,6 +1016,7 @@ function parseModelSourceText(text, options) {
   };
   const derivedValue = () => {
     const token = peek();
+    if (token.t === 'duration') return durationLiteral();
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1)) return call(literalValue);
     if (token.t === 'ident' && !startsLiteral()) {
       next();
@@ -1126,7 +1172,7 @@ function parseModelSourceText(text, options) {
   //
   // `leaf` reads one comparison – a command's by default; a handler's
   // condition joins its own comparisons the same way.
-  const commandComparison = () => condition(commandOperand);
+  const commandComparison = () => condition(commandValue);
   const anyCondition = (leaf = commandComparison) => {
     enter();
     const parts = [allCondition(leaf)];
@@ -1209,6 +1255,7 @@ function parseModelSourceText(text, options) {
       return operand;
     }
     if (left) fail(`A handler's condition starts with the event field it tests (event.data.…), found ${describeToken(token)}.`);
+    if (token.t === 'duration') return durationLiteral();
     return literalValue();
   };
   const handlerComparison = (scope) => () => {
@@ -1386,6 +1433,12 @@ function parseModelSourceText(text, options) {
       if (is('{')) body = { schema: jsonValue() };
       else {
         const base = ident('a base type');
+        // A time (11.0): the string of its format, `type Deadline = datetime`.
+        if (SOURCE_TIME_FORMATS[base.v]) {
+          body = { schema: { type: 'string', format: SOURCE_TIME_FORMATS[base.v] } };
+          if (isTag) body.isTag = true;
+          return define('custom-type-definition', nameToken, annotate('custom-type-definition', body, annotations), start);
+        }
         if (!SOURCE_BASE_TYPES.includes(base.v)) {
           fail(`A value type is one of ${SOURCE_BASE_TYPES.join(', ')} – or a JSON Schema object – `
             + `not "${base.v}". (A record of fields is written "record ${nameToken.v} { … }".)`, base);
@@ -1743,7 +1796,7 @@ function parseModelSourceText(text, options) {
       const eventToken = ident('an event name');
       const emission = { name: eventToken.v };
       mark(emission, 'name', eventToken);
-      if (accept('{')) emission.parameters = argumentList('}', commandOperand);
+      if (accept('{')) emission.parameters = argumentList('}', commandValue);
       if (is('when')) {
         fail('"when" on an emission is gone – 11.0 has no guarded emissions: "if … => emit …" emits under a condition.');
       }
@@ -2649,6 +2702,18 @@ function sourceLiteral(value) {
   return unprintable(`it holds a value the code form has no spelling for: ${JSON.stringify(value)}`);
 }
 
+// A literal where an operand stands: a duration (11.0) as the
+// notation spells it, `15m`; anything else as `sourceLiteral` does.
+function sourceOperandLiteral(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.duration !== undefined) {
+    if (Object.keys(value).length !== 1) unprintable('a duration carries extra fields');
+    const text = durationLiteralText(value.duration);
+    if (text === null) unprintable(`${JSON.stringify(value.duration)} is no duration the code form can write`);
+    return text;
+  }
+  return sourceLiteral(value);
+}
+
 function sourceProperty(property) {
   return `${sourceRef(property.name, 'property')}${property.isOptional ? '?' : ''}: `
     + `${sourceRef(property.propertyType, 'type')}${property.isList ? '[]' : ''}`;
@@ -2838,7 +2903,7 @@ function sourceCollection(operand, read, name) {
   if (Object.keys(operand).some((k) => !['collect', 'read', 'where'].includes(k))) unprintable('a collection function carries extra fields');
   if (!COLLECTION_FUNCTIONS.includes(operand.collect)) unprintable(`"${operand.collect}" is not a collection function the code form knows`);
   const target = operand.read;
-  if (!target || typeof target !== 'object' || target.projection === undefined || target.field !== undefined) {
+  if (!target || typeof target !== 'object' || target.projection === undefined) {
     unprintable('a collection function collects no read of a projection');
   }
   if (!readTagOperands(target).some((tag) => tag && typeof tag === 'object' && tag.open === true)) {
@@ -2855,9 +2920,9 @@ function sourceCollection(operand, read, name) {
         if (value.parameterName === 'value') unprintable('a where names a parameter called value');
         return name(value);
       }
-      if (value.enumMember === undefined) unprintable('a where reads something other than value, a name or a literal');
+      if (value.enumMember === undefined && value.duration === undefined) unprintable('a where reads something other than value, a name or a literal');
     }
-    return sourceLiteral(value);
+    return sourceOperandLiteral(value);
   };
   const where = operand.where === undefined ? '' : ` where ${sourceAnyCondition(operand.where, side)}`;
   return `${operand.collect}(${read(target)}${where})`;
@@ -2901,7 +2966,7 @@ function sourceHandlerSteps(handler, tagNames, operation) {
         return sourceRef(value.parameterName, 'tag');
       }
     }
-    return sourceLiteral(value);
+    return sourceOperandLiteral(value);
   };
   const condition = (c) => {
     for (const leaf of conditionLeaves(c)) {
@@ -2949,7 +3014,7 @@ function sourceDerivedOperand(names, siblings = null) {
       if (Object.keys(v).length !== 1) unprintable('a derived operand\'s parameter reaches into a field');
       return sourceRef(v.parameterName, 'parameter');
     }
-    return sourceLiteral(v);
+    return sourceOperandLiteral(v);
   };
   const read = (operand) => {
     if (Object.keys(operand).some((k) => !['projection', 'tags', 'arguments', 'field'].includes(k))) unprintable('a derived operand carries extra fields');
@@ -2992,6 +3057,8 @@ function printCustomType(name, body) {
   const plainEnum = keys.length === 2 && schema.type === 'string' && Array.isArray(schema.enum) && schema.enum.length
     && schema.enum.every((m) => typeof m === 'string' && SOURCE_IDENT_RE.test(m) && !['true', 'false', 'null'].includes(m));
   if (plainEnum) return tagSchema + `${tag}enum ${declared} { ${schema.enum.join(', ')} }`;
+  const time = Object.keys(SOURCE_TIME_FORMATS).find((word) => SOURCE_TIME_FORMATS[word] === schema.format);
+  if (time && keys.length === 2 && schema.type === 'string') return tagSchema + `${tag}type ${declared} = ${time}`;
   if (typeof schema.type === 'string' && SOURCE_BASE_TYPES.includes(schema.type)) {
     const rest = {};
     for (const key of keys) if (key !== 'type') rest[key] = schema[key];
@@ -3159,8 +3226,20 @@ function sourceCommandOperand(body, names) {
       // A typed literal stands where a tag does; anywhere else it is no
       // value the code form can say.
       if (value.tagType !== undefined) unprintable('a tag literal stands outside a read');
+      // `a - b + c` (11.0): a sum on the left is written bare, as it was
+      // read; one on the right has no spelling.
+      if (value.operator !== undefined) {
+        if (Object.keys(value).some((k) => !['operator', 'leftHandSide', 'rightHandSide'].includes(k))) unprintable('arithmetic carries extra fields');
+        const symbol = Object.keys(SOURCE_OPERATORS).find((k) => SOURCE_OPERATORS[k] === value.operator);
+        if (symbol !== '+' && symbol !== '-') unprintable(`"${value.operator}" is no arithmetic a command has`);
+        if (value.rightHandSide && typeof value.rightHandSide === 'object' && value.rightHandSide.operator !== undefined) {
+          unprintable('arithmetic on the right of + or - has no spelling');
+        }
+        const self = sourceCommandOperand(body, names);
+        return `${self(value.leftHandSide)} ${symbol} ${self(value.rightHandSide)}`;
+      }
     }
-    return sourceLiteral(value);
+    return sourceOperandLiteral(value);
   };
 }
 
@@ -4448,6 +4527,11 @@ function sourceSymbols(parsed) {
     } else if (has(value, 'parameterName')) {
       parameter = value.parameterName;
       ({ property } = value);
+    } else if (has(value, 'operator') && has(value, 'leftHandSide')) {
+      // Arithmetic (11.0): both sides, in the same scope.
+      commandOperand(commandName, body, value.leftHandSide, null);
+      commandOperand(commandName, body, value.rightHandSide, null);
+      return;
     } else if (has(value, 'collect')) {
       // A collection function (11.0): its open read, and its where.
       commandOperand(commandName, body, value.read, null);
@@ -6000,8 +6084,22 @@ another projection or the state, and never narrows the query.
 
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
 a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
-an enum member (Archived), a tag literal naming its type (CourseId("c1")), a collection
-function, and a field of a projection's record value: P(…).city, alias.city, G(…).p.city.
+a duration (15m), an enum member (Archived), a tag literal naming its type (CourseId("c1")),
+a collection function, and a field of a projection's record value: P(…).city, alias.city,
+G(…).p.city. A rule's sides and an emitted value may add and subtract them, left to right:
+  require CourseCapacity(courseId) - sum(Reservation(courseId, *).seats) >= seats else reject "Full"
+
+Time is data. datetime is an RFC 3339 date-time with an offset ("2026-01-01T10:00:00+02:00",
+"…Z"), compared as the instant it names; duration is a length written 30s, 15m, 24h, 7d or
+1h30m (a day is exactly 24h; no months or years) and stored as ISO 8601 ("PT15M"). No event
+carries a recorded time and there is no clock: the time a command acts at is a parameter,
+now: datetime, which a scenario gives like any value.
+  require OptInIssuedAt(token) + 24h > now else reject "Token expired"
+  emit SeatsWereReserved { courseId, seats, expiresAt: now + 15m }
+  sum(Reservation(courseId, *).seats where value.expiresAt > now)
+A datetime moves by a duration (datetime + duration, datetime - duration) and is written back
+in UTC ("…Z"); durations add and subtract; numbers add and subtract. type Deadline = datetime
+names one.
 
 An open tag, *, reads every present instance of a projection tagged by several – one whose
 value is not its initial one – matching the tags it binds; at least one stays bound:
@@ -6032,8 +6130,9 @@ const SOURCE_REFERENCE_TOUR = `model "Library"
 // ---- Types ----
 // "type" names a value type: a JSON Schema base type (string, number,
 // integer, boolean, object, array, null), optionally constrained by a
-// JSON Schema object.
+// JSON Schema object – or a time, datetime or duration.
 type Isbn = string { pattern: "^[0-9-]+$" }
+type HoldTime = duration
 // "tag type" is a value type events can be tagged by: an identifier.
 tag type BookId = string
 tag type MemberId = string
@@ -6056,6 +6155,8 @@ event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
 event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
+// datetime is an RFC 3339 date-time with an offset, duration a length.
+event BookReserved { tag bookId: BookId, tag memberId: MemberId, until: datetime }
 
 // ---- Projections ----
 // A projection folds the events it handles into one value, kept per
@@ -6075,6 +6176,10 @@ projection BookStatus (tag bookId: BookId): BookStatus = Unknown {
 
 projection BookTitle (tag bookId: BookId): string = null {
   on BookAdded => set event.data.title
+}
+
+projection BookReservedUntil (tag bookId: BookId): datetime = null {
+  on BookReserved => set event.data.until
 }
 
 projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
@@ -6284,6 +6389,20 @@ command WithdrawBooks(bookIds: BookId[]) {
   }
 }
 
+// Time is data: the time a command acts at is a parameter, "now", and a
+// datetime moves by a duration – 30s, 15m, 24h, 7d, 1h30m. A rule's
+// sides and an emitted value add and subtract, left to right.
+command ReserveBook(bookId: BookId, memberId: MemberId, hold: HoldTime, now: datetime) {
+  require BookReservedUntil(bookId) is empty or BookReservedUntil(bookId) < now
+    else reject "Book is reserved"
+  require hold <= 7d
+    else reject "A hold lasts a week at most"
+  require Member(memberId).loanCount + 1 <= 5
+    else reject "Too many loans"
+
+  emit BookReserved { bookId, memberId, until: now + hold }
+}
+
 command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId) {
   require MemberHasBook(fromMemberId, bookId) is true
     else reject "Book is not with this member"
@@ -6416,6 +6535,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 - An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
 - A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
+- Time is data, never a clock: a command that needs the time takes now: datetime, and what expires stores its end – emit SeatsWereReserved { …, expiresAt: now + 15m } – so a rule reads it against now: sum(Reservation(courseId, *).seats where value.expiresAt > now). Expiring something at a time is a job outside the model calling a command, not a construct. A datetime needs its offset; one without is no value.
 - A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 `;
 
@@ -6460,7 +6580,7 @@ const SOURCE_MONARCH = {
   unicode: true,
   keywords: SOURCE_KEYWORDS,
   statements: SOURCE_STATEMENTS,
-  baseTypes: [...SOURCE_BASE_TYPES],
+  baseTypes: [...SOURCE_BASE_TYPES, ...Object.keys(SOURCE_TIME_FORMATS)],
   tokenizer: {
     root: [
       [/@[\p{L}_][\p{L}\p{M}\p{Nd}_]*/, 'annotation'],
@@ -6470,6 +6590,8 @@ const SOURCE_MONARCH = {
       { include: '@whitespace' },
       [/[{}()[\]]/, '@brackets'],
       [/=>|==|!=|<=|>=|[<>=?:.,]/, 'delimiter'],
+      // A duration, 15m or 1h30m (11.0), before the number it starts with.
+      [/\d+[dhms](\d+[dhms])*(?![\p{L}\p{Nd}_])/, 'number.duration'],
       [/\d+(\.\d+)?([eE][+-]?\d+)?/, 'number'],
       [/[-+*]/, 'operator'],
       [/"([^"\\]|\\.)*$/, 'string.invalid'],

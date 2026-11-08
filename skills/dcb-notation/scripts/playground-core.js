@@ -183,7 +183,7 @@ const ID_KEYED_KINDS = ['scenario-definition', 'projection-scenario-definition']
 
 function isIdKeyed(kind) { return ID_KEYED_KINDS.includes(kind); }
 
-const SIMPLE_TYPES = ['boolean', 'integer', 'string'];
+const SIMPLE_TYPES = ['boolean', 'integer', 'string', 'datetime', 'duration'];
 
 const PASCAL_RE = /^\p{Lu}[\p{L}\p{M}\p{Nd}]+$/u;
 const CAMEL_RE = /^\p{Ll}[\p{L}\p{M}\p{Nd}]+$/u;
@@ -1371,6 +1371,8 @@ function operandSource(operand) {
   if (operand === null || operand === undefined) return 'static';
   if (typeof operand !== 'object') return 'static';
   if (operand.collect !== undefined) return 'collection';
+  if (operand.operator !== undefined && operand.leftHandSide !== undefined) return 'arithmetic';
+  if (operand.duration !== undefined && Object.keys(operand).length === 1) return 'duration';
   if (operand.open === true) return 'open';
   if (operand.instanceValue === true) return 'instance-value';
   if (operand.record !== undefined && !Array.isArray(operand) && Object.keys(operand).length === 1) return 'record';
@@ -1419,6 +1421,8 @@ function operandText(operand) {
       return `${operand.collect || '?'}(${operandText(operand.read)}`
         + `${operand.where !== undefined ? ` where ${conditionText(operand.where)}` : ''})`;
     case 'instance-value': return `value${operand.field !== undefined ? '.' + operand.field : ''}`;
+    case 'duration': return durationLiteralText(operand.duration) || JSON.stringify(operand.duration);
+    case 'arithmetic': return arithmeticText(operand);
     case 'record': {
       const fields = operand.record && typeof operand.record === 'object' ? Object.entries(operand.record) : [];
       return `{ ${fields.map(([key, value]) => `${key}: ${operandText(value)}`).join(', ')} }`;
@@ -1428,6 +1432,17 @@ function operandText(operand) {
       if (Array.isArray(operand)) return `[${operand.map(operandText).join(', ')}]`;
       return typeof operand === 'string' ? `"${operand}"` : String(operand);
   }
+}
+
+// `a - b`, `now + 15m` (11.0): a left side that is itself a sum is
+// written bare, `a - b + c`, as it was read; a right side that is one
+// is no spelling the text has, and is bracketed.
+const ARITHMETIC_SYMBOLS = { add: '+', subtract: '-' };
+function arithmeticText(operand) {
+  const symbol = ARITHMETIC_SYMBOLS[operand.operator] || operand.operator;
+  const right = operandSource(operand.rightHandSide) === 'arithmetic'
+    ? `(${operandText(operand.rightHandSide)})` : operandText(operand.rightHandSide);
+  return `${operandText(operand.leftHandSide)} ${symbol} ${right}`;
 }
 
 // `.field` after a read of a record value (11.0), or nothing.
@@ -1451,6 +1466,7 @@ function operandIncomplete(operand) {
     case 'tag-literal': return !operand.tagType;
     case 'each': return operandIncomplete(operand.each);
     case 'collection': return !operand.collect || operandIncomplete(operand.read);
+    case 'arithmetic': return operandIncomplete(operand.leftHandSide) || operandIncomplete(operand.rightHandSide);
     default: return false;
   }
 }
@@ -1592,6 +1608,202 @@ function derivedHolds(derived) {
     && derived.rightHandSide === undefined && derived.negate === undefined;
 }
 
+// ============================================================
+// Time (11.0).
+//
+// Time is data. No event carries a recorded time – the DCB spec has
+// none – so time that matters to the domain is an event field the
+// command writes, and the clock is a parameter like any other, `now:
+// datetime`, supplied by the layer around the commands. A scenario
+// passes it as it passes any value, and needs no clock of its own.
+//
+// **`datetime`** is an RFC 3339 date-time *with* an offset –
+// `2026-01-01T10:00:00+02:00`, `…Z` – the JSON Schema `date-time`
+// format, and it is compared as the instant it names: `11:30+02:00`
+// comes before `10:00Z`. Without an offset it names no instant, and
+// is no datetime at all.
+//
+// **`duration`** is a length of time, stored as an ISO 8601 duration
+// string of whole days, hours, minutes and seconds – `PT15M`, `P7D`,
+// `PT1H30M` – and spelled in the notation `15m`, `7d`, `1h30m`: a
+// day is exactly 24 hours, and there are no years, months or weeks
+// (no fixed length), no fractions and no sign. A literal keeps the
+// units it was written in, `PT24H` for `24h`, so the text reads back
+// as written; two durations are equal when they are as long.
+//
+// **Arithmetic** (`arithmeticResultBase`): `datetime ± duration` is a
+// datetime, written in UTC (`…Z`, milliseconds only when there are
+// some); `duration ± duration` a duration in its largest units
+// (`P1DT2H`); and numbers add and subtract as numbers. A duration
+// never goes below zero, and nothing subtracts one datetime from
+// another. A custom scalar type is one of them when its schema says
+// the format, `{type: 'string', format: 'date-time'}` – what `type
+// Deadline = datetime` stores.
+//
+// Nothing in the evaluator carries types, so it knows a time value by
+// its value: two that both read as datetimes are ordered as instants,
+// two that both read as durations by length.
+// ============================================================
+
+const DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?([Zz]|([+-])(\d{2}):(\d{2}))$/;
+const DATETIME_LOCAL_RE = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
+const DURATION_RE = /^P(?!$)(?:(\d+)D)?(?:T(?=\d)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
+// The units a duration literal counts, largest first, and the seconds in each.
+const DURATION_UNITS = [['d', 'D', 86400], ['h', 'H', 3600], ['m', 'M', 60], ['s', 'S', 1]];
+
+// The instant a datetime names, in milliseconds since the epoch – or
+// null when the value is no RFC 3339 date-time with an offset.
+function datetimeInstant(value) {
+  if (typeof value !== 'string') return null;
+  const match = DATETIME_RE.exec(value);
+  if (!match) return null;
+  const [, y, mo, d, h, mi, s, fraction, , sign, oh, om] = match;
+  const [year, month, day, hour, minute, second] = [y, mo, d, h, mi, s].map(Number);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return null;
+  if (oh !== undefined && (Number(oh) > 23 || Number(om) > 59)) return null;
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, fraction ? Number(fraction.slice(0, 3).padEnd(3, '0')) : 0);
+  if (date.getUTCDate() !== day) return null;
+  const offset = sign ? (sign === '-' ? -1 : 1) * (Number(oh) * 60 + Number(om)) : 0;
+  return date.getTime() - offset * 60000;
+}
+
+// An instant written as a datetime, in UTC: `2026-01-01T08:15:00Z`.
+function datetimeText(instant) {
+  return new Date(instant).toISOString().replace('.000Z', 'Z');
+}
+
+// How long an ISO 8601 duration is, in seconds – or null when the
+// value is not one of the durations this notation has.
+function durationSeconds(value) {
+  if (typeof value !== 'string') return null;
+  const match = DURATION_RE.exec(value);
+  if (!match) return null;
+  return DURATION_UNITS.reduce((sum, [, , seconds], i) => sum + (match[i + 1] ? Number(match[i + 1]) * seconds : 0), 0);
+}
+
+// A length in seconds as a duration, in its largest units: `P1DT2H`.
+function durationText(seconds) {
+  let rest = seconds;
+  const parts = DURATION_UNITS.map(([, unit, size]) => {
+    const count = Math.floor(rest / size);
+    rest -= count * size;
+    return count ? `${count}${unit}` : '';
+  });
+  const time = parts.slice(1).join('');
+  if (!parts[0] && !time) return 'PT0S';
+  return `P${parts[0]}${time ? `T${time}` : ''}`;
+}
+
+// A duration literal as the notation spells it – `15m`, `7d`, `1h30m`
+// – read into the ISO 8601 duration it stores, keeping its units:
+// `{value: 'PT15M'}`, or `{error}` saying what is wrong with it.
+function durationFromLiteral(text) {
+  if (String(text).includes('.')) return { error: `"${text}" is no duration – write a whole number and a unit: 30s, 15m, 24h, 7d.` };
+  const parts = String(text).match(/\d+[^\d]*/g);
+  if (!parts || parts.join('') !== String(text)) return { error: `"${text}" is no duration – write a whole number and a unit: 30s, 15m, 24h, 7d.` };
+  const counts = {};
+  let last = -1;
+  for (const part of parts) {
+    const [, count, unit] = /^(\d+)(.*)$/.exec(part);
+    const at = DURATION_UNITS.findIndex(([word]) => word === unit);
+    if (at < 0) {
+      if (['mo', 'M', 'y', 'Y', 'w', 'W'].includes(unit)) {
+        return { error: `"${part}" – a duration has no years, months or weeks, which have no fixed length; count days: 30d.` };
+      }
+      return { error: unit ? `"${unit}" is no duration unit – a duration counts d, h, m and s: 30s, 15m, 24h, 7d.`
+        : `"${part}" needs a unit – 30s, 15m, 24h, 7d.` };
+    }
+    if (at <= last) return { error: `"${text}" – write each unit once, largest first: 1d2h30m.` };
+    last = at;
+    counts[at] = count;
+  }
+  const day = counts[0] !== undefined ? `${counts[0]}D` : '';
+  const time = [1, 2, 3].map((at) => (counts[at] !== undefined ? `${counts[at]}${DURATION_UNITS[at][1]}` : '')).join('');
+  return { value: `P${day}${time ? `T${time}` : ''}` };
+}
+
+// The literal a stored duration is spelled as – the inverse of
+// `durationFromLiteral` – or null for a value that is no duration.
+function durationLiteralText(value) {
+  if (durationSeconds(value) === null) return null;
+  const match = DURATION_RE.exec(value);
+  return DURATION_UNITS.map(([word], i) => (match[i + 1] !== undefined ? `${match[i + 1]}${word}` : '')).join('');
+}
+
+// Whether a type is a time: 'datetime', 'duration' – the built-ins, or
+// a custom scalar type whose schema states the format – or null.
+function timeBaseOf(model, typeName) {
+  if (typeName === 'datetime' || typeName === 'duration') return typeName;
+  const body = model && model['custom-type-definitions'] && model['custom-type-definitions'][typeName];
+  if (!body || !body.schema || Array.isArray(body.properties) || body.schema.enum) return null;
+  if (body.schema.format === 'date-time') return 'datetime';
+  if (body.schema.format === 'duration') return 'duration';
+  return null;
+}
+
+// What a type is underneath, as arithmetic sees it: a number's base or
+// a time's – 'integer', 'number', 'datetime', 'duration' – or null.
+function arithmeticBaseOf(model, typeName) {
+  return numericBaseOf(model, typeName) || timeBaseOf(model, typeName);
+}
+
+// What `left operator right` yields, by the bases of its sides – or
+// null when it means nothing. Numbers compute as before; a duration
+// moves a datetime either way and adds to or takes from another
+// duration; `min` and `max` pick one of two of a kind.
+function arithmeticResultBase(operator, left, right) {
+  const numeric = (base) => base === 'integer' || base === 'number';
+  if (numeric(left) && numeric(right)) return left === 'integer' && right === 'integer' ? 'integer' : 'number';
+  if (operator === 'min' || operator === 'max') return left && left === right ? left : null;
+  if (operator === 'add' && left === 'duration' && right === 'datetime') return 'datetime';
+  if ((operator === 'add' || operator === 'subtract') && right === 'duration' && (left === 'datetime' || left === 'duration')) return left;
+  return null;
+}
+
+// Why a value is no value of a time type – or null, also for a type
+// that is no time and for no value at all (null is "no value" here as
+// everywhere).
+function timeValueProblem(model, typeName, value) {
+  const base = timeBaseOf(model, typeName);
+  if (!base || value === null || value === undefined) return null;
+  if (base === 'datetime') {
+    if (datetimeInstant(value) !== null) return null;
+    if (typeof value === 'string' && DATETIME_LOCAL_RE.test(value)) {
+      return `${JSON.stringify(value)} has no offset, so it names no instant – add one: …Z or …+02:00.`;
+    }
+    return `${JSON.stringify(value)} is no datetime – RFC 3339 with an offset: 2026-01-01T10:00:00Z.`;
+  }
+  if (durationSeconds(value) !== null) return null;
+  return `${JSON.stringify(value)} is no duration – ISO 8601 in days, hours, minutes and seconds: PT15M, P7D.`;
+}
+
+// The time values in a payload that are none – `[{name, problem}]`, a
+// list's elements and a record's fields included – for whatever checks
+// stored or given values: a scenario's, `replay`'s.
+function payloadTimeProblems(model, properties, data) {
+  const out = [];
+  for (const property of properties || []) {
+    if (!property || !property.name) continue;
+    const held = data && typeof data === 'object' ? data[property.name] : undefined;
+    const values = property.isList && Array.isArray(held) ? held : [held];
+    const fields = compositeFieldsOf(model, property.propertyType);
+    for (const value of values) {
+      if (fields) {
+        for (const field of fields) {
+          const problem = value && typeof value === 'object' ? timeValueProblem(model, field.propertyType, value[field.name]) : null;
+          if (problem) out.push({ name: `${property.name}.${field.name}`, problem });
+        }
+        continue;
+      }
+      const problem = timeValueProblem(model, property.propertyType, value);
+      if (problem) out.push({ name: property.name, problem });
+    }
+  }
+  return out;
+}
+
 // What a type is underneath, as arithmetic sees it: 'integer',
 // 'number', or null for anything that is no number. A scalar value
 // type counts as its schema's base, as `operationsFor` counts it – an
@@ -1612,9 +1824,12 @@ function numericBaseOf(model, typeName) {
 function derivedInputOf(model, operand, seen = [], owner = null) {
   if (typeof operand === 'number') return { base: Number.isInteger(operand) ? 'integer' : 'number', nullable: false };
   if (operand === null) return { base: null, nullable: true };
+  // A duration literal, `24h`, and a datetime spelled as a string (11.0).
+  if (operandSource(operand) === 'duration') return durationSeconds(operand.duration) === null ? null : { base: 'duration', nullable: false };
+  if (typeof operand === 'string') return datetimeInstant(operand) === null ? null : { base: 'datetime', nullable: false };
   if (operandSource(operand) === 'parameter') {
     const parameter = projectionParameters(owner).find((p) => p.name === operand.parameterName);
-    const base = parameter && operand.property === undefined && numericBaseOf(model, parameter.type);
+    const base = parameter && operand.property === undefined && arithmeticBaseOf(model, parameter.type);
     return base ? { base, nullable: false } : null;
   }
   // A collection function (11.0): a count is an integer, a sum what the
@@ -1625,7 +1840,8 @@ function derivedInputOf(model, operand, seen = [], owner = null) {
     const target = read && projectionsOf(model)[read.projection];
     if (operand.collect === 'count') return { base: 'integer', nullable: false };
     if (!target || target.isList || !['sum', 'min', 'max', 'average'].includes(operand.collect)) return null;
-    const held = numericBaseOf(model, target.valueType);
+    const field = read.field !== undefined ? recordFieldType(model, target.valueType, read.field) : null;
+    const held = numericBaseOf(model, field ? field.propertyType : target.valueType);
     if (!held) return null;
     return { base: operand.collect === 'average' ? 'number' : held, nullable: operand.collect !== 'sum' };
   }
@@ -1635,10 +1851,10 @@ function derivedInputOf(model, operand, seen = [], owner = null) {
   // A record's field: what that field holds, null until the record is set.
   if (operand.field !== undefined) {
     const field = recordFieldType(model, target.valueType, operand.field);
-    const base = field && !field.isList && numericBaseOf(model, field.propertyType);
+    const base = field && !field.isList && arithmeticBaseOf(model, field.propertyType);
     return base ? { base, nullable: true } : null;
   }
-  const base = numericBaseOf(model, target.valueType);
+  const base = arithmeticBaseOf(model, target.valueType);
   if (!base) return null;
   const inner = derivedOf(target);
   if (inner) {
@@ -1650,12 +1866,14 @@ function derivedInputOf(model, operand, seen = [], owner = null) {
 }
 
 // The type a computation yields from its two sides: an integer from two
-// integers, a number otherwise – or null when a side is no number.
-// `owner` is the derived projection, whose parameters a side may name.
+// integers, a number from other numbers, a datetime moved by a
+// duration, a duration from two (`arithmeticResultBase`) – or null
+// when the sides do not compute. `owner` is the derived projection,
+// whose parameters a side may name.
 function derivedResultBase(model, derived, owner = null) {
   const sides = derivedOperands(derived).map((o) => derivedInputOf(model, o, [], owner));
   if (sides.some((side) => !side || !side.base)) return null;
-  return sides.every((side) => side.base === 'integer') ? 'integer' : 'number';
+  return arithmeticResultBase(derived.operator, sides[0].base, sides[1].base);
 }
 
 // Which experimental features a model uses, as `{feature, where}`
@@ -2337,6 +2555,12 @@ function forEachCommandOperand(body, outerVisit) {
   const visit = (operand, meta) => {
     outerVisit(operand, meta);
     if (operandSource(operand) === 'each') { visit(operand.each, meta); return; }
+    // Arithmetic (11.0): both sides, each an operand in the same place.
+    if (operandSource(operand) === 'arithmetic') {
+      visit(operand.leftHandSide, { ...meta, arithmetic: operand });
+      visit(operand.rightHandSide, { ...meta, arithmetic: operand });
+      return;
+    }
     // A collection function (11.0): its open read, then its `where`'s
     // sides – `value`, parameters and literals, never a read.
     if (operandSource(operand) === 'collection') {
@@ -2441,6 +2665,8 @@ function resolveOperandType(operand, scope) {
     return resolved.isList ? null : recordFieldType(scope.model, resolved.propertyType, operand.field);
   }
   if (operandSource(operand) === 'collection') return collectionResultType(scope.model, operand);
+  if (operandSource(operand) === 'duration') return { propertyType: 'duration', isList: false };
+  if (operandSource(operand) === 'arithmetic') return arithmeticOperandType(operand, scope);
   // `value` inside a loop over an open read (11.0), given its type.
   if (operandSource(operand) === 'instance-value') {
     const held = scope.instanceValue;
@@ -2448,6 +2674,93 @@ function resolveOperandType(operand, scope) {
     return held.isList ? null : recordFieldType(scope.model, held.propertyType, operand.field);
   }
   return resolved;
+}
+
+// Why an arithmetic operand in a command cannot compute as written –
+// or null (11.0): `add` or `subtract`, in a rule, a branch's condition
+// or an emission, over two single values that compute
+// (`arithmeticResultBase`) – a datetime and a duration, two durations,
+// two numbers. A side whose type cannot be worked out is left to
+// evaluation, as everywhere.
+function arithmeticProblem(model, operand, meta, scope) {
+  const text = operandText(operand);
+  if (meta.inWhere) return `${meta.where} computes ${text} – a where compares value with what is in scope, and computes nothing.`;
+  if (meta.tag) return `${meta.where} computes ${text} – a tag's value is read, never computed.`;
+  if (!['add', 'subtract'].includes(operand.operator)) {
+    return `${meta.where} computes "${operand.operator}" – a command adds (+) and subtracts (-); anything more is a derived projection's.`;
+  }
+  if (operand.rightHandSide === undefined) return `${meta.where} computes ${text} with no right-hand side.`;
+  const sides = [operand.leftHandSide, operand.rightHandSide].map((side) => {
+    if (typeof side === 'string' && datetimeInstant(side) === null) return { problem: timeValueProblem(model, 'datetime', side) };
+    return { type: arithmeticSideType(side, scope) };
+  });
+  const broken = sides.find((side) => side.problem);
+  if (broken) return `${meta.where} computes ${text}, but ${broken.problem}`;
+  if (sides.some((side) => side.type && side.type.isList)) return `${meta.where} computes ${text} over a list – arithmetic takes one value on each side.`;
+  if (sides.some((side) => !side.type)) return null;
+  const [left, right] = sides.map((side) => arithmeticBaseOf(model, side.type.propertyType));
+  if (arithmeticResultBase(operand.operator, left, right)) return null;
+  const what = (base, type) => (base ? `${typeArticle(base)} ${base}` : `${typeArticle(type)} ${type}`);
+  return `${meta.where} computes ${text} – ${what(left, sides[0].type.propertyType)} ${operand.operator === 'add' ? 'plus' : 'minus'} `
+    + `${what(right, sides[1].type.propertyType)} means nothing: numbers add up, a datetime moves by a duration, and durations add up.`;
+}
+
+// Why a comparison sets a time against what is no time of its kind –
+// or null (11.0). `typeOf(operand)` resolves a side; a string literal
+// opposite a datetime must read as one, offset and all.
+function timeComparisonProblem(model, condition, typeOf) {
+  const sides = [condition.leftHandSide, condition.rightHandSide];
+  const bases = sides.map((side) => {
+    const resolved = typeof side === 'string' || typeof side === 'number' ? null : typeOf(side);
+    return resolved && !resolved.isList ? arithmeticBaseOf(model, resolved.propertyType) : null;
+  });
+  for (const [i, j] of [[0, 1], [1, 0]]) {
+    const time = bases[i] === 'datetime' || bases[i] === 'duration' ? bases[i] : null;
+    if (!time) continue;
+    if (typeof sides[j] === 'string') {
+      const problem = timeValueProblem(model, time, sides[j]);
+      if (problem) return `"${conditionText(condition)}" compares ${typeArticle(time)} ${time} with ${problem}`;
+    }
+    if (typeof sides[j] === 'number') {
+      return `"${conditionText(condition)}" compares ${typeArticle(time)} ${time} with the number ${sides[j]}`
+        + `${time === 'duration' ? ' – a duration literal says its unit: 15m, 24h' : ''}.`;
+    }
+    if (bases[j] && bases[j] !== time) {
+      return `"${conditionText(condition)}" compares ${typeArticle(time)} ${time} with ${typeArticle(bases[j])} ${bases[j]} – they are no values of one kind.`;
+    }
+  }
+  return null;
+}
+
+// What one side of an arithmetic operand is (11.0): a resolved type,
+// or a literal's – a number, or a string that reads as a datetime –
+// marked `literal`, since a literal takes the other side's type.
+function arithmeticSideType(operand, scope) {
+  if (typeof operand === 'number') return { propertyType: Number.isInteger(operand) ? 'integer' : 'number', isList: false, literal: true };
+  if (typeof operand === 'string' && datetimeInstant(operand) !== null) return { propertyType: 'datetime', isList: false, literal: true };
+  return resolveOperandType(operand, scope);
+}
+
+// What an arithmetic operand yields, as a type name – or null when that
+// cannot be worked out or the sides do not compute. The type is
+// nominal, as everywhere: `now + 15m` is what `now` is, `a - b` of two
+// `Seats` is `Seats`, and a literal takes the other side's type. Two
+// differing number types yield the plain `integer`, or nothing a type
+// names.
+function arithmeticOperandType(operand, scope) {
+  const left = arithmeticSideType(operand.leftHandSide, scope);
+  const right = arithmeticSideType(operand.rightHandSide, scope);
+  if (!left || !right || left.isList || right.isList) return null;
+  const leftBase = arithmeticBaseOf(scope.model, left.propertyType);
+  const rightBase = arithmeticBaseOf(scope.model, right.propertyType);
+  const base = arithmeticResultBase(operand.operator, leftBase, rightBase);
+  if (!base) return null;
+  const named = (type) => ({ propertyType: type, isList: false });
+  if (base === 'datetime') return named(leftBase === 'datetime' ? left.propertyType : right.propertyType);
+  if (left.propertyType === right.propertyType) return named(left.propertyType);
+  if (left.literal && !right.literal && rightBase === base) return named(right.propertyType);
+  if (right.literal && !left.literal && leftBase === base) return named(left.propertyType);
+  return base === 'number' ? null : named(base);
 }
 
 function resolveOperandTypeWhole(operand, { boundary, commandProperties, model }) {
@@ -2518,7 +2831,7 @@ function predicatesForType(resolved, model) {
   const underlying = underlyingScalarType(model, resolved.propertyType);
   if (underlying) return predicatesForType({ propertyType: underlying, isList: false });
   if (resolved.propertyType === 'boolean') return ['equals', 'equalsAny', 'isTrue', 'isFalse'];
-  if (resolved.propertyType === 'integer') {
+  if (['integer', 'datetime', 'duration'].includes(resolved.propertyType)) {
     return ['equals', 'equalsAny', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals'];
   }
   if (resolved.propertyType === 'string') {
@@ -2535,12 +2848,13 @@ function predicatesForType(resolved, model) {
 }
 
 // The simple type a plain scalar value type wraps (`integer`,
-// `string`, `boolean`), or null for anything else – a simple type
+// `string`, `boolean`, `datetime`, `duration`), or null for anything else – a simple type
 // itself, a composite, an enum, an identifier, an unknown name.
 function underlyingScalarType(model, typeName) {
   if (!model || !model['custom-type-definitions']) return null;
   const cls = classifyType(model, typeName);
   if (cls.kind !== 'value' || cls.composite || cls.isTag || enumMembersFor(model, typeName)) return null;
+  if (timeBaseOf(model, typeName)) return timeBaseOf(model, typeName);
   const kind = literalKindOf(model, typeName);
   return kind === 'number' ? 'integer' : kind;
 }
@@ -3077,6 +3391,9 @@ function operandAliases(operand, out = []) {
     operandAliases(operand.each, out);
   } else if (operandSource(operand) === 'collection') {
     operandAliases(operand.read, out);
+  } else if (operandSource(operand) === 'arithmetic') {
+    operandAliases(operand.leftHandSide, out);
+    operandAliases(operand.rightHandSide, out);
   } else if (operandSource(operand) === 'projection-read') {
     for (const inner of [...readTagOperands(operand), ...Object.values(operand.arguments || {})]) operandAliases(inner, out);
   }
@@ -3854,8 +4171,17 @@ function collectionProblem(model, operand, where, parameterSide = () => null) {
   if (operandSource(operand.read) !== 'projection-read') {
     return `${where} collects ${operandText(operand.read)} – a collection function reads a projection with a tag left open, P(x, *).`;
   }
-  if (operand.where === undefined) return null;
   const target = projectionsOf(model)[operand.read.projection];
+  // A record's field (11.0), `sum(P(x, *).seats)`: what a numeric one
+  // computes over, while its where still sees the whole value.
+  if (operand.read.field !== undefined) {
+    if (!['sum', 'min', 'max', 'average'].includes(operand.collect)) {
+      return `${where} takes .${operand.read.field} – only sum, min, max and average compute over a field; ${operand.collect} keeps whole instances.`;
+    }
+    const problem = recordFieldProblem(model, target, operand.read);
+    if (problem) return `${where} collects ${operandText(operand.read)}, but ${problem}`;
+  }
+  if (operand.where === undefined) return null;
   for (const leaf of conditionLeaves(operand.where)) {
     for (const side of conditionOperands(leaf).flatMap((o) => (Array.isArray(o) ? o : [o]))) {
       const source = operandSource(side);
@@ -3877,9 +4203,19 @@ function collectionProblem(model, operand, where, parameterSide = () => null) {
         const members = found && enumMembersFor(model, found.type);
         if (members && !members.includes(side.enumMember)) return `${where}: "${side.enumMember}" is not a member of ${found.type}.`;
       }
-      if (!['instance-value', 'parameter', 'enum-member', 'static'].includes(source)) {
+      if (!['instance-value', 'parameter', 'enum-member', 'static', 'duration'].includes(source)) {
         return `${where} has a where that reads ${operandText(side)} – a where reads value, parameters and literals.`;
       }
+    }
+    // `value.expiresAt` against a literal (11.0): a time of its kind.
+    if (leaf.rightHandSide !== undefined && !Array.isArray(leaf.rightHandSide) && target) {
+      const problem = timeComparisonProblem(model, leaf, (side) => {
+        if (operandSource(side) === 'duration') return { propertyType: 'duration', isList: false };
+        if (operandSource(side) !== 'instance-value') return null;
+        return side.field === undefined ? { propertyType: target.valueType, isList: !!target.isList }
+          : recordFieldType(model, target.valueType, side.field);
+      });
+      if (problem) return `${where}: ${problem}`;
     }
   }
   return null;
@@ -3931,6 +4267,9 @@ function recordFieldType(model, typeName, field) {
 function collectionResultType(model, operand) {
   const read = operandRead(operand);
   const target = read && projectionsOf(model)[read.projection];
+  if (read && read.field !== undefined && ['sum', 'min', 'max'].includes(operand.collect)) {
+    return target && !target.isList ? recordFieldType(model, target.valueType, read.field) : null;
+  }
   switch (operand.collect) {
     case 'count': return { propertyType: 'integer', isList: false };
     case 'any': case 'all': return { propertyType: 'boolean', isList: false };
@@ -4253,10 +4592,22 @@ function validateHandlers(model, label, target, handlers) {
         throw new DomainError(`${where} compares with "${right.parameterName}", which is no tag of ${label}` +
           (tagNames.length ? ` (${tagNames.join(', ')}).` : ' – it has none.'));
       }
-    } else if (source !== 'static' && source !== 'enum-member') {
+    } else if (source !== 'static' && source !== 'enum-member' && source !== 'duration') {
       throw new DomainError(`${where} has a condition "${conditionText(leaf)}" – a handler's condition compares an event field with a tag or a literal.`);
     } else {
       assertRecognisedOperand(right, where);
+    }
+    // A time against a literal of its kind (11.0): a datetime literal
+    // with its offset, a duration against a duration.
+    const fieldType = left.property !== undefined
+      ? (recordFieldType(model, property.propertyType, left.property) || {}).propertyType : property.propertyType;
+    const time = timeBaseOf(model, fieldType);
+    if (time && (source === 'static' || source === 'duration')) {
+      const problem = source === 'duration' ? (time === 'duration' ? null : `${operandText(right)}, a duration`)
+        : timeValueProblem(model, time, right);
+      if (problem) throw new DomainError(`${where} compares ${typeArticle(time)} ${time} with ${problem}`);
+    } else if (source === 'duration') {
+      throw new DomainError(`${where} compares ${operandText(left)}, ${typeArticle(fieldType)} ${fieldType}, with the duration ${operandText(right)}.`);
     }
   };
   for (const handler of handlers || []) {
@@ -4356,6 +4707,8 @@ function validateInitialValue(model, label, body) {
         `${where} is ${JSON.stringify(element)}, which is not a ${body.valueType}.`
       );
     }
+    const problem = timeValueProblem(model, body.valueType, element);
+    if (problem) throw new DomainError(`${where}: ${problem}`);
   };
 
   const value = body.initialValue;
@@ -4654,7 +5007,7 @@ function validateDerived(model, projectionName, body) {
       checkRead(operand.read, operand);
       continue;
     }
-    if (source !== 'projection-read' && source !== 'static' && source !== 'enum-member') {
+    if (source !== 'projection-read' && source !== 'static' && source !== 'enum-member' && source !== 'duration') {
       throw new DomainError(
         `An operand of ${label} is "${operandText(operand)}" – a derived projection reads other ` +
         'projections, its own parameters, enum members and literals; nothing else is in scope.'
@@ -4733,23 +5086,36 @@ function validateDerived(model, projectionName, body) {
     for (const operand of derivedOperands(derived)) {
       if (!derivedInputOf(model, operand, [], body)) {
         throw new DomainError(
-          `${label} computes from "${operandText(operand)}", which is not a single number – ` +
-          `"${derived.operator}" takes an integer or a number on each side.`
+          `${label} computes from "${operandText(operand)}", which is not a single number, datetime or duration – ` +
+          `"${derived.operator}" takes one on each side.`
         );
       }
     }
+    // A time computes with a duration (11.0): a datetime moved by one,
+    // two durations added – never two datetimes, never a time and a number.
     const result = derivedResultBase(model, derived, body);
-    const declared = numericBaseOf(model, body.valueType);
-    if (!declared || body.isList || (result === 'number' && declared === 'integer')) {
+    if (!result) {
+      const [left, right] = derivedOperands(derived).map((o) => derivedInputOf(model, o, [], body).base);
+      throw new DomainError(
+        `${label} computes "${derivedText(derived)}" – ${typeArticle(left)} ${left} ${derived.operator === 'subtract' ? 'minus' : derived.operator} ` +
+        `${typeArticle(right)} ${right} means nothing: a datetime moves by a duration, and durations add up.`
+      );
+    }
+    const declared = arithmeticBaseOf(model, body.valueType);
+    const numeric = (base) => base === 'integer' || base === 'number';
+    const holds = declared === result || (numeric(declared) && numeric(result) && !(result === 'number' && declared === 'integer'));
+    if (!declared || body.isList || !holds) {
       throw new DomainError(
         `${label} computes ${typeArticle(result)} ${result}, but holds ` +
         `${body.isList ? `a list of ${body.valueType}` : `${typeArticle(body.valueType)} ${body.valueType}`} – ` +
-        `declare it ${result === 'integer' ? 'an integer' : 'a number'}.`
+        `declare it ${numeric(result) ? (result === 'integer' ? 'an integer' : 'a number') : `${typeArticle(result)} ${result}`}.`
       );
     }
+    // A time has no value to start at but null – "not yet" – so a
+    // computed time may be null, and its reader is the one to guard.
     const nullable = derivedOperands(derived)
       .find((operand) => (derivedInputOf(model, operand, [], body) || {}).nullable);
-    if (nullable !== undefined) {
+    if (nullable !== undefined && (result === 'integer' || result === 'number')) {
       throw new DomainError(
         `${label} computes from ${operandText(nullable)}, which can be null – a projection it ` +
         `reads starts at null – so ${projectionName} is null then too, and a rule ordering ` +
@@ -5193,6 +5559,17 @@ function validateCommandBody(model, body) {
       failure = `${meta.where} builds a record – only a handler sets one.`;
       return;
     }
+    if (source === 'duration') {
+      failure = timeValueProblem(model, 'duration', operand.duration);
+      if (failure) failure = `${meta.where}: ${failure}`;
+      return;
+    }
+    if (source === 'arithmetic') {
+      failure = arithmeticProblem(model, operand, meta, {
+        boundary, commandProperties: inScope, model, instanceValue: loopValueType(model, meta.loop || null),
+      });
+      return;
+    }
     if (source === 'collection') {
       failure = collectionProblem(model, operand, `${meta.where} ${operandText(operand)}`);
       return;
@@ -5250,6 +5627,16 @@ function validateCommandBody(model, body) {
     }
   });
   if (failure) throw new DomainError(failure);
+
+  // A time is compared with a time of its kind (11.0): a datetime with a
+  // datetime – a string opposite one has to read as one, offset and all
+  // – and a duration with a duration.
+  for (const condition of allConditions) {
+    if (!condition || condition.rightHandSide === undefined || Array.isArray(condition.rightHandSide)) continue;
+    const problem = timeComparisonProblem(model, condition,
+      (operand) => conditionOperandType(model, body, condition, operand));
+    if (problem) throw new DomainError(problem);
+  }
 
   // Enum members are checked against the alias property they sit
   // opposite, which is where a status comparison always appears. In an
@@ -7597,8 +7984,17 @@ function customTypeSchemas(model, refOf) {
   return out;
 }
 
+// A time is a string of its JSON Schema format (11.0), its pattern
+// stated too, since a validator need not assert formats: a datetime
+// with an offset, a duration in days, hours, minutes and seconds.
+const TIME_SCHEMAS = {
+  datetime: { type: 'string', format: 'date-time', pattern: DATETIME_RE.source },
+  duration: { type: 'string', format: 'duration', pattern: DURATION_RE.source },
+};
+
 function valueTypeSchema(model, typeName, refOf) {
   const cls = classifyType(model, typeName);
+  if (TIME_SCHEMAS[typeName]) return deepClone(TIME_SCHEMAS[typeName]);
   if (cls.kind === 'simple') return { type: typeName };
   if (cls.kind !== 'value') return {};
   return refOf ? refOf(typeName) : customTypeSchema(model, typeName);
@@ -9309,6 +9705,63 @@ function evAsNumber(value, where) {
   return v;
 }
 
+// Two times in order (11.0): -1, 0 or 1 when both are datetimes –
+// ordered as the instants they name, whatever their offsets – or both
+// durations, by length; null for anything else, which compares as it
+// always did. Nothing here knows a type, so a time is known by its value
+// (see _Time_, model.js).
+function evTimeOrder(l, r) {
+  let a = datetimeInstant(l);
+  let b = a === null ? null : datetimeInstant(r);
+  if (a === null || b === null) {
+    a = durationSeconds(l);
+    b = a === null ? null : durationSeconds(r);
+  }
+  if (a === null || b === null) return null;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// `left operator right` over two values (11.0): numbers as numbers, a
+// datetime moved by a duration – written in UTC – and two durations
+// added or taken apart. A null side yields null: "not known yet" stays
+// unknown rather than counting as zero. `label` names what computes.
+function evArithmetic(operator, left, right, label) {
+  const l = evNormalize(left);
+  const r = evNormalize(right);
+  if (l === null || l === undefined || r === null || r === undefined) return null;
+  if (typeof l === 'number' && typeof r === 'number') {
+    switch (operator) {
+      case 'add': return l + r;
+      case 'subtract': return l - r;
+      case 'multiply': return l * r;
+      case 'min': return Math.min(l, r);
+      case 'max': return Math.max(l, r);
+      default: return fail(`"${operator}" is not an operator this can compute.`);
+    }
+  }
+  const at = { datetime: datetimeInstant, duration: durationSeconds };
+  const kind = (value) => (at.datetime(value) !== null ? 'datetime' : at.duration(value) !== null ? 'duration' : null);
+  const [lk, rk] = [kind(l), kind(r)];
+  const result = arithmeticResultBase(operator, lk, rk);
+  if (!result) {
+    const odd = !lk ? l : !rk ? r : null;
+    return fail(odd !== null
+      ? `${label} computes over ${JSON.stringify(odd)}, which is no number, datetime or duration.`
+      : `${label} computes ${typeArticle(lk)} ${lk} ${operator} ${typeArticle(rk)} ${rk}, which means nothing.`);
+  }
+  if (operator === 'min' || operator === 'max') {
+    const order = evTimeOrder(l, r);
+    return (operator === 'min') === (order <= 0) ? l : r;
+  }
+  if (result === 'datetime') {
+    const [instant, seconds] = lk === 'datetime' ? [at.datetime(l), at.duration(r)] : [at.datetime(r), at.duration(l)];
+    return datetimeText(instant + (operator === 'subtract' ? -1 : 1) * seconds * 1000);
+  }
+  const seconds = at.duration(l) + (operator === 'subtract' ? -1 : 1) * at.duration(r);
+  if (seconds < 0) fail(`${label} takes ${r} from ${l} – a duration is never below zero.`);
+  return durationText(seconds);
+}
+
 // ============================================================
 // Tags.
 //
@@ -9498,6 +9951,8 @@ function evCompileHandlerCondition(condition) {
         };
       case 'enum-member':
         return () => operand.enumMember;
+      case 'duration':
+        return () => operand.duration;
       case 'static':
         return () => evNormalize(operand);
       default:
@@ -9698,6 +10153,7 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
     : operandSource(value) === 'tag-literal' ? value.tagValue : evNormalize(value));
   const readOperand = (operand) => {
     if (operandSource(operand) === 'parameter') return parameter(operand);
+    if (operandSource(operand) === 'duration') return operand.duration;
     if (operandSource(operand) === 'collection') {
       const read = operand.read || {};
       const tags = {};
@@ -9721,26 +10177,11 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
   return evApplyPredicate(derived, left, right);
 }
 
-// One computation over two numbers. A null side yields null – "not
-// known yet" stays unknown rather than counting as zero – and a side
-// that is no number at all is an error the advisory named first.
+// One computation over two numbers, or a time and a duration (11.0;
+// `evArithmetic`). A null side yields null, and a side that computes
+// with nothing is an error the advisory named first.
 function evApplyOperator(projectionName, derived, left, right) {
-  const l = evNormalize(left);
-  const r = evNormalize(right);
-  if (l === null || l === undefined || r === null || r === undefined) return null;
-  if (typeof l !== 'number' || typeof r !== 'number') {
-    return fail(`Projection "${projectionName}" computes "${derivedText(derived)}" over `
-      + `${JSON.stringify(typeof l !== 'number' ? l : r)}, which is no number.`);
-  }
-  switch (derived.operator) {
-    case 'add': return l + r;
-    case 'subtract': return l - r;
-    case 'multiply': return l * r;
-    case 'min': return Math.min(l, r);
-    case 'max': return Math.max(l, r);
-    default:
-      return fail(`"${derived.operator}" is not an operator this can compute.`);
-  }
+  return evArithmetic(derived.operator, left, right, `Projection "${projectionName}"'s "${derivedText(derived)}"`);
 }
 
 // ============================================================
@@ -9841,7 +10282,9 @@ function evCollect(operand, instances, parameter) {
   const label = `"${operandText(operand)}"`;
   const holds = operand.where === undefined ? null : evCompileWhere(operand.where, parameter, label);
   const kept = holds ? instances.filter((instance) => holds(instance.value)) : instances;
-  const numbers = () => kept.map((instance) => evNormalize(instance.value)).filter((value) => value !== null).map((value) => {
+  // Over a record's field (11.0), `sum(P(x, *).seats)`: that field of each.
+  const field = operand.read && operand.read.field;
+  const numbers = () => kept.map((instance) => evNormalize(evField(instance.value, field))).filter((value) => value !== null).map((value) => {
     if (typeof value !== 'number') fail(`${label} computes over ${JSON.stringify(value)}, which is no number.`);
     return value;
   });
@@ -9873,6 +10316,7 @@ function evCompileWhere(condition, parameter, label) {
       case 'instance-value': return (value) => evField(evNormalize(value), operand.field);
       case 'parameter': return () => evField(parameter(operand), operand.property);
       case 'enum-member': return () => operand.enumMember;
+      case 'duration': return () => operand.duration;
       case 'static': return () => evNormalize(operand);
       default:
         return () => fail(`${label} has a where that reads ${operandText(operand)} – a where reads value, parameters and literals, never a projection.`);
@@ -9985,6 +10429,14 @@ function evReadOperand(operand, scope) {
     }
     case 'enum-member':
       return operand.enumMember;
+    // A duration literal (11.0), `15m`: the ISO 8601 duration it stores.
+    case 'duration':
+      return operand.duration;
+    // Arithmetic (11.0): both sides read, left first – a read in either
+    // made as anywhere – and computed.
+    case 'arithmetic':
+      return evArithmetic(operand.operator, evReadOperand(operand.leftHandSide, scope),
+        evReadOperand(operand.rightHandSide, scope), `"${operandText(operand)}"`);
     // An inline read is folded where it is first needed and once per
     // spelling – the same read written in two rules is one query – and
     // reported beside the aliases, under how it reads.
@@ -10267,14 +10719,15 @@ function evApplyPredicate(condition, left, right) {
     case 'isNotEmpty': held = !evIsEmpty(l); break;
     case 'isTrue': held = l === true; break;
     case 'isFalse': held = l === false; break;
-    case 'equals': held = evDeepEqual(l, r); break;
+    // Two times are equal when they name one instant, or are as long.
+    case 'equals': held = evTimeOrder(l, r) === 0 || evDeepEqual(l, r); break;
     case 'equalsAny':
       // Membership is repeated equality – a null left is simply not a
       // member unless listed – and an empty list holds for nothing
       // (negated: for everything), which the advisory said ahead of
       // time. A non-list right (a defect the advisories flag) wraps to
       // one entry rather than erroring: a defective model evaluates.
-      held = evAsList(r).some((entry) => evDeepEqual(l, entry));
+      held = evAsList(r).some((entry) => evTimeOrder(l, entry) === 0 || evDeepEqual(l, entry));
       break;
     case 'countEquals': held = evAsList(l).length === r; break;
     case 'countLessThan': held = evAsList(l).length < r; break;
@@ -10301,10 +10754,16 @@ function evApplyPredicate(condition, left, right) {
       if (l === null || l === undefined || r === null || r === undefined) {
         return fail(`"${conditionText(condition)}" orders against no value (null) – an ordering needs both sides.`);
       }
-      if (condition.predicate === 'lessThan') held = l < r;
-      else if (condition.predicate === 'lessThanOrEquals') held = l <= r;
-      else if (condition.predicate === 'greaterThan') held = l > r;
-      else held = l >= r;
+      {
+        // Two times by the instants they name or by length (11.0) – a
+        // datetime's text would order `11:30+02:00` after `10:00Z`.
+        const order = evTimeOrder(l, r);
+        const [a, b] = order === null ? [l, r] : [order, 0];
+        if (condition.predicate === 'lessThan') held = a < b;
+        else if (condition.predicate === 'lessThanOrEquals') held = a <= b;
+        else if (condition.predicate === 'greaterThan') held = a > b;
+        else held = a >= b;
+      }
       break;
     case 'startsWith':
     case 'endsWith':
@@ -10494,6 +10953,10 @@ function evDecide(model, events, commandName, args, collect) {
     }
     scope.args[property.name] = evNormalize(evOwn(supplied, property.name));
   }
+  // A time given is a time (11.0): a datetime without an offset names
+  // no instant, and nothing could compare it.
+  const untimely = payloadTimeProblems(model, body.properties, scope.args)[0];
+  if (untimely) fail(`"${commandName}" was given ${untimely.name}: ${untimely.problem}`);
 
   // A read nothing consults – the parameterless projection a command
   // binds to be serialised – is made up front: it is there for its
@@ -10804,6 +11267,8 @@ function deriveThen(model, scenario) {
         );
       }
     }
+    const untimely = payloadTimeProblems(model, definition.properties, step.data)[0];
+    if (untimely) fail(`Given step ${index + 1} ("${step.event}") carries ${untimely.name}: ${untimely.problem}`);
   });
 
   const result = evaluateCommand(
@@ -10921,6 +11386,8 @@ function deriveProjectionScenarioThen(model, spec) {
         );
       }
     }
+    const untimely = payloadTimeProblems(model, definition.properties, step.data)[0];
+    if (untimely) fail(`Given step ${index + 1} ("${step.event}") carries ${untimely.name}: ${untimely.problem}`);
   });
 
   if (!evOwn(projectionsOf(model), spec.projection)) {
@@ -11512,6 +11979,10 @@ const SOURCE_SECTION = {
 // object out: JSON Schema's own `type` keywords.
 const SOURCE_BASE_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array', 'null'];
 
+// A time a value type may be (11.0), `type Deadline = datetime`: the
+// JSON Schema format of the string it is.
+const SOURCE_TIME_FORMATS = { datetime: 'date-time', duration: 'duration' };
+
 // Which annotation goes on which kind, and the body field it fills.
 const SOURCE_ANNOTATIONS = {
   icon: ['group-definition', 'event-definition', 'command-definition'],
@@ -11549,11 +12020,12 @@ function sourcePut(target, key, value) {
 const SOURCE_PUNCT = ['=>', '==', '!=', '<=', '>=', '<', '>', '=', '{', '}', '(', ')', '[', ']', ',', ':', '.', '?', '@', '+', '-', '*'];
 const SOURCE_NUMBER_RE = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
 const SOURCE_WORD_RE = /[\p{L}_][\p{L}\p{M}\p{Nd}_]*/uy;
+const SOURCE_DURATION_RE = /-?[\d.]+[\p{L}_][\p{L}\p{M}\p{Nd}_]*/uy;
 
 // Whether a token closes a value, so a `-` straight after it subtracts
 // rather than starting a negative number: `A(x) -1`, `3 -1`.
 function endsValue(token) {
-  return !!token && ((token.t === 'punct' && (token.v === ')' || token.v === ']')) || token.t === 'number');
+  return !!token && ((token.t === 'punct' && (token.v === ')' || token.v === ']')) || token.t === 'number' || token.t === 'duration');
 }
 
 function lexSource(text) {
@@ -11620,11 +12092,24 @@ function lexSource(text) {
     } else if ((c >= '0' && c <= '9') || (c === '-' && text[i + 1] >= '0' && text[i + 1] <= '9' && !endsValue(tokens[tokens.length - 1]))) {
       SOURCE_NUMBER_RE.lastIndex = i;
       const match = SOURCE_NUMBER_RE.exec(text);
-      advanceTo(i + match[0].length);
-      token = { t: 'number', v: Number(match[0]) };
-      // Past what a double holds, a number reads as Infinity – and is
-      // stored as null, JSON having no Infinity.
-      if (!Number.isFinite(token.v)) report('This number is too large to store.', start);
+      // A number straight followed by a letter is a duration (11.0):
+      // `15m`, `7d`, `1h30m` – the ISO 8601 duration it stores, its
+      // units as written. Anything else so written is an error here.
+      if (/[\p{L}_]/u.test(text[i + match[0].length] || '')) {
+        SOURCE_DURATION_RE.lastIndex = i;
+        const raw = SOURCE_DURATION_RE.exec(text)[0];
+        advanceTo(i + raw.length);
+        const read = raw.startsWith('-') ? { error: `"${raw}" – a duration is never negative; subtract it instead: now - ${raw.slice(1)}.` }
+          : durationFromLiteral(raw);
+        if (read.error) report(read.error, start);
+        token = { t: 'duration', v: read.value === undefined ? null : read.value, raw };
+      } else {
+        advanceTo(i + match[0].length);
+        token = { t: 'number', v: Number(match[0]) };
+        // Past what a double holds, a number reads as Infinity – and is
+        // stored as null, JSON having no Infinity.
+        if (!Number.isFinite(token.v)) report('This number is too large to store.', start);
+      }
     } else if (/[\p{L}_]/u.test(String.fromCodePoint(text.codePointAt(i)))) {
       SOURCE_WORD_RE.lastIndex = i;
       const match = SOURCE_WORD_RE.exec(text);
@@ -11665,6 +12150,7 @@ class SourceError extends Error {
 function describeToken(token) {
   if (token.t === 'eof') return 'the end of the text';
   if (token.t === 'string') return 'a string';
+  if (token.t === 'duration') return `the duration ${token.raw}`;
   if (token.t === 'code') return 'a code block';
   return `"${token.v}"`;
 }
@@ -11916,6 +12402,7 @@ function parseModelSourceText(text, options) {
   // payload property.
   const commandOperand = () => {
     const token = peek();
+    if (token.t === 'duration') return durationLiteral();
     if (startsCollection()) return collection(commandOperand);
     // `value` inside a loop over an open read (11.0): the instance's.
     if (loopRead && loopRead.value && token.t === 'ident' && token.v === 'value' && !is('(', 1)) {
@@ -11941,6 +12428,30 @@ function parseModelSourceText(text, options) {
     }
     if (token.t === 'ident' && !startsLiteral()) return nameRef();
     return literalValue();
+  };
+
+  // A value a rule compares or an emission writes (11.0): an operand,
+  // or operands added and subtracted, left to right – `now + 15m`,
+  // `CourseCapacity(courseId) - sum(…)`. Only there: a read's values and
+  // a where's sides are never computed.
+  const commandValue = () => {
+    let value = commandOperand();
+    while (is('+') || is('-')) {
+      const op = next();
+      enter();
+      value = { operator: SOURCE_OPERATORS[op.v], leftHandSide: value, rightHandSide: commandOperand() };
+      depth -= 1;
+      mark(value, 'operator', op);
+    }
+    return value;
+  };
+  // `15m`, `7d`, `1h30m` (11.0): the ISO 8601 duration it stores. A
+  // misspelt one was reported where it was lexed.
+  const durationLiteral = () => {
+    const token = next();
+    const out = { duration: token.v };
+    mark(out, 'duration', token);
+    return out;
   };
 
   // `Name(a, each b)`: the values in order – `each` marking the one a
@@ -12070,6 +12581,7 @@ function parseModelSourceText(text, options) {
   // parameter, `x.field` of a record one – or a literal. Never a read.
   const whereOperand = () => {
     const token = peek();
+    if (token.t === 'duration') return durationLiteral();
     const never = () => fail('A where reads value, parameters and literals – never a projection.', token);
     if (token.t === 'ident' && token.v === 'value') {
       next();
@@ -12143,6 +12655,7 @@ function parseModelSourceText(text, options) {
   };
   const derivedValue = () => {
     const token = peek();
+    if (token.t === 'duration') return durationLiteral();
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1)) return call(literalValue);
     if (token.t === 'ident' && !startsLiteral()) {
       next();
@@ -12298,7 +12811,7 @@ function parseModelSourceText(text, options) {
   //
   // `leaf` reads one comparison – a command's by default; a handler's
   // condition joins its own comparisons the same way.
-  const commandComparison = () => condition(commandOperand);
+  const commandComparison = () => condition(commandValue);
   const anyCondition = (leaf = commandComparison) => {
     enter();
     const parts = [allCondition(leaf)];
@@ -12381,6 +12894,7 @@ function parseModelSourceText(text, options) {
       return operand;
     }
     if (left) fail(`A handler's condition starts with the event field it tests (event.data.…), found ${describeToken(token)}.`);
+    if (token.t === 'duration') return durationLiteral();
     return literalValue();
   };
   const handlerComparison = (scope) => () => {
@@ -12558,6 +13072,12 @@ function parseModelSourceText(text, options) {
       if (is('{')) body = { schema: jsonValue() };
       else {
         const base = ident('a base type');
+        // A time (11.0): the string of its format, `type Deadline = datetime`.
+        if (SOURCE_TIME_FORMATS[base.v]) {
+          body = { schema: { type: 'string', format: SOURCE_TIME_FORMATS[base.v] } };
+          if (isTag) body.isTag = true;
+          return define('custom-type-definition', nameToken, annotate('custom-type-definition', body, annotations), start);
+        }
         if (!SOURCE_BASE_TYPES.includes(base.v)) {
           fail(`A value type is one of ${SOURCE_BASE_TYPES.join(', ')} – or a JSON Schema object – `
             + `not "${base.v}". (A record of fields is written "record ${nameToken.v} { … }".)`, base);
@@ -12915,7 +13435,7 @@ function parseModelSourceText(text, options) {
       const eventToken = ident('an event name');
       const emission = { name: eventToken.v };
       mark(emission, 'name', eventToken);
-      if (accept('{')) emission.parameters = argumentList('}', commandOperand);
+      if (accept('{')) emission.parameters = argumentList('}', commandValue);
       if (is('when')) {
         fail('"when" on an emission is gone – 11.0 has no guarded emissions: "if … => emit …" emits under a condition.');
       }
@@ -13821,6 +14341,18 @@ function sourceLiteral(value) {
   return unprintable(`it holds a value the code form has no spelling for: ${JSON.stringify(value)}`);
 }
 
+// A literal where an operand stands: a duration (11.0) as the
+// notation spells it, `15m`; anything else as `sourceLiteral` does.
+function sourceOperandLiteral(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.duration !== undefined) {
+    if (Object.keys(value).length !== 1) unprintable('a duration carries extra fields');
+    const text = durationLiteralText(value.duration);
+    if (text === null) unprintable(`${JSON.stringify(value.duration)} is no duration the code form can write`);
+    return text;
+  }
+  return sourceLiteral(value);
+}
+
 function sourceProperty(property) {
   return `${sourceRef(property.name, 'property')}${property.isOptional ? '?' : ''}: `
     + `${sourceRef(property.propertyType, 'type')}${property.isList ? '[]' : ''}`;
@@ -14010,7 +14542,7 @@ function sourceCollection(operand, read, name) {
   if (Object.keys(operand).some((k) => !['collect', 'read', 'where'].includes(k))) unprintable('a collection function carries extra fields');
   if (!COLLECTION_FUNCTIONS.includes(operand.collect)) unprintable(`"${operand.collect}" is not a collection function the code form knows`);
   const target = operand.read;
-  if (!target || typeof target !== 'object' || target.projection === undefined || target.field !== undefined) {
+  if (!target || typeof target !== 'object' || target.projection === undefined) {
     unprintable('a collection function collects no read of a projection');
   }
   if (!readTagOperands(target).some((tag) => tag && typeof tag === 'object' && tag.open === true)) {
@@ -14027,9 +14559,9 @@ function sourceCollection(operand, read, name) {
         if (value.parameterName === 'value') unprintable('a where names a parameter called value');
         return name(value);
       }
-      if (value.enumMember === undefined) unprintable('a where reads something other than value, a name or a literal');
+      if (value.enumMember === undefined && value.duration === undefined) unprintable('a where reads something other than value, a name or a literal');
     }
-    return sourceLiteral(value);
+    return sourceOperandLiteral(value);
   };
   const where = operand.where === undefined ? '' : ` where ${sourceAnyCondition(operand.where, side)}`;
   return `${operand.collect}(${read(target)}${where})`;
@@ -14073,7 +14605,7 @@ function sourceHandlerSteps(handler, tagNames, operation) {
         return sourceRef(value.parameterName, 'tag');
       }
     }
-    return sourceLiteral(value);
+    return sourceOperandLiteral(value);
   };
   const condition = (c) => {
     for (const leaf of conditionLeaves(c)) {
@@ -14121,7 +14653,7 @@ function sourceDerivedOperand(names, siblings = null) {
       if (Object.keys(v).length !== 1) unprintable('a derived operand\'s parameter reaches into a field');
       return sourceRef(v.parameterName, 'parameter');
     }
-    return sourceLiteral(v);
+    return sourceOperandLiteral(v);
   };
   const read = (operand) => {
     if (Object.keys(operand).some((k) => !['projection', 'tags', 'arguments', 'field'].includes(k))) unprintable('a derived operand carries extra fields');
@@ -14164,6 +14696,8 @@ function printCustomType(name, body) {
   const plainEnum = keys.length === 2 && schema.type === 'string' && Array.isArray(schema.enum) && schema.enum.length
     && schema.enum.every((m) => typeof m === 'string' && SOURCE_IDENT_RE.test(m) && !['true', 'false', 'null'].includes(m));
   if (plainEnum) return tagSchema + `${tag}enum ${declared} { ${schema.enum.join(', ')} }`;
+  const time = Object.keys(SOURCE_TIME_FORMATS).find((word) => SOURCE_TIME_FORMATS[word] === schema.format);
+  if (time && keys.length === 2 && schema.type === 'string') return tagSchema + `${tag}type ${declared} = ${time}`;
   if (typeof schema.type === 'string' && SOURCE_BASE_TYPES.includes(schema.type)) {
     const rest = {};
     for (const key of keys) if (key !== 'type') rest[key] = schema[key];
@@ -14331,8 +14865,20 @@ function sourceCommandOperand(body, names) {
       // A typed literal stands where a tag does; anywhere else it is no
       // value the code form can say.
       if (value.tagType !== undefined) unprintable('a tag literal stands outside a read');
+      // `a - b + c` (11.0): a sum on the left is written bare, as it was
+      // read; one on the right has no spelling.
+      if (value.operator !== undefined) {
+        if (Object.keys(value).some((k) => !['operator', 'leftHandSide', 'rightHandSide'].includes(k))) unprintable('arithmetic carries extra fields');
+        const symbol = Object.keys(SOURCE_OPERATORS).find((k) => SOURCE_OPERATORS[k] === value.operator);
+        if (symbol !== '+' && symbol !== '-') unprintable(`"${value.operator}" is no arithmetic a command has`);
+        if (value.rightHandSide && typeof value.rightHandSide === 'object' && value.rightHandSide.operator !== undefined) {
+          unprintable('arithmetic on the right of + or - has no spelling');
+        }
+        const self = sourceCommandOperand(body, names);
+        return `${self(value.leftHandSide)} ${symbol} ${self(value.rightHandSide)}`;
+      }
     }
-    return sourceLiteral(value);
+    return sourceOperandLiteral(value);
   };
 }
 
@@ -15620,6 +16166,11 @@ function sourceSymbols(parsed) {
     } else if (has(value, 'parameterName')) {
       parameter = value.parameterName;
       ({ property } = value);
+    } else if (has(value, 'operator') && has(value, 'leftHandSide')) {
+      // Arithmetic (11.0): both sides, in the same scope.
+      commandOperand(commandName, body, value.leftHandSide, null);
+      commandOperand(commandName, body, value.rightHandSide, null);
+      return;
     } else if (has(value, 'collect')) {
       // A collection function (11.0): its open read, and its where.
       commandOperand(commandName, body, value.read, null);
@@ -17172,8 +17723,22 @@ another projection or the state, and never narrows the query.
 
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
 a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
-an enum member (Archived), a tag literal naming its type (CourseId("c1")), a collection
-function, and a field of a projection's record value: P(…).city, alias.city, G(…).p.city.
+a duration (15m), an enum member (Archived), a tag literal naming its type (CourseId("c1")),
+a collection function, and a field of a projection's record value: P(…).city, alias.city,
+G(…).p.city. A rule's sides and an emitted value may add and subtract them, left to right:
+  require CourseCapacity(courseId) - sum(Reservation(courseId, *).seats) >= seats else reject "Full"
+
+Time is data. datetime is an RFC 3339 date-time with an offset ("2026-01-01T10:00:00+02:00",
+"…Z"), compared as the instant it names; duration is a length written 30s, 15m, 24h, 7d or
+1h30m (a day is exactly 24h; no months or years) and stored as ISO 8601 ("PT15M"). No event
+carries a recorded time and there is no clock: the time a command acts at is a parameter,
+now: datetime, which a scenario gives like any value.
+  require OptInIssuedAt(token) + 24h > now else reject "Token expired"
+  emit SeatsWereReserved { courseId, seats, expiresAt: now + 15m }
+  sum(Reservation(courseId, *).seats where value.expiresAt > now)
+A datetime moves by a duration (datetime + duration, datetime - duration) and is written back
+in UTC ("…Z"); durations add and subtract; numbers add and subtract. type Deadline = datetime
+names one.
 
 An open tag, *, reads every present instance of a projection tagged by several – one whose
 value is not its initial one – matching the tags it binds; at least one stays bound:
@@ -17204,8 +17769,9 @@ const SOURCE_REFERENCE_TOUR = `model "Library"
 // ---- Types ----
 // "type" names a value type: a JSON Schema base type (string, number,
 // integer, boolean, object, array, null), optionally constrained by a
-// JSON Schema object.
+// JSON Schema object – or a time, datetime or duration.
 type Isbn = string { pattern: "^[0-9-]+$" }
+type HoldTime = duration
 // "tag type" is a value type events can be tagged by: an identifier.
 tag type BookId = string
 tag type MemberId = string
@@ -17228,6 +17794,8 @@ event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
 event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
+// datetime is an RFC 3339 date-time with an offset, duration a length.
+event BookReserved { tag bookId: BookId, tag memberId: MemberId, until: datetime }
 
 // ---- Projections ----
 // A projection folds the events it handles into one value, kept per
@@ -17247,6 +17815,10 @@ projection BookStatus (tag bookId: BookId): BookStatus = Unknown {
 
 projection BookTitle (tag bookId: BookId): string = null {
   on BookAdded => set event.data.title
+}
+
+projection BookReservedUntil (tag bookId: BookId): datetime = null {
+  on BookReserved => set event.data.until
 }
 
 projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
@@ -17456,6 +18028,20 @@ command WithdrawBooks(bookIds: BookId[]) {
   }
 }
 
+// Time is data: the time a command acts at is a parameter, "now", and a
+// datetime moves by a duration – 30s, 15m, 24h, 7d, 1h30m. A rule's
+// sides and an emitted value add and subtract, left to right.
+command ReserveBook(bookId: BookId, memberId: MemberId, hold: HoldTime, now: datetime) {
+  require BookReservedUntil(bookId) is empty or BookReservedUntil(bookId) < now
+    else reject "Book is reserved"
+  require hold <= 7d
+    else reject "A hold lasts a week at most"
+  require Member(memberId).loanCount + 1 <= 5
+    else reject "Too many loans"
+
+  emit BookReserved { bookId, memberId, until: now + hold }
+}
+
 command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId) {
   require MemberHasBook(fromMemberId, bookId) is true
     else reject "Book is not with this member"
@@ -17588,6 +18174,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 - An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
 - A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
+- Time is data, never a clock: a command that needs the time takes now: datetime, and what expires stores its end – emit SeatsWereReserved { …, expiresAt: now + 15m } – so a rule reads it against now: sum(Reservation(courseId, *).seats where value.expiresAt > now). Expiring something at a time is a job outside the model calling a command, not a construct. A datetime needs its offset; one without is no value.
 - A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 `;
 
@@ -17632,7 +18219,7 @@ const SOURCE_MONARCH = {
   unicode: true,
   keywords: SOURCE_KEYWORDS,
   statements: SOURCE_STATEMENTS,
-  baseTypes: [...SOURCE_BASE_TYPES],
+  baseTypes: [...SOURCE_BASE_TYPES, ...Object.keys(SOURCE_TIME_FORMATS)],
   tokenizer: {
     root: [
       [/@[\p{L}_][\p{L}\p{M}\p{Nd}_]*/, 'annotation'],
@@ -17642,6 +18229,8 @@ const SOURCE_MONARCH = {
       { include: '@whitespace' },
       [/[{}()[\]]/, '@brackets'],
       [/=>|==|!=|<=|>=|[<>=?:.,]/, 'delimiter'],
+      // A duration, 15m or 1h30m (11.0), before the number it starts with.
+      [/\d+[dhms](\d+[dhms])*(?![\p{L}\p{Nd}_])/, 'number.duration'],
       [/\d+(\.\d+)?([eE][+-]?\d+)?/, 'number'],
       [/[-+*]/, 'operator'],
       [/"([^"\\]|\\.)*$/, 'string.invalid'],

@@ -69,8 +69,22 @@ another projection or the state, and never narrows the query.
 
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
 a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
-an enum member (Archived), a tag literal naming its type (CourseId("c1")), a collection
-function, and a field of a projection's record value: P(…).city, alias.city, G(…).p.city.
+a duration (15m), an enum member (Archived), a tag literal naming its type (CourseId("c1")),
+a collection function, and a field of a projection's record value: P(…).city, alias.city,
+G(…).p.city. A rule's sides and an emitted value may add and subtract them, left to right:
+  require CourseCapacity(courseId) - sum(Reservation(courseId, *).seats) >= seats else reject "Full"
+
+Time is data. datetime is an RFC 3339 date-time with an offset ("2026-01-01T10:00:00+02:00",
+"…Z"), compared as the instant it names; duration is a length written 30s, 15m, 24h, 7d or
+1h30m (a day is exactly 24h; no months or years) and stored as ISO 8601 ("PT15M"). No event
+carries a recorded time and there is no clock: the time a command acts at is a parameter,
+now: datetime, which a scenario gives like any value.
+  require OptInIssuedAt(token) + 24h > now else reject "Token expired"
+  emit SeatsWereReserved { courseId, seats, expiresAt: now + 15m }
+  sum(Reservation(courseId, *).seats where value.expiresAt > now)
+A datetime moves by a duration (datetime + duration, datetime - duration) and is written back
+in UTC ("…Z"); durations add and subtract; numbers add and subtract. type Deadline = datetime
+names one.
 
 An open tag, *, reads every present instance of a projection tagged by several – one whose
 value is not its initial one – matching the tags it binds; at least one stays bound:
@@ -106,6 +120,7 @@ Leave it as it is, or rewrite it in the language.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 - An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
 - A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
+- Time is data, never a clock: a command that needs the time takes now: datetime, and what expires stores its end – emit SeatsWereReserved { …, expiresAt: now + 15m } – so a rule reads it against now: sum(Reservation(courseId, *).seats where value.expiresAt > now). Expiring something at a time is a job outside the model calling a command, not a construct. A datetime needs its offset; one without is no value.
 - A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 
 
@@ -117,8 +132,9 @@ model "Library"
 // ---- Types ----
 // "type" names a value type: a JSON Schema base type (string, number,
 // integer, boolean, object, array, null), optionally constrained by a
-// JSON Schema object.
+// JSON Schema object – or a time, datetime or duration.
 type Isbn = string { pattern: "^[0-9-]+$" }
+type HoldTime = duration
 // "tag type" is a value type events can be tagged by: an identifier.
 tag type BookId = string
 tag type MemberId = string
@@ -141,6 +157,8 @@ event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
 event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
+// datetime is an RFC 3339 date-time with an offset, duration a length.
+event BookReserved { tag bookId: BookId, tag memberId: MemberId, until: datetime }
 
 // ---- Projections ----
 // A projection folds the events it handles into one value, kept per
@@ -160,6 +178,10 @@ projection BookStatus (tag bookId: BookId): BookStatus = Unknown {
 
 projection BookTitle (tag bookId: BookId): string = null {
   on BookAdded => set event.data.title
+}
+
+projection BookReservedUntil (tag bookId: BookId): datetime = null {
+  on BookReserved => set event.data.until
 }
 
 projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
@@ -367,6 +389,20 @@ command WithdrawBooks(bookIds: BookId[]) {
     if BookStatus(bookId) == Available => emit BookWithdrawn { bookId }
     else if BookStatus(bookId) == Lent => reject "A book is still lent"
   }
+}
+
+// Time is data: the time a command acts at is a parameter, "now", and a
+// datetime moves by a duration – 30s, 15m, 24h, 7d, 1h30m. A rule's
+// sides and an emitted value add and subtract, left to right.
+command ReserveBook(bookId: BookId, memberId: MemberId, hold: HoldTime, now: datetime) {
+  require BookReservedUntil(bookId) is empty or BookReservedUntil(bookId) < now
+    else reject "Book is reserved"
+  require hold <= 7d
+    else reject "A hold lasts a week at most"
+  require Member(memberId).loanCount + 1 <= 5
+    else reject "Too many loans"
+
+  emit BookReserved { bookId, memberId, until: now + hold }
 }
 
 command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId) {
