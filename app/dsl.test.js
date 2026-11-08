@@ -3262,4 +3262,126 @@ command Start(shareId: ShareId, owner: CustomerId, invitee: CustomerId, held: Ho
   });
 }
 
+// ---------------------------------------------------------------
+// Partial scenarios (11.0, package 9): a scenario leaves out what its
+// outcome does not depend on. Tags are always given; a field left out
+// is unspecified, and reading one breaks the scenario, naming it. A
+// then compares what it lists. The values given are held to their
+// types' constraints, and an optional list is allowed.
+// ---------------------------------------------------------------
+{
+  const PARTIAL = `model "Partial"
+
+tag type CustomerId = string { pattern: "^cu[0-9]+$" }
+tag type ContractId = string
+type Installment = integer { minimum: 1 }
+
+event CustomerWasAdded { tag customerId: CustomerId, name: string, emailAddress: string }
+event ContractWasImported { tag customerId: CustomerId, tag contractId: ContractId, title: string }
+event InstallmentSet { tag contractId: ContractId, tag actor: CustomerId, installment: Installment, note: string }
+event Greeted { tag customerId: CustomerId }
+event LabelsSet { tag contractId: ContractId, labels?: string[] }
+
+projection ContractOwner (tag contractId: ContractId): CustomerId = null {
+  on ContractWasImported => set event.data.customerId
+}
+
+projection CustomerName (tag customerId: CustomerId): string = null {
+  on CustomerWasAdded => set event.data.name
+}
+
+command SetInstallment(contractId: ContractId, actor: CustomerId, installment: Installment, note: string) {
+  require ContractOwner(contractId) == actor
+    else reject "Share does not permit this action"
+
+  emit InstallmentSet { contractId, actor, installment, note }
+
+  scenarios {
+    scenario "another customer" {
+      given CustomerWasAdded { customerId: "cu1" }
+      and ContractWasImported { customerId: "cu1", contractId: "co1" }
+      when SetInstallment { contractId: "co1", actor: "cu2" }
+      then rejected "Share does not permit this action"
+    }
+
+    scenario "the owner" {
+      given ContractWasImported { customerId: "cu1", contractId: "co1" }
+      when SetInstallment { contractId: "co1", actor: "cu1", installment: 50, note: "n" }
+      then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50 }
+    }
+  }
+}
+
+command Greet(customerId: CustomerId) {
+  require CustomerName(customerId) != ""
+    else reject "Nameless"
+
+  emit Greeted { customerId }
+}
+
+command SetLabels(contractId: ContractId, labels?: string[]) {
+  emit LabelsSet { contractId, labels }
+}
+`;
+  const statuses = (text) => {
+    const model = buildText(text).model();
+    return Object.values(model['scenario-definitions']).map((body) => {
+      const run = sandbox.runScenario(model, body);
+      return run.status === 'broken' ? run.reason : run.status;
+    });
+  };
+  const EMITS = { Greet: '  emit Greeted { customerId }\n', SetLabels: '  emit LabelsSet { contractId, labels }\n' };
+  const withScenario = (command, scenario) => swap(PARTIAL, `${EMITS[command]}}`, `${EMITS[command]}\n  scenarios {\n${scenario}\n  }\n}`);
+
+  check('a scenario leaves out what its outcome does not depend on', () => {
+    const { model } = buildText(PARTIAL);
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean, an optional list included');
+    const printed = modelToSource(model());
+    eq(printed.includes('given CustomerWasAdded { customerId: "cu1" }'), true, 'printed as written');
+    eq(printed.includes('when SetInstallment { contractId: "co1", actor: "cu2" }'), true, 'a partial when');
+    eq(printed.includes('Written as JSON'), false, 'no definition falls back');
+    eq(Object.values(model()['scenario-definitions'])[0].given[0].data, { customerId: 'cu1' }, 'stored as written');
+    eq(statuses(PARTIAL), ['current', 'current'], 'both hold');
+  });
+
+  check('a then compares the fields it lists, and only those', () => {
+    eq(statuses(swap(PARTIAL, 'then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50 }',
+      'then InstallmentSet { contractId: "co1", actor: "cu1", installment: 51 }')), ['current', 'drifted'], 'a listed field differs');
+    eq(statuses(swap(PARTIAL, 'then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50 }',
+      'then InstallmentSet { contractId: "co1", actor: "cu1", note: "n" }')), ['current', 'current'], 'another field listed');
+  });
+
+  check('reading a field left out breaks the scenario, naming it', () => {
+    eq(statuses(swap(PARTIAL, 'actor: "cu1", installment: 50, note: "n" }', 'actor: "cu1", installment: 50 }')),
+      ['current', 'Reads unspecified field "note" of SetInstallment – the outcome depends on it, so the scenario gives it.'], 'a parameter emitted');
+    const greet = withScenario('Greet', '    scenario {\n      given CustomerWasAdded { customerId: "cu1" }\n'
+      + '      when Greet { customerId: "cu1" }\n      then Greeted { customerId: "cu1" }\n    }');
+    eq(statuses(greet).slice(2), ['Reads unspecified field "name" of CustomerWasAdded – the outcome depends on it, so the scenario gives it.'], 'a field a handler sets');
+  });
+
+  check('a tag left out is an error', () => {
+    eq(statuses(swap(PARTIAL, 'given ContractWasImported { customerId: "cu1", contractId: "co1" }', 'given ContractWasImported { contractId: "co1" }'))[1],
+      'Given step 1 ("ContractWasImported") leaves out the tag "customerId" – a scenario gives every tag, since tags decide which reads see an event.', 'in a given');
+    eq(statuses(swap(PARTIAL, 'then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50 }', 'then InstallmentSet { contractId: "co1", installment: 50 }'))[1],
+      'Expected event 1 ("InstallmentSet") leaves out the tag "actor" – a scenario gives every tag, since tags decide which reads see an event.', 'in a then');
+  });
+
+  check('the values a scenario gives are held to their types\' constraints', () => {
+    eq(statuses(swap(PARTIAL, 'given CustomerWasAdded { customerId: "cu1" }', 'given CustomerWasAdded { customerId: "x1" }')),
+      ['Given step 1 ("CustomerWasAdded") gives customerId "x1", which does not match ^cu[0-9]+$.', 'current'], 'a pattern in a given');
+    eq(statuses(swap(PARTIAL, 'installment: 50, note: "n" }', 'installment: 0, note: "n" }'))[1],
+      'The When ("SetInstallment") gives installment 0, which is below 1.', 'a minimum in a when');
+    eq(statuses(swap(PARTIAL, 'then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50 }',
+      'then InstallmentSet { contractId: "co1", actor: "cu1", installment: -5 }'))[1],
+      'Expected event 1 ("InstallmentSet") gives installment -5, which is below 1.', 'a minimum in a then');
+  });
+
+  check('an optional list is allowed, and null is its absence', () => {
+    const labels = withScenario('SetLabels', '    scenario {\n      when SetLabels { contractId: "co1", labels: null }\n'
+      + '      then LabelsSet { contractId: "co1", labels: null }\n    }\n\n    scenario {\n      when SetLabels { contractId: "co1", labels: ["a"] }\n'
+      + '      then LabelsSet { contractId: "co1", labels: ["a"] }\n    }');
+    eq(statuses(labels).slice(2), ['current', 'current'], 'both hold');
+  });
+}
+
 finish();

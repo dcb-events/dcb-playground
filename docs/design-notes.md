@@ -1373,6 +1373,27 @@ Watched, Decision, Store. Only the panel scrolls.
   whose fix is `and`. `when C and D` was weighed and left out: a
   scenario runs one command in the wire format, and several would be a
   major — earlier commands are written as given events.
+  **A scenario leaves out what it does not depend on** (11.0,
+  dcb-events.github.io#108). A given event, a when and a then event
+  may omit any property but a tag – tags decide which reads see an
+  event, so an omitted one is a broken run, an omitted optional one
+  its null. An omitted property is *unspecified*, not null: the
+  payload carries the omitted names under a symbol (`EV_UNSPECIFIED`,
+  evaluate.js, set by `evScenarioPayload`), and `evOwn` – the one way
+  evaluation reads a field or an argument – fails on one, naming it.
+  So the failure is the read itself, wherever it happens (fold,
+  rule, branch, `where`, emission, loop), and since reads are lazy
+  (package 3) a field nobody needs may stay out. A then compares the
+  fields it lists (`evThenHolds`); one recorded from a run lists them
+  all. The text stores what it says (`canonicalScenario`'s `partial`);
+  the page's save still spells out null for what a draft left unset,
+  since its editors show every field. The values a scenario does give
+  are held to their types' constraints (`payloadValueProblems`, the
+  same rule `replay` applies to stored events) – a scenario showing a
+  value no type admits shows what cannot happen. An optional list is
+  allowed since 11.0, its null its absence. Fixtures (shared givens)
+  were deferred: partial events removed most of the repetition, and if
+  they come they are scoped per `scenarios` block.
   **Scenarios sit in one `scenarios { … }` group**, the block's last
   statement (at the top level too, for those whose subject is gone).
   The group is syntax only, not wire format, and it is required

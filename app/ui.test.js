@@ -3065,7 +3065,10 @@ check('importing an older model with entities says what became of them', () => {
     sandbox.deleteDcbModel(shipped.id);
   });
 
-  check('saved from the page or applied as code, a scenario is stored the same', () => {
+  // 11.0: the page's save spells the null into what a draft left
+  // unset, an optional list too; code is stored as written, a property
+  // left out unspecified (a partial scenario).
+  check('saved from the page, a draft spells out its nulls; applied as code, a scenario is stored as written', () => {
     addTaggedEvent(id, 'NotizenErfasst', {
       properties: [
         { name: 'anordnungId', propertyType: 'string', isOptional: false, isList: false },
@@ -3076,8 +3079,8 @@ check('importing an older model with entities says what became of them', () => {
     const body = () => ({ projection: 'X', given: [{ event: 'NotizenErfasst', data: { anordnungId: 'a1' } }] });
     const saved = sandbox.canonicalScenario(model(), 'projection-scenario-definition', body());
     const applied = sandbox.completeScenario(model(), { kind: 'projection-scenario-definition', body: body() }).body;
-    eq(applied.given, saved.given, 'one spelling');
-    eq(saved.given[0].data, { anordnungId: 'a1', notiz: null }, 'an optional list left unset, as evaluation leaves it');
+    eq(applied.given[0].data, { anordnungId: 'a1' }, 'as written');
+    eq(saved.given[0].data, { anordnungId: 'a1', notiz: null, anhaenge: null }, 'an optional list left unset is null too');
   });
 }
 

@@ -106,6 +106,12 @@ projection they exercise, and name it:
   then G(CourseId("c1")).p == <value>      (a group's projection, in its block inside the group)
 Say given, when and then once each, one command per scenario; further events continue with and.
 Leave then out and applying records what the model does, and the result says which scenarios it recorded.
+A scenario leaves out every property its outcome does not depend on – in given, when and then –
+so it says what it depends on; tags are always given:
+  given CustomerWasAdded { customerId: "cu1" }  when SetInstallment { contractId: "co1", actor: "cu2" }
+A property left out is unspecified: a run that reads it is an error naming it (reads unspecified
+field "name" of CustomerWasAdded). A then compares the fields it lists and ignores the rest.
+The values a scenario gives are held to their types' constraints (pattern, minimum, …).
 
 A definition printed as command X json { … } is stored JSON the language cannot spell.
 Leave it as it is, or rewrite it in the language.
@@ -120,6 +126,7 @@ Leave it as it is, or rewrite it in the language.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 - An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
 - A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
+- A scenario gives only what its outcome depends on: given CustomerWasAdded { customerId: "cu1" } where the name and email do not matter. Tags are always given. Reading a property the scenario left out is an error naming it, which is how a scenario reveals what it depends on; a then compares only the fields it lists. The values it does give are held to their types' constraints, so a value outside a pattern cannot be given at all – a require on it is shown with a value the type admits.
 - Time is data, never a clock: a command that needs the time takes now: datetime, and what expires stores its end – emit SeatsWereReserved { …, expiresAt: now + 15m } – so a rule reads it against now: sum(Reservation(courseId, *).seats where value.expiresAt > now). Expiring something at a time is a job outside the model calling a command, not a construct. A datetime needs its offset; one without is no value.
 - A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 
@@ -306,9 +313,11 @@ command AddBook(bookId: BookId, isbn: Isbn, title: string, subtitle?: string) {
       then BookAdded { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
     }
 
+    // A scenario leaves out what its outcome does not depend on; tags
+    // are always given. Reading a property left out is an error.
     scenario "a book is added once" {
-      given BookAdded { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
-      when AddBook { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
+      given BookAdded { bookId: "b1" }
+      when AddBook { bookId: "b1" }
       then rejected "Book already exists"
     }
   }

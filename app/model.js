@@ -1530,19 +1530,21 @@ function derivedText(derived) {
   return symbol ? `${left} ${symbol} ${right}` : `${derived.operator}(${left}, ${right})`;
 }
 
-// A scenario as it is stored, whoever writes it – the page's save, a
-// text applied as code: every optional property it leaves unset spelt
-// out as the explicit null, in each Given step, a command's arguments
-// and a published Then. Optional lists are left alone, as evaluation
-// leaves them (`evWithExplicitOptionals`): they evaluate as plain
-// lists, and the advisories point the combination out. Fills `body`
-// in place and returns it.
-function canonicalScenario(model, kind, body) {
+// A scenario as the page's save stores it: every optional property a
+// draft left unset spelt out as the explicit null, in each Given step,
+// a command's arguments and a published Then – an optional list too,
+// whose null is its absence (11.0). A text applied as code (`partial`)
+// is stored as written instead: since 11.0 a property it leaves out is
+// *unspecified*, not null – the scenario does not depend on it, a Then
+// does not compare it, and a run that reads it is broken
+// (`evScenarioPayload`, evaluate.js). Fills `body` in place and
+// returns it.
+function canonicalScenario(model, kind, body, { partial = false } = {}) {
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const fill = (data, properties) => {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+    if (partial || !data || typeof data !== 'object' || Array.isArray(data)) return;
     for (const property of properties || []) {
-      if (!property || !property.isOptional || property.isList) continue;
+      if (!property || !property.isOptional) continue;
       if (!own(data, property.name) || data[property.name] === undefined) data[property.name] = null;
     }
   };
@@ -1808,6 +1810,60 @@ function payloadTimeProblems(model, properties, data) {
       const problem = timeValueProblem(model, property.propertyType, value);
       if (problem) out.push({ name: property.name, problem });
     }
+  }
+  return out;
+}
+
+// The values in a payload its types' constraints refuse – `[{name,
+// value, problem}]`, `problem` finishing "…, which <problem>." – a
+// list's elements and a record's fields included (11.0). What a
+// scenario gives is held to them as a stored event is (`replay`): a
+// value no type admits would make the scenario show what cannot
+// happen. A key the payload leaves out, and null, are no value to
+// check; a time's format is `payloadTimeProblems`' to say.
+function payloadValueProblems(model, properties, data) {
+  const out = [];
+  const scalar = (typeName, value) => {
+    const body = model['custom-type-definitions'][typeName];
+    const schema = body && !Array.isArray(body.properties) ? (body.schema || { type: 'string' })
+      : ['string', 'integer', 'number', 'boolean'].includes(typeName) ? { type: typeName } : null;
+    if (!schema) return null;
+    const type = schema.type;
+    const actual = typeof value;
+    if (type === 'integer' ? !Number.isInteger(value) : (type && type !== actual)) return `is no ${type}`;
+    if (schema.enum !== undefined && !schema.enum.includes(value)) return `is no member of ${typeName}`;
+    if (schema.minimum !== undefined && value < schema.minimum) return `is below ${schema.minimum}`;
+    if (schema.maximum !== undefined && value > schema.maximum) return `is above ${schema.maximum}`;
+    if (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum) return `is not above ${schema.exclusiveMinimum}`;
+    if (schema.exclusiveMaximum !== undefined && value >= schema.exclusiveMaximum) return `is not below ${schema.exclusiveMaximum}`;
+    if (schema.minLength !== undefined && value.length < schema.minLength) return `is shorter than ${schema.minLength}`;
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) return `is longer than ${schema.maxLength}`;
+    if (schema.pattern !== undefined) {
+      let matches = true;
+      try { matches = new RegExp(schema.pattern, 'u').test(value); } catch (error) { /* a broken pattern is advised elsewhere */ }
+      if (!matches) return `does not match ${schema.pattern}`;
+    }
+    return null;
+  };
+  const check = (name, typeName, value) => {
+    if (value === null || value === undefined) return;
+    const fields = compositeFieldsOf(model, typeName);
+    if (fields) {
+      if (typeof value !== 'object' || Array.isArray(value)) return;
+      for (const field of fields) {
+        const held = Object.prototype.hasOwnProperty.call(value, field.name) ? value[field.name] : undefined;
+        for (const element of field.isList && Array.isArray(held) ? held : [held]) check(`${name}.${field.name}`, field.propertyType, element);
+      }
+      return;
+    }
+    const problem = scalar(typeName, value);
+    if (problem) out.push({ name, value, problem });
+  };
+  for (const property of properties || []) {
+    if (!property || !property.name || !data || typeof data !== 'object') continue;
+    if (!Object.prototype.hasOwnProperty.call(data, property.name)) continue;
+    const held = data[property.name];
+    for (const value of property.isList && Array.isArray(held) ? held : [held]) check(property.name, property.propertyType, value);
   }
   return out;
 }
@@ -3831,12 +3887,6 @@ function validateReferences(model, kind, name, body) {
       if (classifyType(resolved, p.propertyType).kind === 'unresolved') {
         throw new DomainError(`Type "${p.propertyType}" (property "${p.name}") does not resolve in this model.`);
       }
-      if (p.isOptional && p.isList) {
-        throw new DomainError(
-          `${label} property "${p.name}" is both optional and a list – two spellings of "none". ` +
-          'The empty list already says nothing is there; this evaluates as a plain list.'
-        );
-      }
     }
   };
 
@@ -5739,7 +5789,7 @@ function validateCommandBody(model, body) {
     operandSource(operand) === 'parameter'
     && !present.has(operand.parameterName)
     && (body.properties || []).some(
-      (p) => p.name === operand.parameterName && p.isOptional && !p.isList
+      (p) => p.name === operand.parameterName && p.isOptional
     );
   // Where each alias is used, and what is present there: a read made
   // lazily is made only where it is used, so it is safe from an unset
@@ -5881,27 +5931,31 @@ function validateCommandBody(model, body) {
 //
 // What is deliberately *not* checked here is the value in a payload
 // against the type it is declared with: a `CourseId` with a pattern is
-// stored as whatever was typed. Structure is checked – every property
-// present, no property invented, a list where a list is declared – and
-// the rest is the evaluator's to discover.
+// stored as whatever was typed, and a run says so (11.0,
+// `evScenarioPayload`). Structure is checked – no property invented, a
+// list where a list is declared – and the rest is the evaluator's to
+// discover.
 // ============================================================
 
 // Checks a stored payload against the properties it is written from.
-// Both directions matter: a missing one cannot be evaluated, and an
-// invented one is a reference nothing would ever rewrite. An optional
-// property may simply not be there – that is what optional means, in a
-// Given as much as in a When. Shared by both scenario kinds, so the
-// two never disagree about what a payload owes.
-function checkScenarioPayload(values, properties, label) {
+// An invented property is a reference nothing would ever rewrite. A
+// property left out is unspecified (11.0, partial scenarios) – the
+// scenario does not depend on it – except a tag of an event (`tags`,
+// the event's list): tags decide which reads see an event, so a
+// scenario always gives them, an optional one as its null. Shared by
+// both scenario kinds, so the two never disagree about what a payload
+// owes.
+function checkScenarioPayload(values, properties, label, tags = []) {
   const held = values || {};
   const declared = new Set();
+  const tagged = new Set((tags || []).map((path) => String(path).split('.')[0]));
   for (const property of properties || []) {
     declared.add(property.name);
     if (!(property.name in held)) {
-      if (property.isOptional) continue;
-      throw new DomainError(`${label} carries no value for "${property.name}".`);
+      if (property.isOptional || !tagged.has(property.name)) continue;
+      throw new DomainError(`${label} leaves out the tag "${property.name}" – a scenario gives every tag.`);
     }
-    if (property.isList && !Array.isArray(held[property.name])) {
+    if (property.isList && !Array.isArray(held[property.name]) && !(property.isOptional && held[property.name] === null)) {
       throw new DomainError(`${label} declares "${property.name}" as a list, so its value must be one.`);
     }
   }
@@ -5925,8 +5979,8 @@ function validateScenarioBody(model, body) {
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    checkScenarioPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
-      `${where} ("${step.event}")`);
+    const event = model['event-definitions'][step.event] || {};
+    checkScenarioPayload(step.data, event.properties, `${where} ("${step.event}")`, event.tags);
   });
 
   const when = body.when || {};
@@ -5941,8 +5995,8 @@ function validateScenarioBody(model, body) {
   }
   then.events.forEach((event, index) => {
     if (!event || !event.type) throw new DomainError(`Expected event ${index + 1} names no type.`);
-    checkScenarioPayload(event.data, (model['event-definitions'][event.type] || {}).properties,
-      `Expected event ${index + 1} ("${event.type}")`);
+    const definition = model['event-definitions'][event.type] || {};
+    checkScenarioPayload(event.data, definition.properties, `Expected event ${index + 1} ("${event.type}")`, definition.tags);
   });
   if (then.outcome === 'rejected' && typeof then.rejection !== 'string') {
     throw new DomainError('A scenario that expects a refusal has to say which message it was refused with.');
@@ -5965,8 +6019,8 @@ function validateProjectionScenarioBody(model, body) {
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    checkScenarioPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
-      `${where} ("${step.event}")`);
+    const event = model['event-definitions'][step.event] || {};
+    checkScenarioPayload(step.data, event.properties, `${where} ("${step.event}")`, event.tags);
   });
 
   const projection = projectionsOf(model)[body.projection];
@@ -8053,8 +8107,7 @@ function valueTypeSchema(model, typeName, refOf) {
 }
 
 // One property: its type, a list of it, and `null` when it is optional
-// – the one spelling of "no value". An optional list is advised against
-// and evaluates as a plain list; it still admits the null it declares.
+// – the one spelling of "no value", an optional list's absence too.
 function propertySchema(model, property, refOf) {
   let schema = valueTypeSchema(model, property.propertyType, refOf);
   if (property.isList) schema = { type: 'array', items: schema };

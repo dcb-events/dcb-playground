@@ -181,8 +181,8 @@ was decided, why, and what was tried and reverted:
   command out with a note. See _Scripts and the origin_.
 - **Two failure kinds** in evaluation, never conflated: a command whose
   conditions do not hold is _rejected_ (an ordinary outcome); a scenario that
-  cannot run at all (missing event, missing argument, a value of the wrong
-  shape) is an _error_.
+  cannot run at all (missing event, a tag left out, an unspecified field
+  read, a value of the wrong shape or outside its type) is an _error_.
 - **The write path refuses only structure** — a missing key, a name
   collision, a body whose containers are not lists, a construct 11.0
   removed (`assertStorableBody`).
@@ -222,9 +222,11 @@ was decided, why, and what was tried and reverted:
   the generic functions, not in a per-kind copy.
 - **`null` is the one spelling of "no value"** on optional properties, and
   it is never the empty string. Writers spell it out (the payload editors
-  and the scenario save path store the explicit null; an unmapped optional
+  and the page's scenario save store the explicit null; an unmapped optional
   event property publishes it); readers are lenient (an absent key on an
-  optional property reads as null). Downstream it is an ordinary value —
+  optional property reads as null) — except in a scenario's payload, where
+  an absent key is _unspecified_ (11.0) and reading it is an error
+  (`EV_UNSPECIFIED`, evaluate.js). Downstream it is an ordinary value —
   equality and emptiness work — except where it would become a tag or an
   ordering: a null tag of a projection read is an evaluation _error_,
   and so is a null boundary identifier (11.0 removed the optional read

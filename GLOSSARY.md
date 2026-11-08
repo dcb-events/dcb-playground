@@ -93,3 +93,9 @@ _Avoid_: interval, period
 The consistency unit of a DDD or stream-based Event Sourcing app, as found in an
 app being converted. Not a concept of the notation.
 _Avoid_: using it for computations over many values (see Collection function)
+
+**Unspecified field**:
+A property a scenario leaves out of a given event, a when or a then event,
+because its outcome does not depend on it. Reading one during the run is an
+error naming it; a then ignores it. Tags are never unspecified.
+_Avoid_: missing field, default value

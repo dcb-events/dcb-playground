@@ -13227,7 +13227,7 @@ function payloadText(values) {
 // is not refused, or the scenario cannot run.
 function liveRefusal(model, scenario) {
   try {
-    const run = evaluateCommand(model, scenarioLog(scenario), scenario.command, (scenario.when || {}).arguments);
+    const run = evaluateCommand(model, scenarioLog(scenario, model), scenario.command, scenarioArguments(model, scenario));
     return run.outcome === 'rejected' ? run.failedRule : null;
   } catch {
     return null;

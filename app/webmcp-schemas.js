@@ -5629,7 +5629,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
     ]
   },
   "scenario-definition": {
-    "description": "One command, exercised. `given` is a log written by hand rather\nthan driven, `when` is the command and the arguments it is called\nwith, and `then` is what the definitions in this model made of\nthe two.\n\n**`then` is derived, and stored anyway.** No modeler is asked to\npredict it – an authoring tool computes it and freezes it. Storing\nit is the entire mechanism: the next evaluation either agrees with\nwhat is written here or it does not, and a disagreement is the\nreport that some edit changed this command's behaviour. A scenario\nwhose `then` is not stored can only ever say what a command does\nnow, never that it changed.\n\n**A scenario is identified by a generated id**, unlike every other\ndefinition in this document, whose name is its identity. Its\n`name` is derived from the outcome unless overridden, so two\nscenarios of one command may well want to be called the same\nthing – and a name that changes when the outcome changes cannot\nalso be the key everything else refers to it by.\n",
+    "description": "One command, exercised. `given` is a log written by hand rather\nthan driven, `when` is the command and the arguments it is called\nwith, and `then` is what the definitions in this model made of\nthe two.\n\n**`then` is derived, and stored anyway.** No modeler is asked to\npredict it – an authoring tool computes it and freezes it. Storing\nit is the entire mechanism: the next evaluation either agrees with\nwhat is written here or it does not, and a disagreement is the\nreport that some edit changed this command's behaviour. A scenario\nwhose `then` is not stored can only ever say what a command does\nnow, never that it changed. A `then` written by hand may list only\nthe fields the scenario is about (11.0): those are compared, the rest\nignored.\n\n**A scenario is identified by a generated id**, unlike every other\ndefinition in this document, whose name is its identity. Its\n`name` is derived from the outcome unless overridden, so two\nscenarios of one command may well want to be called the same\nthing – and a name that changes when the outcome changes cannot\nalso be the key everything else refers to it by.\n",
     "type": "object",
     "additionalProperties": false,
     "properties": {
@@ -5673,7 +5673,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "data": {
-              "description": "One entry per property the event declares – all of them, and\nnothing else. An optional property's entry holds `null` when it is\nunset, and an absent entry on an optional property reads the same\nway. An event that later gains a *required* property leaves every\nscenario written before it *broken*, which is the honest report:\nthere is no value here to have evaluated with.\n",
+              "description": "The payload the event carried: an entry per property the scenario's\noutcome depends on, and nothing the event does not declare. Every tag\nis given (an optional one may be left out, and is its null); any other\nproperty may be left out (11.0), and is then *unspecified* – a run that\nreads it is an error naming it. `null` is the explicit \"no value\" of an\noptional property. Each value given is held to its type's constraints.\n",
               "type": "object"
             }
           },
@@ -5690,7 +5690,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "additionalProperties": false,
         "properties": {
           "arguments": {
-            "description": "One entry per property the command declares – all of them, and\nnothing else. An optional property's entry holds `null` when it is\nunset – the explicit spelling of \"no value\"; an absent entry on an\noptional property is read the same way.\n",
+            "description": "The arguments the command is called with: an entry per property the\noutcome depends on, and nothing the command does not declare. A\nproperty left out (11.0) is *unspecified* – a run that reads it is an\nerror naming it. `null` is the explicit \"no value\" of an optional\nproperty. Each value given is held to its type's constraints.\n",
             "type": "object"
           }
         },
@@ -5728,7 +5728,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   ]
                 },
                 "data": {
-                  "description": "One entry per property the event declares.",
+                  "description": "The fields this event is expected to carry: every tag, and any other\nproperty the scenario asserts (11.0). Listed fields are compared,\nfields left out are ignored. A Then recorded from a run lists them all.\n",
                   "type": "object"
                 }
               },
@@ -5871,7 +5871,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "data": {
-              "description": "One entry per property the event declares – all of them, and\nnothing else. An optional property's entry holds `null` when it is\nunset, and an absent entry on an optional property reads the same\nway. An event that later gains a *required* property leaves every\nscenario written before it *broken*, which is the honest report:\nthere is no value here to have evaluated with.\n",
+              "description": "The payload the event carried: an entry per property the scenario's\noutcome depends on, and nothing the event does not declare. Every tag\nis given (an optional one may be left out, and is its null); any other\nproperty may be left out (11.0), and is then *unspecified* – a run that\nreads it is an error naming it. `null` is the explicit \"no value\" of an\noptional property. Each value given is held to its type's constraints.\n",
               "type": "object"
             }
           },

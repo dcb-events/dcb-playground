@@ -1532,19 +1532,21 @@ function derivedText(derived) {
   return symbol ? `${left} ${symbol} ${right}` : `${derived.operator}(${left}, ${right})`;
 }
 
-// A scenario as it is stored, whoever writes it – the page's save, a
-// text applied as code: every optional property it leaves unset spelt
-// out as the explicit null, in each Given step, a command's arguments
-// and a published Then. Optional lists are left alone, as evaluation
-// leaves them (`evWithExplicitOptionals`): they evaluate as plain
-// lists, and the advisories point the combination out. Fills `body`
-// in place and returns it.
-function canonicalScenario(model, kind, body) {
+// A scenario as the page's save stores it: every optional property a
+// draft left unset spelt out as the explicit null, in each Given step,
+// a command's arguments and a published Then – an optional list too,
+// whose null is its absence (11.0). A text applied as code (`partial`)
+// is stored as written instead: since 11.0 a property it leaves out is
+// *unspecified*, not null – the scenario does not depend on it, a Then
+// does not compare it, and a run that reads it is broken
+// (`evScenarioPayload`, evaluate.js). Fills `body` in place and
+// returns it.
+function canonicalScenario(model, kind, body, { partial = false } = {}) {
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const fill = (data, properties) => {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+    if (partial || !data || typeof data !== 'object' || Array.isArray(data)) return;
     for (const property of properties || []) {
-      if (!property || !property.isOptional || property.isList) continue;
+      if (!property || !property.isOptional) continue;
       if (!own(data, property.name) || data[property.name] === undefined) data[property.name] = null;
     }
   };
@@ -1810,6 +1812,60 @@ function payloadTimeProblems(model, properties, data) {
       const problem = timeValueProblem(model, property.propertyType, value);
       if (problem) out.push({ name: property.name, problem });
     }
+  }
+  return out;
+}
+
+// The values in a payload its types' constraints refuse – `[{name,
+// value, problem}]`, `problem` finishing "…, which <problem>." – a
+// list's elements and a record's fields included (11.0). What a
+// scenario gives is held to them as a stored event is (`replay`): a
+// value no type admits would make the scenario show what cannot
+// happen. A key the payload leaves out, and null, are no value to
+// check; a time's format is `payloadTimeProblems`' to say.
+function payloadValueProblems(model, properties, data) {
+  const out = [];
+  const scalar = (typeName, value) => {
+    const body = model['custom-type-definitions'][typeName];
+    const schema = body && !Array.isArray(body.properties) ? (body.schema || { type: 'string' })
+      : ['string', 'integer', 'number', 'boolean'].includes(typeName) ? { type: typeName } : null;
+    if (!schema) return null;
+    const type = schema.type;
+    const actual = typeof value;
+    if (type === 'integer' ? !Number.isInteger(value) : (type && type !== actual)) return `is no ${type}`;
+    if (schema.enum !== undefined && !schema.enum.includes(value)) return `is no member of ${typeName}`;
+    if (schema.minimum !== undefined && value < schema.minimum) return `is below ${schema.minimum}`;
+    if (schema.maximum !== undefined && value > schema.maximum) return `is above ${schema.maximum}`;
+    if (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum) return `is not above ${schema.exclusiveMinimum}`;
+    if (schema.exclusiveMaximum !== undefined && value >= schema.exclusiveMaximum) return `is not below ${schema.exclusiveMaximum}`;
+    if (schema.minLength !== undefined && value.length < schema.minLength) return `is shorter than ${schema.minLength}`;
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) return `is longer than ${schema.maxLength}`;
+    if (schema.pattern !== undefined) {
+      let matches = true;
+      try { matches = new RegExp(schema.pattern, 'u').test(value); } catch (error) { /* a broken pattern is advised elsewhere */ }
+      if (!matches) return `does not match ${schema.pattern}`;
+    }
+    return null;
+  };
+  const check = (name, typeName, value) => {
+    if (value === null || value === undefined) return;
+    const fields = compositeFieldsOf(model, typeName);
+    if (fields) {
+      if (typeof value !== 'object' || Array.isArray(value)) return;
+      for (const field of fields) {
+        const held = Object.prototype.hasOwnProperty.call(value, field.name) ? value[field.name] : undefined;
+        for (const element of field.isList && Array.isArray(held) ? held : [held]) check(`${name}.${field.name}`, field.propertyType, element);
+      }
+      return;
+    }
+    const problem = scalar(typeName, value);
+    if (problem) out.push({ name, value, problem });
+  };
+  for (const property of properties || []) {
+    if (!property || !property.name || !data || typeof data !== 'object') continue;
+    if (!Object.prototype.hasOwnProperty.call(data, property.name)) continue;
+    const held = data[property.name];
+    for (const value of property.isList && Array.isArray(held) ? held : [held]) check(property.name, property.propertyType, value);
   }
   return out;
 }
@@ -3833,12 +3889,6 @@ function validateReferences(model, kind, name, body) {
       if (classifyType(resolved, p.propertyType).kind === 'unresolved') {
         throw new DomainError(`Type "${p.propertyType}" (property "${p.name}") does not resolve in this model.`);
       }
-      if (p.isOptional && p.isList) {
-        throw new DomainError(
-          `${label} property "${p.name}" is both optional and a list – two spellings of "none". ` +
-          'The empty list already says nothing is there; this evaluates as a plain list.'
-        );
-      }
     }
   };
 
@@ -5741,7 +5791,7 @@ function validateCommandBody(model, body) {
     operandSource(operand) === 'parameter'
     && !present.has(operand.parameterName)
     && (body.properties || []).some(
-      (p) => p.name === operand.parameterName && p.isOptional && !p.isList
+      (p) => p.name === operand.parameterName && p.isOptional
     );
   // Where each alias is used, and what is present there: a read made
   // lazily is made only where it is used, so it is safe from an unset
@@ -5883,27 +5933,31 @@ function validateCommandBody(model, body) {
 //
 // What is deliberately *not* checked here is the value in a payload
 // against the type it is declared with: a `CourseId` with a pattern is
-// stored as whatever was typed. Structure is checked – every property
-// present, no property invented, a list where a list is declared – and
-// the rest is the evaluator's to discover.
+// stored as whatever was typed, and a run says so (11.0,
+// `evScenarioPayload`). Structure is checked – no property invented, a
+// list where a list is declared – and the rest is the evaluator's to
+// discover.
 // ============================================================
 
 // Checks a stored payload against the properties it is written from.
-// Both directions matter: a missing one cannot be evaluated, and an
-// invented one is a reference nothing would ever rewrite. An optional
-// property may simply not be there – that is what optional means, in a
-// Given as much as in a When. Shared by both scenario kinds, so the
-// two never disagree about what a payload owes.
-function checkScenarioPayload(values, properties, label) {
+// An invented property is a reference nothing would ever rewrite. A
+// property left out is unspecified (11.0, partial scenarios) – the
+// scenario does not depend on it – except a tag of an event (`tags`,
+// the event's list): tags decide which reads see an event, so a
+// scenario always gives them, an optional one as its null. Shared by
+// both scenario kinds, so the two never disagree about what a payload
+// owes.
+function checkScenarioPayload(values, properties, label, tags = []) {
   const held = values || {};
   const declared = new Set();
+  const tagged = new Set((tags || []).map((path) => String(path).split('.')[0]));
   for (const property of properties || []) {
     declared.add(property.name);
     if (!(property.name in held)) {
-      if (property.isOptional) continue;
-      throw new DomainError(`${label} carries no value for "${property.name}".`);
+      if (property.isOptional || !tagged.has(property.name)) continue;
+      throw new DomainError(`${label} leaves out the tag "${property.name}" – a scenario gives every tag.`);
     }
-    if (property.isList && !Array.isArray(held[property.name])) {
+    if (property.isList && !Array.isArray(held[property.name]) && !(property.isOptional && held[property.name] === null)) {
       throw new DomainError(`${label} declares "${property.name}" as a list, so its value must be one.`);
     }
   }
@@ -5927,8 +5981,8 @@ function validateScenarioBody(model, body) {
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    checkScenarioPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
-      `${where} ("${step.event}")`);
+    const event = model['event-definitions'][step.event] || {};
+    checkScenarioPayload(step.data, event.properties, `${where} ("${step.event}")`, event.tags);
   });
 
   const when = body.when || {};
@@ -5943,8 +5997,8 @@ function validateScenarioBody(model, body) {
   }
   then.events.forEach((event, index) => {
     if (!event || !event.type) throw new DomainError(`Expected event ${index + 1} names no type.`);
-    checkScenarioPayload(event.data, (model['event-definitions'][event.type] || {}).properties,
-      `Expected event ${index + 1} ("${event.type}")`);
+    const definition = model['event-definitions'][event.type] || {};
+    checkScenarioPayload(event.data, definition.properties, `Expected event ${index + 1} ("${event.type}")`, definition.tags);
   });
   if (then.outcome === 'rejected' && typeof then.rejection !== 'string') {
     throw new DomainError('A scenario that expects a refusal has to say which message it was refused with.');
@@ -5967,8 +6021,8 @@ function validateProjectionScenarioBody(model, body) {
   body.given.forEach((step, index) => {
     const where = `Given step ${index + 1}`;
     if (!step || !step.event) throw new DomainError(`${where} names no event.`);
-    checkScenarioPayload(step.data, (model['event-definitions'][step.event] || {}).properties,
-      `${where} ("${step.event}")`);
+    const event = model['event-definitions'][step.event] || {};
+    checkScenarioPayload(step.data, event.properties, `${where} ("${step.event}")`, event.tags);
   });
 
   const projection = projectionsOf(model)[body.projection];
@@ -8055,8 +8109,7 @@ function valueTypeSchema(model, typeName, refOf) {
 }
 
 // One property: its type, a list of it, and `null` when it is optional
-// – the one spelling of "no value". An optional list is advised against
-// and evaluates as a plain list; it still admits the null it declares.
+// – the one spelling of "no value", an optional list's absence too.
 function propertySchema(model, property, refOf) {
   let schema = valueTypeSchema(model, property.propertyType, refOf);
   if (property.isList) schema = { type: 'array', items: schema };
@@ -9703,8 +9756,30 @@ function evNormalize(value) {
 // collection, a field of a payload, an argument supplied. Never what
 // Object inherits under `constructor` or `toString`; see emptyCollection
 // (model.js) for the projection's side of the same rule.
+//
+// A scenario's payload may leave fields out (11.0): they are
+// *unspecified*, listed under EV_UNSPECIFIED (`evScenarioPayload`), and
+// reading one is where the scenario turns out to depend on it – so it
+// is the read itself that fails, here, wherever a fold, a rule, a
+// branch, a where, an emission or a loop asks for it. Nothing reads a
+// field it does not need, so a field nobody needs may stay out.
+const EV_UNSPECIFIED = Symbol('unspecified');
+
 function evOwn(object, key) {
-  return object !== null && typeof object === 'object' && Object.hasOwn(object, key) ? object[key] : undefined;
+  if (object === null || typeof object !== 'object') return undefined;
+  if (Object.hasOwn(object, key)) return object[key];
+  const unspecified = object[EV_UNSPECIFIED];
+  if (unspecified && unspecified.names.has(key)) {
+    fail(`Reads unspecified field "${key}" of ${unspecified.owner} – the outcome depends on it, so the scenario gives it.`);
+  }
+  return undefined;
+}
+
+// Whether a payload leaves `key` out as unspecified – asked where a
+// field's absence is looked at rather than its value read.
+function evUnspecified(object, key) {
+  const unspecified = object !== null && typeof object === 'object' ? object[EV_UNSPECIFIED] : null;
+  return !!unspecified && unspecified.names.has(key) && !Object.hasOwn(object, key);
 }
 
 function evDeepEqual(a, b) {
@@ -10160,17 +10235,17 @@ function projectionQueryTags(model, projectionName, read) {
 }
 
 // Events reach a fold carrying an explicit key for every optional
-// property their definition declares – null when unset. One spelling
-// of "no value" downstream: a Given step may omit the key, an emission
-// writes the null out, and a handler reads the same thing
-// either way. Optional lists are exempt (they evaluate as plain
-// lists; the advisories point the combination out).
+// property their definition declares – null when unset, an optional
+// list's too. One spelling of "no value" downstream: a stored event
+// may omit the key, an emission writes the null out, and a handler
+// reads the same thing either way. A scenario's unspecified field is
+// not unset: it stays out, and reading it fails.
 function evWithExplicitOptionals(model, event) {
   const definition = evOwn(model['event-definitions'], event.type);
   let data = event.data;
   for (const property of (definition || {}).properties || []) {
-    if (!property.isOptional || property.isList) continue;
-    if (evOwn(data, property.name) !== undefined) continue;
+    if (!property.isOptional) continue;
+    if (evUnspecified(data, property.name) || evOwn(data, property.name) !== undefined) continue;
     data = { ...(data || {}), [property.name]: null };
   }
   return data === event.data ? event : { ...event, data };
@@ -10999,14 +11074,18 @@ function evDecide(model, events, commandName, args, collect) {
     if (!collect) return step();
     try { return step(); } catch (error) { return undefined; }
   };
+  // A scenario's When may leave arguments unspecified (11.0): they
+  // stay out of scope, and a step reading one fails there.
+  const unspecified = supplied[EV_UNSPECIFIED];
+  if (unspecified) scope.args[EV_UNSPECIFIED] = unspecified;
   for (const property of body.properties || []) {
+    if (evUnspecified(supplied, property.name)) continue;
     if (evOwn(supplied, property.name) === undefined) {
       // An optional property may be unset. `null` is the one spelling
       // of "no value" downstream, so the lenient read normalizes here:
       // an absent key and an explicit null reach every condition and
-      // emission identically. An optional *list* is a modelling slip
-      // the advisories point out; it evaluates as a plain list.
-      if (property.isOptional && !property.isList) {
+      // emission identically – an optional list's too.
+      if (property.isOptional) {
         scope.args[property.name] = null;
         continue;
       }
@@ -11063,7 +11142,7 @@ function evDecide(model, events, commandName, args, collect) {
         // payload still carries the key, holding the explicit null –
         // canonical form, so a stored event always spells out every
         // property its definition declares.
-        if (property.isOptional && !property.isList) {
+        if (property.isOptional) {
           data[property.name] = null;
           continue;
         }
@@ -11296,45 +11375,109 @@ function evSameOutcome(a, b) {
   return JSON.stringify(evCanonical(a)) === JSON.stringify(evCanonical(b));
 }
 
-// The Given, as the evaluator reads a log.
-function scenarioLog(scenario) {
-  return (scenario.given || []).map((step) => ({
+// A scenario's payload as the evaluator reads it (11.0): what it gives,
+// and what it leaves out marked unspecified (EV_UNSPECIFIED, read by
+// `evOwn`). Before anything runs, what a scenario says is held to the
+// definitions: a tag is always given, since tags decide which reads
+// see an event – an optional one left out is its null – and every
+// value given is one its type admits, constraints and time formats
+// alike. `tagged` is false for a command's arguments, which have none.
+function evScenarioPayload(model, properties, data, owner, where, tagged) {
+  const held = data !== null && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const tags = new Set(tagged ? eventTagLeaves(model, { properties, tags: tagged }).map((leaf) => leaf.property) : []);
+  const out = { ...held };
+  const names = new Set();
+  for (const property of properties || []) {
+    if (!property || Object.hasOwn(held, property.name)) continue;
+    if (tags.has(property.name)) {
+      if (property.isOptional) { out[property.name] = null; continue; }
+      fail(`${where} leaves out the tag "${property.name}" – a scenario gives every tag, since tags decide which reads see an event.`);
+    }
+    names.add(property.name);
+  }
+  const untimely = payloadTimeProblems(model, properties, held)[0];
+  if (untimely) fail(`${where} carries ${untimely.name}: ${untimely.problem}`);
+  const refused = payloadValueProblems(model, properties, held)[0];
+  if (refused) fail(`${where} gives ${refused.name} ${JSON.stringify(refused.value)}, which ${refused.problem}.`);
+  if (names.size) out[EV_UNSPECIFIED] = { owner, names };
+  return out;
+}
+
+// One Given step, read against the event it records – which must still
+// be defined: a Given written against definitions that have since moved
+// is not a scenario that fails, it is one that cannot be run. Without
+// this the fold would simply not match an event it no longer
+// recognises, and a deleted event would report as agreement rather
+// than as the repair it actually needs.
+function evGivenStep(model, step, index) {
+  const definition = evOwn(model['event-definitions'], (step || {}).event);
+  if (!definition) {
+    fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
+  }
+  return {
+    type: step.event,
+    data: evScenarioPayload(model, definition.properties, step.data, step.event,
+      `Given step ${index + 1} ("${step.event}")`, definition.tags || []),
+  };
+}
+
+// The Given, as the evaluator reads a log. With `model`, each step is
+// read against its definition (`evGivenStep`); without, as it stands.
+function scenarioLog(scenario, model) {
+  return (scenario.given || []).map((step, index) => (model ? evGivenStep(model, step, index) : {
     type: step.event,
     data: step.data || {},
   }));
 }
 
+// A scenario's When, as the command is called with it: what it gives,
+// the rest unspecified (11.0).
+function scenarioArguments(model, scenario) {
+  const command = evOwn(model['command-definitions'], scenario.command);
+  const supplied = (scenario.when || {}).arguments;
+  if (!command) return supplied;
+  return evScenarioPayload(model, command.properties, supplied, scenario.command,
+    `The When ("${scenario.command}")`, null);
+}
+
+// Whether a command scenario's Then holds of what was derived (11.0):
+// the same outcome – a refusal by its message – and, published, the
+// same events in order, each comparing the fields its Then lists and
+// ignoring those it leaves out. A Then recorded from a run lists them
+// all, and so compares the whole payload.
+function evThenHolds(actual, expected) {
+  if (!actual || !expected || actual.outcome !== expected.outcome) return false;
+  if (expected.outcome !== 'published') return evSameOutcome(actual, expected);
+  const want = expected.events || [];
+  const got = actual.events || [];
+  if (want.length !== got.length) return false;
+  return want.every((event, i) => {
+    if (!event || !got[i] || event.type !== got[i].type) return false;
+    const listed = event.data && typeof event.data === 'object' ? event.data : {};
+    return Object.keys(listed).every((key) => evSameOutcome(listed[key], evOwn(got[i].data, key) === undefined ? null : got[i].data[key]));
+  });
+}
+
+// What a Then says, held to the definitions as a Given is: each event
+// gives its tags, and each value is one its type admits.
+function evCheckThen(model, then) {
+  if (!then || then.outcome !== 'published') return;
+  (then.events || []).forEach((event, index) => {
+    const definition = evOwn(model['event-definitions'], (event || {}).type);
+    if (!definition) return;
+    evScenarioPayload(model, definition.properties, event.data, event.type,
+      `Expected event ${index + 1} ("${event.type}")`, definition.tags || []);
+  });
+}
+
 // What the current definitions make of this scenario – the same shape
 // that gets stored as its Then.
 function deriveThen(model, scenario) {
-  // A Given written against definitions that have since moved is not a
-  // scenario that fails – it is one that cannot be run. Without this
-  // the fold would simply not match an event it no longer recognises,
-  // and a deleted event would report as agreement rather than as the
-  // repair it actually needs.
-  (scenario.given || []).forEach((step, index) => {
-    const definition = evOwn(model['event-definitions'], (step || {}).event);
-    if (!definition) {
-      fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
-    }
-    for (const property of definition.properties || []) {
-      // An optional property legitimately absent is not an event the
-      // scenario has fallen behind – the fold reads it as undefined.
-      if (property.isOptional) continue;
-      if (evOwn(step.data, property.name) === undefined) {
-        fail(
-          `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +
-          'which that event has gained since this scenario was written.'
-        );
-      }
-    }
-    const untimely = payloadTimeProblems(model, definition.properties, step.data)[0];
-    if (untimely) fail(`Given step ${index + 1} ("${step.event}") carries ${untimely.name}: ${untimely.problem}`);
-  });
+  const log = scenarioLog(scenario, model);
+  const args = scenarioArguments(model, scenario);
+  evCheckThen(model, scenario.then);
 
-  const result = evaluateCommand(
-    model, scenarioLog(scenario), scenario.command, (scenario.when || {}).arguments
-  );
+  const result = evaluateCommand(model, log, scenario.command, args);
   if (result.outcome === 'published') {
     return { outcome: 'published', events: result.events.map((e) => ({ type: e.type, data: e.data })) };
   }
@@ -11366,7 +11509,7 @@ function commandCoverageGaps(model, commandName) {
     if (!scenario || scenario.command !== commandName) continue;
     if (runScenario(model, scenario).status !== 'current') continue;
     try {
-      runs.push(evaluateCommand(model, scenarioLog(scenario), commandName, (scenario.when || {}).arguments));
+      runs.push(evaluateCommand(model, scenarioLog(scenario, model), commandName, scenarioArguments(model, scenario)));
     } catch (error) { /* broken – it shows nothing */ }
   }
   const published = runs.filter((run) => run.outcome === 'published');
@@ -11410,7 +11553,7 @@ function runScenario(model, scenario) {
     return { status: 'broken', expected, actual: null, reason: evaluationFailure(error) };
   }
   return {
-    status: evSameOutcome(actual, expected) ? 'current' : 'drifted',
+    status: evThenHolds(actual, expected) ? 'current' : 'drifted',
     expected,
     actual,
   };
@@ -11427,36 +11570,16 @@ function runScenario(model, scenario) {
 // properties of a course is four scenarios sharing a Given, each
 // answerable and each drifting on its own.
 function deriveProjectionScenarioThen(model, spec) {
-  // A Given written against definitions that have since moved is not a
-  // scenario that fails – it is one that cannot be run. See deriveThen
-  // for why this is checked ahead of the fold rather than left to fall
-  // out of it as a silent, empty match.
-  (spec.given || []).forEach((step, index) => {
-    const definition = evOwn(model['event-definitions'], (step || {}).event);
-    if (!definition) {
-      fail(`Given step ${index + 1} records "${(step || {}).event}", which this model no longer defines.`);
-    }
-    for (const property of definition.properties || []) {
-      // An optional property legitimately absent is not an event the
-      // scenario has fallen behind – the fold reads it as undefined.
-      if (property.isOptional) continue;
-      if (evOwn(step.data, property.name) === undefined) {
-        fail(
-          `Given step ${index + 1} ("${step.event}") carries no value for "${property.name}", ` +
-          'which that event has gained since this scenario was written.'
-        );
-      }
-    }
-    const untimely = payloadTimeProblems(model, definition.properties, step.data)[0];
-    if (untimely) fail(`Given step ${index + 1} ("${step.event}") carries ${untimely.name}: ${untimely.problem}`);
-  });
-
+  // Its Given is read as a command scenario's is (`evGivenStep`): moved
+  // definitions, tags left out and values no type admits break it, and
+  // a field left out is unspecified.
+  const log = scenarioLog(spec, model);
   if (!evOwn(projectionsOf(model), spec.projection)) {
     fail(`This scenario is about "${spec.projection}", which this model no longer defines.`);
   }
   const tags = {};
   for (const [name, tag] of Object.entries(spec.tags || {})) tags[name] = tag && tag.tagValue;
-  return foldProjection(model, scenarioLog(spec), spec.projection, { tags, args: spec.arguments || {} });
+  return foldProjection(model, log, spec.projection, { tags, args: spec.arguments || {} });
 }
 
 // `{ status, expected, actual, reason }` – the projection analogue of
@@ -15565,7 +15688,7 @@ function sourceSpanOf(parsed, kind, name) {
 // out are written as null (as the page's save does), and an omitted
 // Then is what the text's definitions make of the scenario.
 function completeScenario(draft, record) {
-  const body = canonicalScenario(draft, record.kind, deepClone(record.body));
+  const body = canonicalScenario(draft, record.kind, deepClone(record.body), { partial: true });
 
   let actual = null;
   let reason = null;
@@ -15580,7 +15703,8 @@ function completeScenario(draft, record) {
     return { body, status: 'recorded', actual };
   }
   if (reason) return { body, status: 'broken', reason };
-  return { body, status: evSameOutcome(actual, body.then) ? 'current' : 'drifted', actual };
+  const holds = record.kind === 'scenario-definition' ? evThenHolds(actual, body.then) : evSameOutcome(actual, body.then);
+  return { body, status: holds ? 'current' : 'drifted', actual };
 }
 
 const SCENARIO_SUBJECT = { 'scenario-definition': 'command', 'projection-scenario-definition': 'projection' };
@@ -17834,6 +17958,12 @@ projection they exercise, and name it:
   then G(CourseId("c1")).p == <value>      (a group's projection, in its block inside the group)
 Say given, when and then once each, one command per scenario; further events continue with and.
 Leave then out and applying records what the model does, and the result says which scenarios it recorded.
+A scenario leaves out every property its outcome does not depend on – in given, when and then –
+so it says what it depends on; tags are always given:
+  given CustomerWasAdded { customerId: "cu1" }  when SetInstallment { contractId: "co1", actor: "cu2" }
+A property left out is unspecified: a run that reads it is an error naming it (reads unspecified
+field "name" of CustomerWasAdded). A then compares the fields it lists and ignores the rest.
+The values a scenario gives are held to their types' constraints (pattern, minimum, …).
 
 A definition printed as command X json { … } is stored JSON the language cannot spell.
 Leave it as it is, or rewrite it in the language.`;
@@ -18017,9 +18147,11 @@ command AddBook(bookId: BookId, isbn: Isbn, title: string, subtitle?: string) {
       then BookAdded { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
     }
 
+    // A scenario leaves out what its outcome does not depend on; tags
+    // are always given. Reading a property left out is an error.
     scenario "a book is added once" {
-      given BookAdded { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
-      when AddBook { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
+      given BookAdded { bookId: "b1" }
+      when AddBook { bookId: "b1" }
       then rejected "Book already exists"
     }
   }
@@ -18248,6 +18380,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 - An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
 - A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
+- A scenario gives only what its outcome depends on: given CustomerWasAdded { customerId: "cu1" } where the name and email do not matter. Tags are always given. Reading a property the scenario left out is an error naming it, which is how a scenario reveals what it depends on; a then compares only the fields it lists. The values it does give are held to their types' constraints, so a value outside a pattern cannot be given at all – a require on it is shown with a value the type admits.
 - Time is data, never a clock: a command that needs the time takes now: datetime, and what expires stores its end – emit SeatsWereReserved { …, expiresAt: now + 15m } – so a rule reads it against now: sum(Reservation(courseId, *).seats where value.expiresAt > now). Expiring something at a time is a job outside the model calling a command, not a construct. A datetime needs its offset; one without is no value.
 - A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 `;

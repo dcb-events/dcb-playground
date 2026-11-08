@@ -794,13 +794,23 @@ function openSchedules() {
     eq(result.actual, null, 'nothing to compare');
   });
 
-  check('an event gaining a property breaks the scenarios written before it', () => {
+  // Since 11.0 a field a Given leaves out is unspecified: the scenario
+  // holds until something reads it. A tag is always given.
+  check('an event gaining a property breaks the scenarios written before it once it is read, or is a tag', () => {
     const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     const event = deepClone(model()['event-definitions'].CourseDefined);
     event.properties.push({ name: 'title', propertyType: 'string', isOptional: false, isList: false });
     updateDefinition('event-definition', id, 'CourseDefined', event);
-    eq(runScenario(model(), model()['scenario-definitions'][key]).status, 'broken', 'status');
+    eq(runScenario(model(), model()['scenario-definitions'][key]).status, 'current', 'nothing reads it');
+    addDefinition('projection-definition', id, 'CourseTitle', { tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'string', isList: false,
+      initialValue: null, handlers: [{ event: 'CourseDefined', operation: 'set', value: { eventProperty: 'title' } }] });
+    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    command.steps.unshift({ condition: { leftHandSide: { projection: 'CourseTitle', tags: { courseId: { parameterName: 'courseId' } } },
+      predicate: 'isNotEmpty' }, rejection: 'Untitled' });
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
+    const run = runScenario(model(), model()['scenario-definitions'][key]);
+    eq([run.status, run.reason], ['broken', 'Reads unspecified field "title" of CourseDefined – the outcome depends on it, so the scenario gives it.'], 'once read');
   });
 
   check('renaming an event carries the Given and the expected outcome with it', () => {
@@ -2202,13 +2212,12 @@ check('an import missing the definition arrays is refused, not silently accepted
     removeDefinition('command-definition', id, 'WackligErzeugen');
   });
 
-  check('optional and list together is advised, and evaluates as a plain list', () => {
+  // 11.0: an optional list is allowed, its null its absence.
+  check('an optional list is allowed, and null is its absence', () => {
     addTaggedEvent(id, 'Doppelt', {
       properties: [{ name: 'notizen', propertyType: 'string', isOptional: true, isList: true }],
     });
-    eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'Doppelt' && /both optional and a list/.test(a.message)
-    ), true, 'two spellings of none');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Doppelt' && /optional/.test(a.message)), [], 'no advisory');
     removeDefinition('event-definition', id, 'Doppelt');
   });
 }
