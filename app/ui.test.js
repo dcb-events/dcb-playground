@@ -2640,6 +2640,8 @@ check('importing an older model with entities says what became of them', () => {
     const map = paint(sandbox.renderRuleMap);
     eq(/for each courseId in .* → if .* → emit Course archived/.test(map), true, 'the rule map says the loop and its arm: ' + map);
     paint(sandbox.renderCoupling);
+    for (const fn of ['renderOverview', 'renderEventModel', 'renderMetro', 'renderEvents', 'renderProjections']) paint(sandbox[fn]);
+    eq(paint(sandbox.renderEventModel).includes('Archive courses'), true, 'the event model shows the command recording its event');
     eq(sandbox.problems(current).some((p) => p.what === 'Archive courses' && /records nothing/.test(p.why)), false,
       'an emission inside a loop is still recorded');
   });
