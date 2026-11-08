@@ -2380,11 +2380,31 @@ projection Taken (tag courseId: CourseId): integer = 0 {
       { nonsense: true },
     ));
     eq(off.status, 1, 'a disagreement fails');
-    for (const expected of ['SeatsTaken.seats: above 5 (1)', 'SeatsTaken.extra: not in the model (1)', 'SeatsTaken.seats: required, but missing (1)', 'other-thing (1)', '1 line(s) unreadable']) {
+    for (const expected of ['SeatsTaken.seats: a value is above 5 (1)', 'SeatsTaken.extra: not in the model (1)', 'SeatsTaken.seats: required, but missing (1)', 'other-thing (1)', '1 line(s) unreadable']) {
       eq(off.stdout.includes(expected), true, `${expected}: ${off.stdout}`);
     }
     const mapped = replay(lines({ type: 'old-name', data: { courseId: 'c1', seats: 1 } }), '--map', 'old-name=SeatsTaken');
     eq(mapped.status, 0, mapped.stdout);
+  });
+
+  check('the skill\'s replay holds stored values to their types as a scenario\'s are', () => {
+    const model = write('shaped.dcb', `model "Shaped"
+tag type CourseId = string
+type Sessions = array
+type Seats = integer { minimum: 1 }
+record Slot { seats: Seats }
+event CourseAdded { tag courseId: CourseId, sessions: Sessions, slots: Slot[], counts: Seats[] }
+`);
+    const lines = write('shaped.ndjson', [
+      { type: 'CourseAdded', data: { courseId: 'c1', sessions: [{ day: 1 }], slots: [{ seats: 2 }], counts: [1] } },
+      { type: 'CourseAdded', data: { courseId: 'c1', sessions: {}, slots: [{ seats: 0 }], counts: [1, 0] } },
+    ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const result = spawnSync(process.execPath, [CLI, 'replay', model, lines], { encoding: 'utf8' });
+    eq(result.status, 1, result.stdout);
+    for (const expected of ['CourseAdded.sessions: a value is no array (1)', 'CourseAdded.slots.seats: a value is below 1 (1)',
+      'CourseAdded.counts: a value is below 1 (1)']) {
+      eq(result.stdout.includes(expected), true, `${expected}: ${result.stdout}`);
+    }
   });
 
   check('the skill\'s replay flags a datetime without an offset and a duration that is none', () => {
@@ -3573,6 +3593,64 @@ command SignUp(customerId: CustomerId, email: EmailAddress, name: FullName) {
   check('the language reference covers descriptions, notes and @sensitive', () => {
     const reference = sandbox.sourceLanguageReference();
     for (const word of ['///', '@assumption', '@unresolved', '@external', '@deprecated', '@sensitive']) eq(reference.includes(word), true, word);
+  });
+}
+
+
+// ---------------------------------------------------------------
+// The 11.0 acceptance run's defects, each held by its minimal repro
+// (docs/research/2026-11-08-notation-11-acceptance.md, "Defects").
+// ---------------------------------------------------------------
+{
+  const runAll = (text) => {
+    const { model } = buildText(text);
+    return Object.values(model()['scenario-definitions']).map((body) => {
+      const run = sandbox.runScenario(model(), body);
+      return run.status === 'broken' ? run.reason : run.status;
+    });
+  };
+
+  // D1: a value's JSON type is what the type's schema names – an array
+  // an array, a record an object – not what `typeof` calls it.
+  const ARRAYS = `model "Arrays"
+
+type Items = array { minItems: 1 }
+type Meta = object
+tag type ThingId = string
+type Count = integer { minimum: 1 }
+
+event ThingAdded { tag id: ThingId, items: Items, meta: Meta, counts?: Count[] }
+
+command AddThing(id: ThingId, items: Items, meta: Meta) {
+  emit ThingAdded { id, items, meta, counts: null }
+
+  scenarios {
+    scenario "ok" {
+      when AddThing { id: "t1", items: [1], meta: { a: 1 } }
+      then ThingAdded { id: "t1", items: [1], meta: { a: 1 } }
+    }
+  }
+}
+`;
+
+  check('D1: an array value fits an array type, and an object an object type', () => {
+    eq(runAll(ARRAYS), ['current'], 'the repro holds');
+    eq(runAll(swap(ARRAYS, 'when AddThing { id: "t1", items: [1]', 'when AddThing { id: "t1", items: { a: 1 }')),
+      ['The When ("AddThing") gives items {"a":1}, which is no array.'], 'an object is no array');
+    eq(runAll(swap(ARRAYS, 'meta: { a: 1 } }\n      then', 'meta: [1] }\n      then')),
+      ['The When ("AddThing") gives meta [1], which is no object.'], 'an array is no object');
+  });
+
+  check('D1: one check of a value against its type, shared by scenarios and replay', () => {
+    const { model } = buildText(ARRAYS);
+    const properties = model()['event-definitions'].ThingAdded.properties;
+    const problems = (data) => sandbox.payloadValueProblems(model(), properties, data).map((p) => `${p.name}: ${p.problem}`);
+    eq(problems({ id: 't1', items: [1], meta: {}, counts: null }), [], 'null is the absence of an optional value');
+    eq(problems({ id: 't1', items: [], meta: {} }), ['items: has fewer than 1 items'], 'an array type\'s own constraints');
+    eq(problems({ id: 't1', items: [1], meta: null, counts: [1, 2] }), [], 'null is no value to check');
+    eq(problems({ id: 1, items: 'x', meta: 2, counts: 3 }),
+      ['id: is no string', 'items: is no array', 'meta: is no object', 'counts: is no list'], 'base types');
+    eq(problems({ id: 't1', items: [1], meta: {}, counts: [0, 1.5] }), ['counts: is below 1', 'counts: is no integer'], 'a list\'s elements');
   });
 }
 

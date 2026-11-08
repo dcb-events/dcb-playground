@@ -256,26 +256,6 @@ function modelEventName(model, type, map) {
   return map[pascal] || pascal;
 }
 
-// Why a value does not fit a property's declared type, or null. The type's
-// own constraints count here: stored values, unlike scenario values, are real.
-// A datetime or a duration is a string, whose time `replay` checks apart.
-function valueProblem(model, property, value) {
-  if (property.isList) return Array.isArray(value) ? null : 'not a list';
-  const custom = (model['custom-type-definitions'] || {})[property.propertyType];
-  const time = ['datetime', 'duration'].includes(property.propertyType);
-  const schema = custom ? (custom.schema || {}) : { type: time ? 'string' : property.propertyType };
-  const type = schema.type;
-  const actual = Array.isArray(value) ? 'array' : typeof value;
-  if (type === 'integer' ? !Number.isInteger(value) : (type && type !== actual)) return `not of type ${type}`;
-  if (schema.minimum !== undefined && value < schema.minimum) return `below ${schema.minimum}`;
-  if (schema.maximum !== undefined && value > schema.maximum) return `above ${schema.maximum}`;
-  if (schema.minLength !== undefined && value.length < schema.minLength) return `shorter than ${schema.minLength}`;
-  if (schema.maxLength !== undefined && value.length > schema.maxLength) return `longer than ${schema.maxLength}`;
-  if (schema.pattern !== undefined && !new RegExp(schema.pattern, 'u').test(value)) return `does not match ${schema.pattern}`;
-  if (schema.enum !== undefined && !schema.enum.includes(value)) return 'not in its enum';
-  return null;
-}
-
 // A value as `replay` prints it: what a `@sensitive` type holds (11.0)
 // masked – personal data has no business in a terminal – a list's
 // elements and a record's fields included.
@@ -317,12 +297,15 @@ function replay(playground, model, exportFile, map, reads) {
     }
     for (const property of definition.properties || []) {
       const value = exported.data[property.name];
-      if (value === undefined || value === null) {
-        if (!property.isOptional) mismatch(`${name}.${property.name}: required, but ${value === null ? 'null' : 'missing'}`);
-        continue;
+      if ((value === undefined || value === null) && !property.isOptional) {
+        mismatch(`${name}.${property.name}: required, but ${value === null ? 'null' : 'missing'}`);
       }
-      const problem = valueProblem(model, property, value);
-      if (problem) mismatch(`${name}.${property.name}: ${problem}`);
+    }
+    // The one check of a value against its type, the one a scenario's
+    // values get (payloadValueProblems, model.js): a list's elements and
+    // a record's fields included, and no value printed.
+    for (const { name: field, problem } of playground.payloadValueProblems(model, definition.properties, exported.data)) {
+      mismatch(`${name}.${field}: a value ${problem}`);
     }
     // A datetime without its offset names no instant; a duration is ISO
     // 8601 in days, hours, minutes and seconds (11.0).

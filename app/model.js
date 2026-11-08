@@ -1823,13 +1823,34 @@ function payloadTimeProblems(model, properties, data) {
   return out;
 }
 
-// The values in a payload its types' constraints refuse – `[{name,
-// value, problem}]`, `problem` finishing "…, which <problem>." – a
-// list's elements and a record's fields included (11.0). What a
-// scenario gives is held to them as a stored event is (`replay`): a
-// value no type admits would make the scenario show what cannot
-// happen. A key the payload leaves out, and null, are no value to
-// check; a time's format is `payloadTimeProblems`' to say.
+// A value's JSON type, as a JSON Schema `type` names it: 'null',
+// 'array', 'integer' (a whole number), 'number', 'string', 'boolean'
+// or 'object' – never `typeof`'s word, which calls an array and null
+// objects.
+function jsonTypeOf(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  if (Number.isInteger(value)) return 'integer';
+  return typeof value;
+}
+
+// Whether a value is of a JSON Schema `type` – one name or a list of
+// them; an integer is a number, and no type admits anything.
+function fitsJsonType(type, value) {
+  if (type === undefined) return true;
+  const actual = jsonTypeOf(value);
+  return [].concat(type).some((name) => name === actual || (name === 'number' && actual === 'integer'));
+}
+
+// The values in a payload its types refuse – `[{name, value,
+// problem}]`, `problem` finishing "…, which <problem>." – a list's
+// elements and a record's fields included (11.0). The one check of a
+// value against its type: a scenario's values are held to it as a
+// stored event is (`replay`, dcb.js), since a value no type admits
+// would make the scenario show what cannot happen. A key the payload
+// leaves out, and null, are no value to check – an optional value's
+// absence, a required one's `replay` says apart; a time's format is
+// `payloadTimeProblems`' to say.
 function payloadValueProblems(model, properties, data) {
   const out = [];
   const scalar = (typeName, value) => {
@@ -1838,16 +1859,17 @@ function payloadValueProblems(model, properties, data) {
       : ['string', 'integer', 'number', 'boolean'].includes(typeName) ? { type: typeName } : null;
     if (!schema) return null;
     const type = schema.type;
-    const actual = typeof value;
-    if (type === 'integer' ? !Number.isInteger(value) : (type && type !== actual)) return `is no ${type}`;
+    if (!fitsJsonType(type, value)) return `is no ${[].concat(type).join(' or ')}`;
     if (schema.enum !== undefined && !schema.enum.includes(value)) return `is no member of ${typeName}`;
     if (schema.minimum !== undefined && value < schema.minimum) return `is below ${schema.minimum}`;
     if (schema.maximum !== undefined && value > schema.maximum) return `is above ${schema.maximum}`;
     if (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum) return `is not above ${schema.exclusiveMinimum}`;
     if (schema.exclusiveMaximum !== undefined && value >= schema.exclusiveMaximum) return `is not below ${schema.exclusiveMaximum}`;
-    if (schema.minLength !== undefined && value.length < schema.minLength) return `is shorter than ${schema.minLength}`;
-    if (schema.maxLength !== undefined && value.length > schema.maxLength) return `is longer than ${schema.maxLength}`;
-    if (schema.pattern !== undefined) {
+    if (typeof value === 'string' && schema.minLength !== undefined && value.length < schema.minLength) return `is shorter than ${schema.minLength}`;
+    if (typeof value === 'string' && schema.maxLength !== undefined && value.length > schema.maxLength) return `is longer than ${schema.maxLength}`;
+    if (Array.isArray(value) && schema.minItems !== undefined && value.length < schema.minItems) return `has fewer than ${schema.minItems} items`;
+    if (Array.isArray(value) && schema.maxItems !== undefined && value.length > schema.maxItems) return `has more than ${schema.maxItems} items`;
+    if (typeof value === 'string' && schema.pattern !== undefined) {
       let matches = true;
       try { matches = new RegExp(schema.pattern, 'u').test(value); } catch (error) { /* a broken pattern is advised elsewhere */ }
       if (!matches) return `does not match ${schema.pattern}`;
@@ -1858,21 +1880,27 @@ function payloadValueProblems(model, properties, data) {
     if (value === null || value === undefined) return;
     const fields = compositeFieldsOf(model, typeName);
     if (fields) {
-      if (typeof value !== 'object' || Array.isArray(value)) return;
+      if (jsonTypeOf(value) !== 'object') { out.push({ name, value, problem: 'is no record' }); return; }
       for (const field of fields) {
         const held = Object.prototype.hasOwnProperty.call(value, field.name) ? value[field.name] : undefined;
-        for (const element of field.isList && Array.isArray(held) ? held : [held]) check(`${name}.${field.name}`, field.propertyType, element);
+        checkHeld(`${name}.${field.name}`, field, held);
       }
       return;
     }
     const problem = scalar(typeName, value);
     if (problem) out.push({ name, value, problem });
   };
+  // A property's value: a list's each element, once it is a list.
+  const checkHeld = (name, property, held) => {
+    if (!property.isList) { check(name, property.propertyType, held); return; }
+    if (held === null || held === undefined) return;
+    if (!Array.isArray(held)) { out.push({ name, value: held, problem: 'is no list' }); return; }
+    for (const element of held) check(name, property.propertyType, element);
+  };
   for (const property of properties || []) {
     if (!property || !property.name || !data || typeof data !== 'object') continue;
     if (!Object.prototype.hasOwnProperty.call(data, property.name)) continue;
-    const held = data[property.name];
-    for (const value of property.isList && Array.isArray(held) ? held : [held]) check(property.name, property.propertyType, value);
+    checkHeld(property.name, property, data[property.name]);
   }
   return out;
 }
