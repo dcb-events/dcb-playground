@@ -2832,8 +2832,10 @@ check('importing an older model with entities says what became of them', () => {
     eq(sandbox.state.editStep, 'loop:' + at, 'the loop\'s head is open');
     eq(sandbox.state.loopDraft, { source: 'list:' + JSON.stringify({ parameterName: 'courseIds' }), tags: {}, names: { _: 'courseId' } }, 'opened answered');
     const name = () => findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'input' && /loop-name/.test(n.className || ''))[0];
-    name().oninput({ target: { value: 'archived' } });
-    button('ArchiveCourses', 'Save').onclick();
+    // Typed and saved in one painted page – typing repaints nothing.
+    const once = paintAll('ArchiveCourses');
+    findAll(once, (n) => n.tag === 'input' && /loop-name/.test(n.className || ''))[0].oninput({ target: { value: 'archived' } });
+    findAll(once, (n) => n.tag === 'button' && textOf(n) === 'Save')[0].onclick();
     const loop = () => cmd('ArchiveCourses').steps[at];
     eq(loop().forEach, ['archived'], 'renamed');
     eq(printed('ArchiveCourses').includes('for each archived in courseIds {\n    if CourseStatus(archived) == Existent => emit CourseArchived { courseId: archived }\n  }'),

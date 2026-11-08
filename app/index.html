@@ -7371,7 +7371,7 @@ function ruleRow(model, slice, condition, i, draggable) {
         h('span', { class: 'grow' }),
         reveal(
           moveIntoPicker(slice, 'rule', i, 'rule:' + i),
-          codeViewButton('Edit this rule in the code view – the rule editor writes no collection function or record field'),
+          codeViewButton('Edit this rule in the code view – one of its sides is no value the rule editor offers (an open read outside a collection, a sum on the right of + or -, a collection the questions cannot ask)'),
           h('button', {
             class: 'btn tiny danger',
             onclick: () => patchSlice((b) => { b.conditions.splice(i, 1); }),
@@ -7569,7 +7569,7 @@ function conditionRows(model, slice, { condition, key, lead, write, remove, remo
           `Add a comparison to this bracketed group, joined by ${joinWord(joiner)}`)),
         ...(lastLine ? rootJoiners.map((joiner) => joinButton(key + ':' + joiner, '+ ' + joinWord(joiner),
           joiner === 'all' ? 'Add a comparison that must hold as well' : 'Add a comparison that may hold instead')) : []),
-        beyond ? codeViewButton('This comparison is edited in the code view – the rule editor writes no collection function or record field')
+        beyond ? codeViewButton('This comparison is edited in the code view – one of its sides is no value the rule editor offers')
           : h('button', {
             class: 'btn tiny',
             onclick: () => {
@@ -7948,12 +7948,16 @@ function loopAdder(model, slice, edit = null) {
       return { key: tag.name, proposed };
     });
   }
-  const names = slots.map((slot) => toCamel((draft.names[slot.key] || '').trim()) || slot.proposed);
-  const problem = !source ? null
-    : names.find((n) => taken.includes(n)) ? `"${names.find((n) => taken.includes(n))}" is already a name in this command.`
-    : uniq(names).length !== names.length ? 'Each name is its own.'
-    : null;
+  // Read when the loop is written, not when it was painted: typing a
+  // name repaints nothing, so names taken at paint time were the
+  // proposed ones whatever was typed.
+  const namesNow = () => slots.map((slot) => toCamel((draft.names[slot.key] || '').trim()) || slot.proposed);
   const submit = () => {
+    const names = namesNow();
+    const problem = !source ? null
+      : names.find((n) => taken.includes(n)) ? `"${names.find((n) => taken.includes(n))}" is already a name in this command.`
+      : uniq(names).length !== names.length ? 'Each name is its own.'
+      : null;
     if (!source) return toast(draft.source ? 'Leave at least one tag open (*) and one bound.' : 'Pick what it runs over.', true);
     if (problem) return toast(problem, true);
     if (edit) {
@@ -9340,7 +9344,8 @@ function stepChanges(model, slice) {
           // pencil beside it – or, where the chains cannot hold it, in
           // the code view.
           p.arms ? (conditionalHandlerEditable(effect.handler) ? null
-            : codeViewButton('This handler\'s branches are edited in the code view')) : h('button', {
+            : handlerOrders(effect.handler) ? h('span', { class: 'muted tiny' }, 'ordering in handler conditions is not part of the notation')
+              : codeViewButton('This handler\'s branches are edited in the code view')) : h('button', {
             class: 'btn tiny',
             onclick: () => {
               closeForms();
