@@ -502,6 +502,23 @@ async function call(name, args) {
     for (const name of ['EnrolledCount', 'Enrolled']) await call('remove_definition', { kind: 'projection-definition', name });
   });
 
+  await check('a for each is offered, lands as written and evaluates per element', async () => {
+    const schema = registered.get('add_command_definition').inputSchema;
+    eq(/forEach/.test(JSON.stringify(schema.properties.steps)), true, 'a loop among a command\'s steps');
+    const one = (name, propertyType, isList = false) => ({ name, propertyType, isOptional: false, isList });
+    const steps = [{ forEach: ['courseId'], in: { parameterName: 'courseIds' }, steps: [
+      { name: 'StudentSubscribedToCourse', parameters: { courseId: { parameterName: 'courseId' }, studentId: { parameterName: 'studentId' } } },
+    ] }];
+    const added = await call('add_command_definition', { name: 'SubscribeToAll',
+      properties: [one('studentId', 'StudentId'), one('courseIds', 'CourseId', true)], boundary: [], steps });
+    eq(added.isError, false, added.text);
+    eq(model()['command-definitions'].SubscribeToAll.steps, steps, 'stored as sent');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'SubscribeToAll'), [], 'advisory-clean');
+    const { value } = await call('evaluate_command', { commandName: 'SubscribeToAll', arguments: { studentId: 's1', courseIds: ['c2', 'c1'] } });
+    eq(value.events.map((e) => e.data.courseId), ['c2', 'c1'], 'one event per element, in order');
+    await call('remove_definition', { kind: 'command-definition', name: 'SubscribeToAll' });
+  });
+
   await check('add_group_projection adds one under its local name, read by the group\'s tag', async () => {
     const { isError, text } = await call('add_group_projection', {
       group: 'Course', name: 'archived', valueType: 'boolean', isList: false, initialValue: false,

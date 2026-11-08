@@ -295,7 +295,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "additionalProperties": {
                             "oneOf": [
                               {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -365,7 +365,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 ]
                               },
                               {
-                                "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                                "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue` or the `in` of a `LoopStep`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -399,7 +399,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       ]
                     },
                     {
-                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                       "type": "object",
                       "additionalProperties": false,
                       "properties": {
@@ -559,7 +559,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "additionalProperties": {
                             "oneOf": [
                               {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -629,7 +629,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 ]
                               },
                               {
-                                "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                                "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue` or the `in` of a `LoopStep`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -663,7 +663,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       ]
                     },
                     {
-                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                       "type": "object",
                       "additionalProperties": false,
                       "properties": {
@@ -1032,7 +1032,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       "rightHandSide": {
                                         "oneOf": [
                                           {
-                                            "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                            "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                             "type": "object",
                                             "additionalProperties": false,
                                             "properties": {
@@ -1838,7 +1838,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "additionalProperties": {
                       "oneOf": [
                         {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -1908,7 +1908,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           ]
                         },
                         {
-                          "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                          "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue` or the `in` of a `LoopStep`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -1942,7 +1942,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 ]
               },
               {
-                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -2102,7 +2102,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "additionalProperties": {
                       "oneOf": [
                         {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -2172,7 +2172,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           ]
                         },
                         {
-                          "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                          "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue` or the `in` of a `LoopStep`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
@@ -2206,7 +2206,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 ]
               },
               {
-                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
@@ -2575,7 +2575,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "rightHandSide": {
                                   "oneOf": [
                                     {
-                                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                      "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                       "type": "object",
                                       "additionalProperties": false,
                                       "properties": {
@@ -3122,10 +3122,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "description": "A value for the group's one tag, keyed by its name, and nothing else\n– of the declared type; a literal states it (`TagLiteral`). A value may\nname a binding above this one, which is what puts the group into the\nchain. **Many instances are read where it says so:** `{each: …}` over a\nlist binds one instance per element (`Course(each\nstudent.subscribedCourseIds)`), and a rule over a projection read\nthrough the alias holds for every one of them.\n",
                   "type": "object",
                   "additionalProperties": {
-                    "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\nAn `OpenTag` only in a collection function's read.\n",
+                    "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\nAn `OpenTag` only in a collection function's read or a loop's `in`.\n",
                     "oneOf": [
                       {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -3256,7 +3256,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "each": {
                             "oneOf": [
                               {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -3331,7 +3331,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         ]
                       },
                       {
-                        "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                        "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue` or the `in` of a `LoopStep`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -3398,10 +3398,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "description": "A value for each tag the projection declares, keyed by its name,\nand none it does not – of the declared type, which is the tag's\nkey; a literal states it (`TagLiteral`). An untagged projection is\ngiven none. A value may name a binding above this one, which is\nwhat puts a projection into the chain; it may not resolve to a\nlist, except under `each` (`TagEach`).\n",
                   "type": "object",
                   "additionalProperties": {
-                    "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\nAn `OpenTag` only in a collection function's read.\n",
+                    "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\nAn `OpenTag` only in a collection function's read or a loop's `in`.\n",
                     "oneOf": [
                       {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -3532,7 +3532,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "each": {
                             "oneOf": [
                               {
-                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -3607,7 +3607,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         ]
                       },
                       {
-                        "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                        "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue` or the `in` of a `LoopStep`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -3635,10 +3635,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         }
       },
       "steps": {
-        "description": "What the command does, as steps run top-down in written order\n(11.0) – each a rule (`Rule`), an emission (`EventEmission`), a branch\n(`BranchStep`) or, inside a branch, a `reject` (`RejectStep`):\n\n  - a rule that does not hold, or a `reject` reached, ends the run\n    refused, with no events, by its message;\n  - an emission reached joins the run's one append – reaching none is\n    publishing nothing;\n  - a branch runs the steps of its first arm whose condition holds, or\n    its `otherwise`, or nothing. Separate branches each run.\n\nA rule is the shorthand for a branch whose one arm is the opposite\ncondition and a `reject`; it stays a step of its own because it is the\ncommon case.\n\n**Reads are lazy.** A read – an alias's or one in place – is made the\nfirst time a step reached needs it, so a read behind a rule that\nrefused, or in an arm not taken, is never made: it cannot fail on what\nthe rule ruled out. A read reached with no value for a tag is still an\nerror. The append condition of a run covers the reads that run made;\n`boundary` and the reads in place are every read *any* run might make\n– the boundary an authoring tool shows for the command as a whole.\n\nA condition reading a **fanned-out** alias must hold for *every*\ninstance that alias bound; an empty set satisfies it vacuously. The\nquantifier is not written down – it follows from the alias being\nplural.\n\n**Zipping.** When a binding fans out over a list, the elements of that\nlist stay available to a comparison about the instances it bound, at\nthe matching index:\n\n  an operand rooted at a list that some alias in the *same*\n  comparison also fans from is read at that iteration's index;\n  otherwise it is the whole list.\n\nSo with `product` bound over `items[].productId`,\n`product.currentPrice equals items[].price` compares each product\nagainst the price submitted *for that product*, while `items[].price\ngreaterThan 0` – mentioning no alias fanned from `items` – is an\nordinary universal over the list. The pairing is provenance, not\ndeclaration: the operands are correlated because they came from the\nsame list.\n\n**One fan root per comparison.** A comparison may quantify over at most\none fanned-out root. Two distinct roots is rejected rather than read as\na cross product: their lengths are unrelated, nothing in this document\ncan assert otherwise, and the zipped and crossed readings look\nidentical on the page.\n\nA command without rules is **not** unguarded: the append condition is\nderived from the reads, not from the steps. A command with no rules at\nall can still be strictly serialised – which is what binding a\nparameterless projection does to it: a read nothing consults is made\nbefore the first step.\n",
+        "description": "What the command does, as steps run top-down in written order\n(11.0) – each a rule (`Rule`), an emission (`EventEmission`), a branch\n(`BranchStep`), a loop (`LoopStep`) or, inside a branch, a `reject`\n(`RejectStep`):\n\n  - a rule that does not hold, or a `reject` reached, ends the run\n    refused, with no events, by its message;\n  - an emission reached joins the run's one append – reaching none is\n    publishing nothing;\n  - a branch runs the steps of its first arm whose condition holds, or\n    its `otherwise`, or nothing. Separate branches each run;\n  - a loop runs its steps once per element of what it runs over, and\n    over none not at all.\n\nA rule is the shorthand for a branch whose one arm is the opposite\ncondition and a `reject`; it stays a step of its own because it is the\ncommon case.\n\n**Reads are lazy.** A read – an alias's or one in place – is made the\nfirst time a step reached needs it, so a read behind a rule that\nrefused, or in an arm not taken, is never made: it cannot fail on what\nthe rule ruled out. A read reached with no value for a tag is still an\nerror. The append condition of a run covers the reads that run made;\n`boundary` and the reads in place are every read *any* run might make\n– the boundary an authoring tool shows for the command as a whole.\n\nA condition reading a **fanned-out** alias must hold for *every*\ninstance that alias bound; an empty set satisfies it vacuously. The\nquantifier is not written down – it follows from the alias being\nplural.\n\n**Zipping.** When a binding fans out over a list, the elements of that\nlist stay available to a comparison about the instances it bound, at\nthe matching index:\n\n  an operand rooted at a list that some alias in the *same*\n  comparison also fans from is read at that iteration's index;\n  otherwise it is the whole list.\n\nSo with `product` bound over `items[].productId`,\n`product.currentPrice equals items[].price` compares each product\nagainst the price submitted *for that product*, while `items[].price\ngreaterThan 0` – mentioning no alias fanned from `items` – is an\nordinary universal over the list. The pairing is provenance, not\ndeclaration: the operands are correlated because they came from the\nsame list.\n\n**One fan root per comparison.** A comparison may quantify over at most\none fanned-out root. Two distinct roots is rejected rather than read as\na cross product: their lengths are unrelated, nothing in this document\ncan assert otherwise, and the zipped and crossed readings look\nidentical on the page.\n\nA command without rules is **not** unguarded: the append condition is\nderived from the reads, not from the steps. A command with no rules at\nall can still be strictly serialised – which is what binding a\nparameterless projection does to it: a read nothing consults is made\nbefore the first step.\n",
         "type": "array",
         "items": {
-          "description": "One step of a command (`CommandDefinition.steps`), told apart by\nthe key it carries: `condition` a rule, `name` an emission, `branches`\na branch, `reject` a rejection.\n",
+          "description": "One step of a command (`CommandDefinition.steps`), told apart by\nthe key it carries: `condition` a rule, `name` an emission, `branches`\na branch, `forEach` a loop, `reject` a rejection.\n",
           "oneOf": [
             {
               "description": "A condition the command requires – `require c else reject \"m\"` –\nand the message it is refused with when the condition does not hold.\nThe message is static text – what a person reads, and what a scenario\nexpecting the refusal names – so it carries no values.\n\nSeveral rules of one command may share a message, a `reject` too: they\nare then one outcome, however many conditions lead to it. Messages\nbelong to their command, so two commands may use the same one\nindependently.\n",
@@ -3653,10 +3653,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "additionalProperties": false,
                       "properties": {
                         "leftHandSide": {
-                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
+                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
                           "oneOf": [
                             {
-                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                               "type": "object",
                               "additionalProperties": false,
                               "properties": {
@@ -3788,6 +3788,30 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "required": [
                                 "collect",
                                 "read"
+                              ]
+                            },
+                            {
+                              "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "instanceValue": {
+                                  "enum": [
+                                    true
+                                  ]
+                                },
+                                "field": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                  "examples": [
+                                    "someProperty"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "instanceValue"
                               ]
                             }
                           ]
@@ -3817,10 +3841,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "additionalProperties": false,
                       "properties": {
                         "leftHandSide": {
-                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
+                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
                           "oneOf": [
                             {
-                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                               "type": "object",
                               "additionalProperties": false,
                               "properties": {
@@ -3953,6 +3977,30 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "collect",
                                 "read"
                               ]
+                            },
+                            {
+                              "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "instanceValue": {
+                                  "enum": [
+                                    true
+                                  ]
+                                },
+                                "field": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                  "examples": [
+                                    "someProperty"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "instanceValue"
+                              ]
                             }
                           ]
                         },
@@ -3976,10 +4024,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "rightHandSide": {
                           "oneOf": [
                             {
-                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
+                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
                               "oneOf": [
                                 {
-                                  "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                  "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                   "type": "object",
                                   "additionalProperties": false,
                                   "properties": {
@@ -4112,6 +4160,30 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "collect",
                                     "read"
                                   ]
+                                },
+                                {
+                                  "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "instanceValue": {
+                                      "enum": [
+                                        true
+                                      ]
+                                    },
+                                    "field": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "instanceValue"
+                                  ]
                                 }
                               ]
                             },
@@ -4232,10 +4304,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere – and writes no tag for it, when the property is\ntag-marked.\n",
                   "type": "object",
                   "additionalProperties": {
-                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
+                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
                     "oneOf": [
                       {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -4368,6 +4440,30 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "collect",
                           "read"
                         ]
+                      },
+                      {
+                        "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "instanceValue": {
+                            "enum": [
+                              true
+                            ]
+                          },
+                          "field": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                            "examples": [
+                              "someProperty"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "instanceValue"
+                        ]
                       }
                     ]
                   }
@@ -4398,10 +4494,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "additionalProperties": false,
                             "properties": {
                               "leftHandSide": {
-                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
                                 "oneOf": [
                                   {
-                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                     "type": "object",
                                     "additionalProperties": false,
                                     "properties": {
@@ -4533,6 +4629,30 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "required": [
                                       "collect",
                                       "read"
+                                    ]
+                                  },
+                                  {
+                                    "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "instanceValue": {
+                                        "enum": [
+                                          true
+                                        ]
+                                      },
+                                      "field": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "instanceValue"
                                     ]
                                   }
                                 ]
@@ -4562,10 +4682,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "additionalProperties": false,
                             "properties": {
                               "leftHandSide": {
-                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
                                 "oneOf": [
                                   {
-                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                     "type": "object",
                                     "additionalProperties": false,
                                     "properties": {
@@ -4698,6 +4818,30 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       "collect",
                                       "read"
                                     ]
+                                  },
+                                  {
+                                    "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "instanceValue": {
+                                        "enum": [
+                                          true
+                                        ]
+                                      },
+                                      "field": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "instanceValue"
+                                    ]
                                   }
                                 ]
                               },
@@ -4721,10 +4865,10 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "rightHandSide": {
                                 "oneOf": [
                                   {
-                                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
+                                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\n",
                                     "oneOf": [
                                       {
-                                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
+                                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
                                         "type": "object",
                                         "additionalProperties": false,
                                         "properties": {
@@ -4857,6 +5001,30 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                           "collect",
                                           "read"
                                         ]
+                                      },
+                                      {
+                                        "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "instanceValue": {
+                                            "enum": [
+                                              true
+                                            ]
+                                          },
+                                          "field": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                            "examples": [
+                                              "someProperty"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "instanceValue"
+                                        ]
                                       }
                                     ]
                                   },
@@ -4987,6 +5155,40 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               },
               "required": [
                 "reject"
+              ]
+            },
+            {
+              "type": "object",
+              "description": "`for each x in source => emit E { … }` (11.0): its steps run once per\nelement of `in`, in its order – an open read's present instances in\nthe order of each one's first event, a list's entries in list order –\nand over none not at all. The elements' emissions join the command's\none append; a `reject` reached inside refuses the whole command. A\nloop holds no loop. `forEach`: the names, one per open tag of an open read, one for a list. `in`: a projection read whose open tags are {open: true}, a read of a list projection, or {parameterName} of a list parameter. `steps`: emissions {name, parameters} and branches {branches: [{condition, steps}], otherwise} whose arms hold one emission or one {reject}, as a command's. Inside, {parameterName: <name>} reads the element and {instanceValue: true} (with `field`, a record's field) an open read's instance value.",
+              "properties": {
+                "forEach": {
+                  "description": "The names the element is read by inside: one per open tag of an\nopen read, in the order the projection declares its tags\n(`for each (shareId, contractId) in …`), one for a list. A name is\nthe loop's own – no payload property's or alias's – and is read as\na payload property is, `{parameterName: \"shareId\"}`.\n",
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100,
+                    "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                    "examples": [
+                      "someProperty"
+                    ]
+                  }
+                },
+                "in": {
+                  "type": "object"
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              },
+              "required": [
+                "forEach",
+                "in",
+                "steps"
               ]
             }
           ]

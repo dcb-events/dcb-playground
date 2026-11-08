@@ -19,7 +19,8 @@
 //     one, its tags are operands in turn, and inlining that at every
 //     operand more than doubled a command's schema. A collection
 //     function (11.0) is written the same way, for the same reason –
-//     inlined, its read and its where tripled the file.
+//     inlined, its read and its where tripled the file – and so is a
+//     loop, whose steps nest every step shape again.
 //
 // The members WebMCP does not offer are cut before anything is
 // inlined (see webmcp.js): the arguments a read passes, a group
@@ -167,6 +168,27 @@ function inline(value, stack) {
         where: { type: 'object' },
       },
       required: ['collect', 'read'],
+    };
+  }
+  // A loop (11.0) holds steps of its own – an emission and a branch
+  // each inlined again under every step – so it is written compactly
+  // too, its source and steps said in words.
+  if (name === 'LoopStep') {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' ' + defs[name].description.trim()
+        + ' `forEach`: the names, one per open tag of an open read, one for a list. `in`: a projection'
+        + ' read whose open tags are {open: true}, a read of a list projection, or {parameterName} of a'
+        + ' list parameter. `steps`: emissions {name, parameters} and branches {branches: [{condition,'
+        + ' steps}], otherwise} whose arms hold one emission or one {reject}, as a command\'s. Inside,'
+        + ' {parameterName: <name>} reads the element and {instanceValue: true} (with `field`, a record\'s'
+        + ' field) an open read\'s instance value.').trim(),
+      properties: {
+        forEach: inline(defs[name].properties.forEach, stack),
+        in: { type: 'object' },
+        steps: { type: 'array', items: { type: 'object' } },
+      },
+      required: ['forEach', 'in', 'steps'],
     };
   }
   if (stack.includes(name)) {
