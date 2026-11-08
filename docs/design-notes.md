@@ -924,7 +924,13 @@ on Projections, inside a group's section, and in the definition modals.
   or`, `+ else if`, `+ else` and `+ separate if` add; × on the last
   arm of the last `if` takes the handler back to one operation. A
   comparison may be bracketed with another at any depth, drafted as a
-  tree in the row (`draftTreeControls`). An arm that cannot be said
+  tree in the row (`draftTreeControls`). A comparison by order
+  (`<`, `>`) is no handler condition the notation has – `==` / `!=`
+  only, ordering waiting for a case; the parser refuses it, a stored one
+  is an advisory and prints as JSON – so the page offers none and a
+  stored one stays as it is, its row saying that "ordering in handler
+  conditions is not part of the notation" instead of pointing at the
+  code view (`handlerOrders`). An arm that cannot be said
   this way – a value the row's pickers do not offer – keeps the
   handler as it is stored,
   shown with `Edit in code` (`branchedHandlerRow`), and

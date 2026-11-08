@@ -11077,6 +11077,13 @@ function projectionDraftFrom(body) {
 // `comparisons` and `joiner`, a bracketed group a member of the same
 // shape. Anything else that branches stays as it
 // is stored, read-only with the way to the code view (`handlerInCode`).
+// Whether a branched handler compares by order anywhere – stored, an
+// advisory, never written by the notation or the page.
+function handlerOrders(handler) {
+  return isConditionalHandler(handler) && handlerArms(handler).some((arm) =>
+    !arm.otherwise && arm.condition && conditionLeaves(arm.condition).some((leaf) => leaf && leaf.predicate !== 'equals'));
+}
+
 function handlerComparisonEditable(leaf) {
   if (!leaf || typeof leaf !== 'object' || isCompoundCondition(leaf)) return false;
   if (leaf.predicate !== 'equals' || operandSource(leaf.leftHandSide) !== 'event-property') return false;
@@ -12191,9 +12198,16 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
           h('span', { class: 'pk' }, ' ⇒ '),
           h('span', { class: 'verb tok' }, arm.operation || '?'), ' ',
           operandWords(arm.value)))),
-      codeViewButton(isConditionalHandler(handler) ? 'A handler\'s branches are edited in the code view'
-        : operandSource(handler.value) === 'record' ? 'A record set whole is edited in the code view'
-          : 'A record\'s field taken from the event is edited in the code view'),
+      // A comparison ordering its sides (`<`, `>`) is no handler
+      // condition the notation has – `==` / `!=` only, ordering waiting
+      // for a case – so the code view could only print it as JSON:
+      // the row says why rather than sending there.
+      handlerOrders(handler)
+        ? h('span', { class: 'muted tiny', title: 'A handler\'s condition compares with == or != – say it with those, or decide it in a command' },
+          'ordering in handler conditions is not part of the notation')
+        : codeViewButton(isConditionalHandler(handler) ? 'A handler\'s branches are edited in the code view'
+          : operandSource(handler.value) === 'record' ? 'A record set whole is edited in the code view'
+            : 'A record\'s field taken from the event is edited in the code view'),
       h('button', {
         class: 'btn tiny danger', title: 'Remove this handler',
         onclick: () => { draft.handlers.splice(i, 1); render(); },

@@ -6849,6 +6849,21 @@ command Open(accountId: AccountId) {
     sandbox.state.projDraft = null;
   });
 
+  check('a handler comparing by order stays as stored, and its row says why it is not edited', () => {
+    const original = sandbox.deepClone(model()['projection-definitions'].Reservation);
+    const ordered = sandbox.deepClone(original);
+    ordered.handlers[0].steps[0].branches[0].condition = { leftHandSide: { eventProperty: 'seats' }, predicate: 'lessThan', rightHandSide: 1 };
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', ordered);
+    eq(sandbox.modelAdvisories(model()).some((a) => /== or !=/.test(a.message)), true, 'an advisory, not a refusal');
+    const text = page('Reservation');
+    eq(text.includes('ordering in handler conditions is not part of the notation') && !text.includes('Edit in code'), true, text.slice(0, 600));
+    eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, ordered.handlers, 'kept as stored');
+    eq(sandbox.parseModelSource('model "M"\n\ntag type A = string\nevent E { tag a: A, n: integer }\nprojection P (tag a: A): integer = 0 {\n  on E {\n    if event.data.n < 1 => set 1\n  }\n}\n')
+      .diagnostics.some((d) => /== or !=/.test(d.message)), true, 'the notation refuses it');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', original);
+    sandbox.state.projDraft = null;
+  });
+
   check('an unrelated edit on the page keeps the branches as they were', () => {
     const before = model()['projection-definitions'].Balance.handlers;
     const draft = projectionDraftFrom(model()['projection-definitions'].Balance);
