@@ -4527,4 +4527,227 @@ function modelsWithScenarios() {
   });
 }
 
+
+// ---------------------------------------------------------------
+// Open tags, collection functions and record values (11.0): `P(x, *)`
+// reads every present instance of P matching the bound tags, only
+// inside a collection function; a projection may hold a record its
+// handlers replace whole, and a read gives one of its fields.
+// ---------------------------------------------------------------
+{
+  const one = (name, propertyType, extra = {}) => ({ name, propertyType, isOptional: false, isList: false, ...extra });
+  const param = (name) => ({ parameterName: name });
+  const open = { open: true };
+  const seatsRead = (courseId = param('courseId')) => ({ projection: 'ReservationSeats', tags: { courseId, reservationId: open } });
+  const collect = (fn, read, where) => ({ collect: fn, read, ...(where ? { where } : {}) });
+  const openCourses = () => {
+    const { id, model } = openBlank('Seats');
+    addDefinition('custom-type-definition', id, 'CourseId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'ReservationId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'Seats', { schema: { type: 'integer' } });
+    addTaggedEvent(id, 'SeatsWereReserved', { properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId'),
+      one('numberOfSeatsReserved', 'Seats')] });
+    addTaggedEvent(id, 'SeatReservationWasCancelled', { properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId')] });
+    addDefinition('projection-definition', id, 'ReservationSeats', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }, { name: 'reservationId', tagType: 'ReservationId' }],
+      valueType: 'Seats', isList: false, initialValue: 0,
+      handlers: [
+        { event: 'SeatsWereReserved', operation: 'set', value: { eventProperty: 'numberOfSeatsReserved' } },
+        { event: 'SeatReservationWasCancelled', operation: 'set', value: 0 },
+      ],
+    });
+    addDefinition('projection-definition', id, 'CourseSeatsReserved', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: collect('sum', seatsRead()) },
+    });
+    addDefinition('command-definition', id, 'ReserveSeats', {
+      properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId'), one('seats', 'Seats')],
+      boundary: [],
+      steps: [
+        { condition: { leftHandSide: collect('sum', seatsRead()), predicate: 'lessThan', rightHandSide: 10 }, rejection: 'Course is full' },
+        { name: 'SeatsWereReserved', parameters: { courseId: param('courseId'), reservationId: param('reservationId'),
+          numberOfSeatsReserved: param('seats') } },
+      ],
+    });
+    return { id, model };
+  };
+  const reserve = (reservationId, seats, courseId = 'c1') =>
+    ({ type: 'SeatsWereReserved', data: { courseId, reservationId, numberOfSeatsReserved: seats } });
+  const cancel = (reservationId, courseId = 'c1') => ({ type: 'SeatReservationWasCancelled', data: { courseId, reservationId } });
+  const courseLog = [reserve('r1', 3), reserve('r2', 2), reserve('r9', 7, 'c2'), cancel('r1')];
+
+  check('an open read sums every present instance, and its boundary keeps only the bound tags', () => {
+    const { model } = openCourses();
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(foldProjection(model(), courseLog, 'CourseSeatsReserved', { tags: { courseId: 'c1' } }), 2, 'r2 alone, r1 cancelled');
+    eq(foldProjection(model(), courseLog, 'CourseSeatsReserved', { tags: { courseId: 'c3' } }), 0, 'an empty sum is 0');
+    const items = sandbox.deriveDcb(model(), model()['command-definitions'].ReserveSeats).items;
+    eq(items.map((item) => [item.tags, item.types]),
+      [[['CourseId:{courseId}'], ['SeatReservationWasCancelled', 'SeatsWereReserved']]], 'one item, by CourseId alone');
+    const ported = evaluateCommand(model(), (query) => courseLog.filter((e) => query.some((item) =>
+      item.types.includes(e.type) && item.tags.every((t) => tagsOfEvent(model(), e.type, e.data).includes(t)))),
+    'ReserveSeats', { courseId: 'c1', reservationId: 'r3', seats: 1 });
+    eq(ported.outcome, 'published', 'decided');
+    eq(ported.query, [{ tags: ['CourseId:c1'], types: ['SeatReservationWasCancelled', 'SeatsWereReserved'] }],
+      'and its append condition covers the course, never a reservation');
+    const full = evaluateCommand(model(), [...courseLog, reserve('r4', 8)], 'ReserveSeats', { courseId: 'c1', reservationId: 'r5', seats: 1 });
+    eq([full.outcome, full.failedRule.rejection], ['rejected', 'Course is full'], 'a rule reads the sum');
+  });
+
+  check('an instance back at its initial value is absent – count counts what is present', () => {
+    const { id, model } = openBlank('Shares');
+    addDefinition('custom-type-definition', id, 'ContractId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'ShareId', { schema: { type: 'string' }, isTag: true });
+    addTaggedEvent(id, 'ShareStarted', { properties: [one('contractId', 'ContractId'), one('shareId', 'ShareId')] });
+    addTaggedEvent(id, 'ShareEnded', { properties: [one('contractId', 'ContractId'), one('shareId', 'ShareId')] });
+    addDefinition('projection-definition', id, 'ShareActive', {
+      tags: [{ name: 'contractId', tagType: 'ContractId' }, { name: 'shareId', tagType: 'ShareId' }],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'ShareStarted', operation: 'set', value: true }, { event: 'ShareEnded', operation: 'set', value: false }],
+    });
+    addDefinition('projection-definition', id, 'ActiveShares', {
+      tags: [{ name: 'contractId', tagType: 'ContractId' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: collect('count', { projection: 'ShareActive', tags: { contractId: param('contractId'), shareId: open } }) },
+    });
+    const ev = (type, shareId) => ({ type, data: { contractId: 'k1', shareId } });
+    const log = [ev('ShareStarted', 's1'), ev('ShareStarted', 's2'), ev('ShareEnded', 's1')];
+    eq(foldProjection(model(), log, 'ActiveShares', { tags: { contractId: 'k1' } }), 1, 'started twice, ended once');
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+  });
+
+  check('an event without the open tag\'s value belongs to no instance', () => {
+    const { id, model } = openCourses();
+    addTaggedEvent(id, 'SeatsAdjusted', { properties: [one('courseId', 'CourseId'),
+      one('reservationId', 'ReservationId', { isOptional: true }), one('seats', 'Seats')] });
+    const body = deepClone(model()['projection-definitions'].ReservationSeats);
+    body.handlers.push({ event: 'SeatsAdjusted', operation: 'set', value: { eventProperty: 'seats' } });
+    updateDefinition('projection-definition', id, 'ReservationSeats', body);
+    const log = [reserve('r1', 3), { type: 'SeatsAdjusted', data: { courseId: 'c1', reservationId: null, seats: 5 } }];
+    eq(foldProjection(model(), log, 'CourseSeatsReserved', { tags: { courseId: 'c1' } }), 3, 'the null one counts nowhere');
+  });
+
+  check('each collection function, and what it gives over nothing', () => {
+    const { id, model } = openCourses();
+    const derive = (name, valueType, derived) => addDefinition('projection-definition', id, name, {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType, isList: false, derived });
+    const big = { leftHandSide: { instanceValue: true }, predicate: 'greaterThan', rightHandSide: 2 };
+    derive('Count', 'integer', { leftHandSide: collect('count', seatsRead()) });
+    derive('Min', 'integer', { leftHandSide: collect('min', seatsRead()) });
+    derive('Max', 'integer', { leftHandSide: collect('max', seatsRead()) });
+    addDefinition('custom-type-definition', id, 'Ratio', { schema: { type: 'number' } });
+    derive('Average', 'Ratio', { leftHandSide: collect('average', seatsRead()) });
+    derive('AnyBig', 'boolean', { leftHandSide: collect('any', seatsRead(), big) });
+    derive('AllBig', 'boolean', { leftHandSide: collect('all', seatsRead(), big) });
+    derive('AnyAtAll', 'boolean', { leftHandSide: collect('any', seatsRead()) });
+    derive('AllAtAll', 'boolean', { leftHandSide: collect('all', seatsRead()) });
+    derive('SumBig', 'integer', { leftHandSide: collect('sum', seatsRead(), big) });
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const log = [reserve('r1', 3), reserve('r2', 2), reserve('r3', 5)];
+    const at = (name, courseId = 'c1', events = log) => foldProjection(model(), events, name, { tags: { courseId } });
+    eq(['Count', 'Min', 'Max', 'Average', 'AnyBig', 'AllBig', 'AnyAtAll', 'AllAtAll', 'SumBig'].map((n) => at(n)),
+      [3, 2, 5, 10 / 3, true, false, true, true, 8], 'over three reservations');
+    eq(['Count', 'Min', 'Max', 'Average', 'AnyBig', 'AllBig', 'AnyAtAll', 'AllAtAll', 'SumBig', 'CourseSeatsReserved'].map((n) => at(n, 'c9')),
+      [0, null, null, null, false, true, false, true, 0, 0], 'and over none');
+  });
+
+  check('a where reads value, a record value\'s field, and a parameter', () => {
+    const { id, model } = openCourses();
+    addDefinition('command-definition', id, 'Probe', {
+      properties: [one('courseId', 'CourseId'), one('least', 'Seats')],
+      boundary: [],
+      steps: [
+        { condition: { leftHandSide: collect('count', seatsRead(), { all: [
+          { leftHandSide: { instanceValue: true }, predicate: 'greaterThanOrEquals', rightHandSide: param('least') },
+          { leftHandSide: { instanceValue: true }, predicate: 'lessThan', rightHandSide: 100 },
+        ] }), predicate: 'lessThan', rightHandSide: 2 }, rejection: 'Too many big ones' },
+        { name: 'SeatReservationWasCancelled', parameters: { courseId: param('courseId'), reservationId: { tagType: 'ReservationId', tagValue: 'x' } } },
+      ],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Probe'), [], 'advisory-clean');
+    const log = [reserve('r1', 3), reserve('r2', 4), reserve('r3', 1)];
+    eq(evaluateCommand(model(), log, 'Probe', { courseId: 'c1', least: 3 }).outcome, 'rejected', 'two with 3 or more');
+    eq(evaluateCommand(model(), log, 'Probe', { courseId: 'c1', least: 4 }).outcome, 'published', 'one with 4 or more');
+  });
+
+  const openAddresses = () => {
+    const { id, model } = openBlank('Addresses');
+    addDefinition('custom-type-definition', id, 'CustomerId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'Address', { properties: [one('street', 'string'), one('city', 'string')] });
+    addTaggedEvent(id, 'CustomerMoved', { properties: [one('customerId', 'CustomerId'), one('address', 'Address')] });
+    addTaggedEvent(id, 'CustomerRelocated', { properties: [one('customerId', 'CustomerId'), one('street', 'string'), one('city', 'string')] });
+    addTaggedEvent(id, 'ParcelSent', { properties: [one('customerId', 'CustomerId'), one('city', 'string')] });
+    addDefinition('projection-definition', id, 'CustomerAddress', {
+      tags: [{ name: 'customerId', tagType: 'CustomerId' }], valueType: 'Address', isList: false, initialValue: null,
+      handlers: [
+        { event: 'CustomerMoved', operation: 'set', value: { eventProperty: 'address' } },
+        { event: 'CustomerRelocated', operation: 'set', value: { record: { street: { eventProperty: 'street' }, city: { eventProperty: 'city' } } } },
+      ],
+    });
+    addDefinition('command-definition', id, 'SendParcel', {
+      properties: [one('customerId', 'CustomerId'), one('city', 'string')],
+      boundary: [{ alias: 'address', projection: 'CustomerAddress', tags: { customerId: param('customerId') } }],
+      steps: [
+        { condition: { leftHandSide: { alias: 'address', field: 'city' }, predicate: 'equals', rightHandSide: param('city') }, rejection: 'Wrong city' },
+        { condition: { leftHandSide: { projection: 'CustomerAddress', tags: { customerId: param('customerId') }, field: 'street' },
+          predicate: 'isNotEmpty' }, rejection: 'No street' },
+        { name: 'ParcelSent', parameters: { customerId: param('customerId'), city: { alias: 'address', field: 'city' } } },
+      ],
+    });
+    return { id, model };
+  };
+
+  check('a record value is set whole, and a rule and an emission read one of its fields', () => {
+    const { id, model } = openAddresses();
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const log = [{ type: 'CustomerMoved', data: { customerId: 'u1', address: { street: 'Main 1', city: 'Berlin' } } }];
+    eq(foldProjection(model(), log, 'CustomerAddress', { tags: { customerId: 'u1' } }), { street: 'Main 1', city: 'Berlin' }, 'whole');
+    const relocated = [...log, { type: 'CustomerRelocated', data: { customerId: 'u1', street: 'Elm 2', city: 'Hamburg' } }];
+    eq(foldProjection(model(), relocated, 'CustomerAddress', { tags: { customerId: 'u1' } }), { street: 'Elm 2', city: 'Hamburg' },
+      'from a record of event fields');
+    const sent = evaluateCommand(model(), log, 'SendParcel', { customerId: 'u1', city: 'Berlin' });
+    eq([sent.outcome, sent.events[0].data.city], ['published', 'Berlin'], 'the field, in a rule and an emission');
+    eq(evaluateCommand(model(), log, 'SendParcel', { customerId: 'u1', city: 'Paris' }).outcome, 'rejected', 'and decides');
+    const items = sandbox.deriveDcb(model(), model()['command-definitions'].SendParcel).items;
+    eq(items.map((item) => [item.alias, item.tags]), [['address', ['CustomerId:{customerId}']], [null, ['CustomerId:{customerId}']]],
+      'a field is read by the read it is taken from');
+    addDefinition('projection-definition', id, 'CustomerCity', {
+      tags: [{ name: 'customerId', tagType: 'CustomerId' }], valueType: 'string', isList: false,
+      derived: { leftHandSide: { projection: 'CustomerAddress', tags: { customerId: param('customerId') }, field: 'city' } },
+    });
+    eq(foldProjection(model(), log, 'CustomerCity', { tags: { customerId: 'u1' } }), 'Berlin', 'and a derived projection');
+    eq(sandbox.modelAdvisories(model()), [], 'still advisory-clean');
+  });
+
+  check('a record value set by parts is refused, saying it is set whole', () => {
+    const { id, model } = openAddresses();
+    const body = deepClone(model()['projection-definitions'].CustomerAddress);
+    body.handlers[1] = { event: 'CustomerRelocated', operation: 'set', value: { eventProperty: 'city' } };
+    updateDefinition('projection-definition', id, 'CustomerAddress', body);
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/sets it to "city", a string – a record is replaced whole/.test(found), true, found);
+    body.handlers[1] = { event: 'CustomerRelocated', operation: 'set', value: { record: { city: { eventProperty: 'city' } } } };
+    updateDefinition('projection-definition', id, 'CustomerAddress', body);
+    const partial = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/leaves out "street" – a record is replaced whole/.test(partial), true, partial);
+  });
+
+  check('an open read outside a collection function, and one leaving every tag open, are advised', () => {
+    const { id, model } = openCourses();
+    const body = deepClone(model()['command-definitions'].ReserveSeats);
+    body.steps[0] = { condition: { leftHandSide: seatsRead(), predicate: 'lessThan', rightHandSide: 10 }, rejection: 'Course is full' };
+    updateDefinition('command-definition', id, 'ReserveSeats', body);
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/ReservationSeats\(courseId, \*\) leaves a tag open – it is read inside count, sum, min, max, average, any or all/.test(found), true, found);
+    let error = '';
+    try { evaluateCommand(model(), courseLog, 'ReserveSeats', { courseId: 'c1', reservationId: 'r3', seats: 1 }); } catch (e) { error = e.message; }
+    eq(/leaves a tag open/.test(error), true, `and evaluation refuses it: ${error}`);
+    addDefinition('projection-definition', id, 'Everything', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: collect('sum', { projection: 'ReservationSeats', tags: { courseId: open, reservationId: open } }) },
+    });
+    const all = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/ReservationSeats\(\*, \*\) leaves every tag open – at least one stays bound/.test(all), true, all);
+  });
+}
+
 finish();

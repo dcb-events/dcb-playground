@@ -48,6 +48,13 @@
 // (or, `each`, many) by the group's tag, and each member a rule reads,
 // `course.capacity`, is folded on first use as the read it stands for.
 //
+// **An open read is folded per instance** (11.0). `sum(P(c1, *))`
+// asks for P's handled types by the bound tags alone – on a store, the
+// same one item the derivation shows – and groups what comes back by
+// the open tags' values, folding each instance once and keeping those
+// not at the initial value (`evOpenRead`). A command folds one open
+// read once per spelling, like any read in place.
+//
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* – an ordinary, expected outcome
 // this returns. A scenario that cannot be run at all – an event that no
@@ -309,6 +316,12 @@ function evCompileHandlerOperand(operand) {
     }
     case 'enum-member':
       return () => operand.enumMember;
+    // A record built whole from the event (11.0): each field its own
+    // operand, in the order written.
+    case 'record': {
+      const fields = Object.entries(operand.record || {}).map(([key, value]) => [key, evCompileHandlerOperand(value)]);
+      return (state, event) => Object.fromEntries(fields.map(([key, value]) => [key, evNormalize(value(state, event))]));
+    }
     default:
       return () => evNormalize(operand);
   }
@@ -447,6 +460,7 @@ function evCompileTargetAfresh(model, target, label) {
 
   return {
     types: [...steps.keys()],
+    initial,
     // Every step returns a new value, so the initial one is shared by
     // every fold of this compiled target untouched.
     fold: (events, tags = {}) => {
@@ -568,15 +582,24 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
     : operandSource(value) === 'tag-literal' ? value.tagValue : evNormalize(value));
   const readOperand = (operand) => {
     if (operandSource(operand) === 'parameter') return parameter(operand);
+    if (operandSource(operand) === 'collection') {
+      const read = operand.read || {};
+      const tags = {};
+      for (const [name, value] of readTagEntries(read)) if (operandSource(value) !== 'open') tags[name] = literal(value);
+      const instances = evOpenRead(model, events, read.projection, tags, `"${operandText(read)}"`);
+      return evCollect(operand, instances, parameter);
+    }
     if (operandSource(operand) !== 'projection-read') return evNormalize(operand);
+    if (openTagNames(operand).length) evOpenReadOutside(operand);
     const args = {};
     for (const [name, argument] of Object.entries(operand.arguments || {})) args[name] = literal(argument);
     const tags = {};
     for (const [name, value] of readTagEntries(operand)) tags[name] = literal(value);
-    return foldProjection(model, events, operand.projection, { tags, args }, [...seen, projectionName]);
+    return evField(foldProjection(model, events, operand.projection, { tags, args }, [...seen, projectionName]), operand.field);
   };
 
   const left = readOperand(derived.leftHandSide);
+  if (derivedHolds(derived)) return left;
   const right = readOperand(derived.rightHandSide);
   if (derivedComputes(derived)) return evApplyOperator(projectionName, derived, left, right);
   return evApplyPredicate(derived, left, right);
@@ -602,6 +625,146 @@ function evApplyOperator(projectionName, derived, left, right) {
     default:
       return fail(`"${derived.operator}" is not an operator this can compute.`);
   }
+}
+
+// ============================================================
+// Open reads and collection functions (11.0).
+//
+// `P(c1, *)` reads every present instance of P whose bound tags match:
+// the query is the handled types by the bound tags alone – the same
+// on a store as in the derivation – and the fold groups what comes back
+// by the open tags' values, each group folded once as the instance it
+// is, its condition-bearing handlers seeing every tag's value. An event
+// carrying no value for an open tag belongs to no instance; one
+// carrying two (a transfer's `from` and `to` of one type) belongs to
+// each. An instance at the projection's initial value is absent – that
+// is how setting the initial value deletes. Instances come in the order
+// of their first event.
+// ============================================================
+
+// A record value's field, or the whole value when no field is named; a
+// value with no such field (null, before anything set it) gives null.
+// Read off many values – a fanned read – it is one field per value.
+function evField(value, field) {
+  if (field === undefined) return value;
+  if (Array.isArray(value)) return value.map((element) => evField(element, field));
+  const held = evOwn(value, field);
+  return held === undefined ? null : held;
+}
+
+function evOpenReadOutside(read) {
+  fail(`${operandText(read)} leaves a tag open – it is read inside count, sum, min, max, average, any or all.`);
+}
+
+// The present instances of `projectionName` matching `bound` – its
+// bound tags' values by name – as `[{tags, value}]`, `tags` every tag's
+// value by name.
+function evOpenRead(model, events, projectionName, bound, label) {
+  const projection = evOwn(projectionsOf(model), projectionName);
+  if (!projection) fail(`${label} reads "${projectionName}", which this model does not define.`);
+  if (derivedOf(projection)) fail(`${label} leaves a tag of ${projectionName} open, which is derived – an open read collects a folded projection's instances.`);
+  const declared = projectionTagParams(projection);
+  const open = declared.filter((tag) => evOwn(bound, tag.name) === undefined);
+  if (!open.length) fail(`${label} leaves no tag open.`);
+  if (open.length === declared.length) fail(`${label} leaves every tag open – at least one stays bound.`);
+  const queryTags = [...new Set(declared.filter((tag) => !open.includes(tag))
+    .flatMap((tag) => evReadTagLeaves(model, projectionName, tag, evOwn(bound, tag.name)))
+    .map((leaf) => renderTag(identifierTypeOf(model, leaf.type), String(leaf.value))))];
+  const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
+  const selected = evSelectEvents(model, events, compiled.types, queryTags);
+  // The identifier type each open tag is keyed by: one, for a scalar
+  // tag type – a record's tag fields would make an instance of several.
+  const keyed = open.map((tag) => {
+    const leaves = idLeavesOfType(model, tag.tagType);
+    if (leaves.length !== 1 || leaves[0].field !== null) {
+      fail(`${label} leaves "${tag.name}" open, a ${tag.tagType} – an open tag is of a scalar tag type.`);
+    }
+    return { name: tag.name, type: leaves[0].identifierType };
+  });
+  const instances = new Map();
+  for (const raw of selected) {
+    const event = evWithExplicitOptionals(model, raw);
+    const definition = evOwn(model['event-definitions'], event.type);
+    if (!definition || !compiled.types.includes(event.type)) continue;
+    const leaves = eventTagLeaves(model, definition);
+    // Each open tag's values in this event; none for one leaves it out.
+    let combos = [{}];
+    for (const { name, type } of keyed) {
+      const values = [];
+      for (const leaf of leaves.filter((l) => l.identifierType === type)) {
+        const held = evOwn(event.data, leaf.property);
+        for (const element of leaf.isList ? evAsList(held) : [held]) {
+          const value = evNormalize(leaf.field === null ? element : evOwn(element, leaf.field));
+          if (value !== null && value !== undefined && !values.some((v) => evDeepEqual(v, value))) values.push(value);
+        }
+      }
+      combos = combos.flatMap((combo) => values.map((value) => ({ ...combo, [name]: value })));
+    }
+    for (const combo of combos) {
+      const key = JSON.stringify(keyed.map(({ name }) => combo[name]));
+      if (!instances.has(key)) instances.set(key, { tags: { ...bound, ...combo }, events: [] });
+      instances.get(key).events.push(event);
+    }
+  }
+  const out = [];
+  for (const instance of instances.values()) {
+    const value = compiled.fold(instance.events, instance.tags);
+    if (!evDeepEqual(value, compiled.initial)) out.push({ tags: instance.tags, value });
+  }
+  return out;
+}
+
+// A collection function over an open read's instances. `where` keeps
+// the instances it holds for, reading `value` (`value.field` of a
+// record), the parameters in scope – `parameter(operand)` – and
+// literals. Over nothing: count and sum 0; min, max and average null;
+// any false; all true. Without a `where`, any says whether an instance
+// is present at all and all holds – every present instance is there.
+// A null value holds no number, and the numeric ones skip it.
+function evCollect(operand, instances, parameter) {
+  const label = `"${operandText(operand)}"`;
+  const holds = operand.where === undefined ? null : evCompileWhere(operand.where, parameter, label);
+  const kept = holds ? instances.filter((instance) => holds(instance.value)) : instances;
+  const numbers = () => kept.map((instance) => evNormalize(instance.value)).filter((value) => value !== null).map((value) => {
+    if (typeof value !== 'number') fail(`${label} computes over ${JSON.stringify(value)}, which is no number.`);
+    return value;
+  });
+  switch (operand.collect) {
+    case 'count': return kept.length;
+    case 'sum': return numbers().reduce((a, b) => a + b, 0);
+    case 'min': { const n = numbers(); return n.length ? Math.min(...n) : null; }
+    case 'max': { const n = numbers(); return n.length ? Math.max(...n) : null; }
+    case 'average': { const n = numbers(); return n.length ? n.reduce((a, b) => a + b, 0) / n.length : null; }
+    case 'any': return kept.length > 0;
+    case 'all': return kept.length === instances.length;
+    default: return fail(`"${operand.collect}" is not a collection function (${COLLECTION_FUNCTIONS.join(', ')}).`);
+  }
+}
+
+// A `where`, as `(value) => boolean`.
+function evCompileWhere(condition, parameter, label) {
+  if (isCompoundCondition(condition)) {
+    const parts = conditionMembers(condition).map((part) => evCompileWhere(part, parameter, label));
+    return Array.isArray(condition.all)
+      ? (value) => parts.every((part) => part(value))
+      : (value) => parts.some((part) => part(value));
+  }
+  if (!condition || typeof condition !== 'object') return () => false;
+  const side = (operand) => {
+    if (operand === undefined) return () => undefined;
+    if (Array.isArray(operand)) return () => operand.map(evNormalize);
+    switch (operandSource(operand)) {
+      case 'instance-value': return (value) => evField(evNormalize(value), operand.field);
+      case 'parameter': return () => evField(parameter(operand), operand.property);
+      case 'enum-member': return () => operand.enumMember;
+      case 'static': return () => evNormalize(operand);
+      default:
+        return () => fail(`${label} has a where that reads ${operandText(operand)} – a where reads value, parameters and literals, never a projection.`);
+    }
+  };
+  const left = side(condition.leftHandSide);
+  const right = side(condition.rightHandSide);
+  return (value) => evApplyPredicate(condition, left(value), right(value));
 }
 
 function evProjectionFold(model, events, projectionName, read) {
@@ -679,15 +842,26 @@ function evReadOperand(operand, scope) {
         }
         // Fanned out, it is one value per element; read whole, a list
         // of lists flattens, as a fanned group member's does.
-        if (binding.fanned) return binding.value.some(Array.isArray) ? binding.value.flat() : binding.value;
-        return binding.value;
+        if (binding.fanned) {
+          const each = binding.value.map((value) => evField(value, operand.field));
+          return each.some(Array.isArray) ? each.flat() : each;
+        }
+        return evField(binding.value, operand.field);
       }
       if (!operand.property) {
         fail(`"${operand.alias}" reads the group ${binding.group}, so reading it needs one of its projections.`);
       }
-      if (!binding.fanned) return binding.instances[0].read(operand, scope);
-      const each = binding.instances.map((instance) => instance.read(operand, scope));
+      if (!binding.fanned) return evField(binding.instances[0].read(operand, scope), operand.field);
+      const each = binding.instances.map((instance) => evField(instance.read(operand, scope), operand.field));
       return each.some(Array.isArray) ? each.flat() : each;
+    }
+    // A collection function (11.0): its open read made once per
+    // spelling, like any read in place, and reduced.
+    case 'collection': {
+      const read = operand.read || {};
+      const key = readKey(read);
+      if (!scope.inline.has(key)) scope.inline.set(key, evOpenReadInScope(read, scope));
+      return evCollect(operand, scope.inline.get(key).instances, (parameter) => evReadOperand({ parameterName: parameter.parameterName }, scope));
     }
     case 'enum-member':
       return operand.enumMember;
@@ -695,12 +869,14 @@ function evReadOperand(operand, scope) {
     // spelling – the same read written in two rules is one query – and
     // reported beside the aliases, under how it reads.
     case 'projection-read': {
-      const key = JSON.stringify(canonicalOperand(operand));
+      if (openTagNames(operand).length) evOpenReadOutside(operand);
+      const key = readKey(operand);
       if (!scope.inline.has(key)) {
         scope.inline.set(key, evProjectionRead(scope.model, scope.events, scope.body, operand, scope,
           `"${operandText(operand)}"`));
       }
-      return scope.inline.get(key).value;
+      const read = scope.inline.get(key);
+      return read.fanned ? read.value.map((value) => evField(value, operand.field)) : evField(read.value, operand.field);
     }
     default:
       return evNormalize(operand);
@@ -801,6 +977,35 @@ function evProjectionRead(model, events, body, read, scope, label) {
     sourceIndexes: fanned.roots,
     value: instances.map((instance) => instance.value),
   };
+}
+
+// An open read in a command's scope (11.0): its bound tags read like
+// any read's – of the declared type, one value each, never null – and
+// its instances collected (`evOpenRead`). Reported beside the reads in
+// place, under how it reads, `P(c1, *)`.
+function evOpenReadInScope(read, scope) {
+  const { model, body } = scope;
+  const label = `"${operandText(read)}"`;
+  const projection = evOwn(projectionsOf(model), read.projection);
+  if (!projection) fail(`${label} reads "${read.projection}", which this model does not define.`);
+  const held = (read.tags && typeof read.tags === 'object' && !Array.isArray(read.tags)) ? read.tags : {};
+  const bound = {};
+  const tags = projectionTagParams(projection).map((tag) => {
+    const operand = evOwn(held, tag.name);
+    if (operand === undefined) fail(`${label} gives no value for ${read.projection}'s "${tag.name}" tag.`);
+    if (operandSource(operand) === 'open') return { name: tag.name, type: tag.tagType, open: true, value: null };
+    if (operandSource(operand) === 'each') fail(`${label} fans out and leaves a tag open – an open read collects one set of instances.`);
+    const value = operandSource(operand) === 'tag-literal' ? operand.tagValue : evReadOperand(operand, scope);
+    const resolved = tagOperandType(model, body, operand);
+    if ((resolved && resolved.isList) || Array.isArray(value)) {
+      fail(`${label} is tagged by ${operandText(operand)}, a list – its "${tag.name}" tag takes one value.`);
+    }
+    bound[tag.name] = value;
+    return { name: tag.name, type: tag.tagType, value };
+  });
+  const instances = evOpenRead(model, scope.events, read.projection, bound, label);
+  return { kind: 'projection', projection: read.projection, open: true, tags, arguments: {}, instances,
+    value: instances.map((instance) => instance.value) };
 }
 
 // An alias's read, made the first time something needs it (11.0): a
@@ -965,7 +1170,7 @@ function evCheckCondition(model, body, condition, scope) {
   const fannedReads = conditionOperands(condition)
     .filter((operand) => operandSource(operand) === 'projection-read' && readFanTag(operand));
   for (const read of fannedReads) evReadOperand(read, scope);
-  const inlineOf = (read) => scope.inline.get(JSON.stringify(canonicalOperand(read)));
+  const inlineOf = (read) => scope.inline.get(readKey(read));
   const fannedSources = [
     ...fannedAliases.map((alias) => scope.bound[alias]),
     ...fannedReads.map(inlineOf),
@@ -984,10 +1189,11 @@ function evCheckCondition(model, body, condition, scope) {
     const source = operandSource(operand);
     if (source === 'alias-property' && fannedAliases.includes(operand.alias)) {
       const bound = scope.bound[operand.alias];
-      return bound.kind === 'projection' ? bound.instances[index].value : bound.instances[index].read(operand, scope);
+      return evField(bound.kind === 'projection' ? bound.instances[index].value : bound.instances[index].read(operand, scope),
+        operand.field);
     }
     if (source === 'projection-read' && fannedReads.includes(operand)) {
-      return inlineOf(operand).instances[index].value;
+      return evField(inlineOf(operand).instances[index].value, operand.field);
     }
     if (source === 'parameter' && isZipped(model, body, condition, operand)) {
       return evAsList(evReadOperand(operand, scope))[sourceIndexAt(index)];
@@ -1330,7 +1536,7 @@ function evDescribeReads(scope) {
   }
   // An inline read has no alias; it is reported under how it reads.
   for (const read of scope.inline.values()) {
-    const said = Object.fromEntries(read.tags.map((t) => [t.name, { tagType: t.type, tagValue: t.value }]));
+    const said = Object.fromEntries(read.tags.map((t) => [t.name, t.open ? { open: true } : { tagType: t.type, tagValue: t.value }]));
     out[operandText({ projection: read.projection, tags: said })] = {
       kind: 'projection',
       projection: read.projection,
@@ -1338,6 +1544,7 @@ function evDescribeReads(scope) {
       tags: read.tags,
       arguments: read.arguments,
       value: read.value,
+      ...(read.open ? { open: true, instances: read.instances } : {}),
     };
   }
   return out;

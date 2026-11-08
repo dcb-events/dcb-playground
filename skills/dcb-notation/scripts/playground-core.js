@@ -1205,7 +1205,7 @@ function forEachReferenceSlot(kind, name, body, slot) {
     typeSlots(projection.arguments);
     for (const handler of projection.handlers || []) at(handler, 'event', 'event-definition', 'name');
     // A derived predicate names the projections it reads.
-    for (const operand of derivedOperands(projection.derived)) {
+    for (const operand of derivedReads(projection.derived)) {
       if (operand && typeof operand === 'object' && operand.projection !== undefined) {
         projectionAt(operand, 'projection');
         tagLiteralSlots(operand.tags);
@@ -1337,11 +1337,43 @@ function findReferencers(model, targetKind, targetName) {
 // literal. `{each: operand}` is the fan-out, said where it happens: the
 // read is made once per element of a list, and a rule over it holds for
 // every one (`ProductExists(each items.productId)`).
+//
+// **Open tags and collection functions** (11.0). A read may leave a tag
+// open, `{open: true}` in its `tags`, spelled `*`: `ReservationSeats(
+// courseId, *)` reads every *present* instance matching the tags it
+// binds – one whose value differs from the projection's initial value,
+// so setting the initial value acts as delete. An open read is no value
+// of its own: it is read only as the `read` of a collection function,
+// `{collect, read, where?}` – `count`, `sum`, `min`, `max`, `average`,
+// `any` or `all` (`COLLECTION_FUNCTIONS`) – whose `where` is a condition
+// over `{instanceValue: true}` (`value`, or `value.field` with `field`),
+// the parameters in scope and literals, and never reads a projection.
+// At least one tag stays bound, and a group's one tag never opens. Its
+// query is the handled types by the bound tags alone; the fold groups
+// the events by the open tags' values, and an event without one belongs
+// to no instance. Every walker that sees reads sees the open one: a
+// collection's `read` is an ordinary projection read to them.
+//
+// **A record value's field** (11.0): a read of a projection holding a
+// record – in place or through an alias, a group member included – may
+// name one field, `field`: `CustomerAddress(customerId).city`,
+// `address.city`, `course.address.city`. It is the same read as the
+// whole value; only what the operand takes from it differs. A handler
+// sets such a projection whole – an event field of the record's type,
+// or a record of event fields and literals, `{record: {street: …}}`.
 // ============================================================
+
+// The collection functions an open read is reduced by (11.0), and what
+// each gives over no instance at all.
+const COLLECTION_FUNCTIONS = ['count', 'sum', 'min', 'max', 'average', 'any', 'all'];
 
 function operandSource(operand) {
   if (operand === null || operand === undefined) return 'static';
   if (typeof operand !== 'object') return 'static';
+  if (operand.collect !== undefined) return 'collection';
+  if (operand.open === true) return 'open';
+  if (operand.instanceValue === true) return 'instance-value';
+  if (operand.record !== undefined && !Array.isArray(operand) && Object.keys(operand).length === 1) return 'record';
   if (operand.parameterName !== undefined) return 'parameter';
   if (operand.alias !== undefined) return 'alias-property';
   if (operand.enumMember !== undefined) return 'enum-member';
@@ -1364,7 +1396,7 @@ function operandText(operand) {
         ? `${operand.alias || '?'}.${operand.property}`
         : (operand.alias || '?');
       const args = Object.values(operand.arguments || {});
-      return args.length ? `${read}(${args.map(operandText).join(', ')})` : read;
+      return (args.length ? `${read}(${args.map(operandText).join(', ')})` : read) + fieldText(operand);
     }
     case 'enum-member': return operand.enumMember || '?';
     case 'event-property': return `event.data.${operand.eventProperty || '?'}${operand.property !== undefined ? '.' + operand.property : ''}`;
@@ -1377,16 +1409,30 @@ function operandText(operand) {
       const tags = readTagOperands(operand).map(operandText);
       const args = Object.values(operand.arguments || {}).map(operandText);
       const split = splitQualifiedName(operand.projection);
-      if (split) return `${split.group}(${tags.join(', ')}).${split.local}${args.length ? `(${args.join(', ')})` : ''}`;
-      return `${operand.projection || '?'}(${[...tags, ...args].join(', ')})`;
+      if (split) return `${split.group}(${tags.join(', ')}).${split.local}${args.length ? `(${args.join(', ')})` : ''}${fieldText(operand)}`;
+      return `${operand.projection || '?'}(${[...tags, ...args].join(', ')})${fieldText(operand)}`;
     }
     case 'tag-literal': return `${operand.tagType || '?'}(${JSON.stringify(operand.tagValue)})`;
     case 'each': return `each ${operandText(operand.each)}`;
+    case 'open': return '*';
+    case 'collection':
+      return `${operand.collect || '?'}(${operandText(operand.read)}`
+        + `${operand.where !== undefined ? ` where ${conditionText(operand.where)}` : ''})`;
+    case 'instance-value': return `value${operand.field !== undefined ? '.' + operand.field : ''}`;
+    case 'record': {
+      const fields = operand.record && typeof operand.record === 'object' ? Object.entries(operand.record) : [];
+      return `{ ${fields.map(([key, value]) => `${key}: ${operandText(value)}`).join(', ')} }`;
+    }
     default:
       if (operand === null || operand === undefined) return 'null';
       if (Array.isArray(operand)) return `[${operand.map(operandText).join(', ')}]`;
       return typeof operand === 'string' ? `"${operand}"` : String(operand);
   }
+}
+
+// `.field` after a read of a record value (11.0), or nothing.
+function fieldText(operand) {
+  return operand && operand.field !== undefined ? `.${operand.field}` : '';
 }
 
 // An operand is unresolved when the name its kind requires is absent –
@@ -1404,6 +1450,7 @@ function operandIncomplete(operand) {
     case 'projection-read': return !operand.projection;
     case 'tag-literal': return !operand.tagType;
     case 'each': return operandIncomplete(operand.each);
+    case 'collection': return !operand.collect || operandIncomplete(operand.read);
     default: return false;
   }
 }
@@ -1451,6 +1498,7 @@ function conditionText(condition) {
 // `a - b`, `min(a, b)`.
 function derivedText(derived) {
   if (!derived) return '';
+  if (derivedHolds(derived)) return operandText(derived.leftHandSide);
   if (derived.operator === undefined) return conditionText(derived);
   const left = operandText(derived.leftHandSide);
   const right = operandText(derived.rightHandSide);
@@ -1535,6 +1583,15 @@ function derivedComputes(derived) {
   return !!derived && derived.operator !== undefined && derived.predicate === undefined;
 }
 
+// Whether a derived value holds its one operand as it is (11.0) – a
+// collection function's result, `sum(ReservationSeats(courseId, *))`,
+// or a record's field – with neither a comparison nor a computation:
+// `{leftHandSide}` alone.
+function derivedHolds(derived) {
+  return !!derived && derived.predicate === undefined && derived.operator === undefined
+    && derived.rightHandSide === undefined && derived.negate === undefined;
+}
+
 // What a type is underneath, as arithmetic sees it: 'integer',
 // 'number', or null for anything that is no number. A scalar value
 // type counts as its schema's base, as `operationsFor` counts it – an
@@ -1560,9 +1617,27 @@ function derivedInputOf(model, operand, seen = [], owner = null) {
     const base = parameter && operand.property === undefined && numericBaseOf(model, parameter.type);
     return base ? { base, nullable: false } : null;
   }
+  // A collection function (11.0): a count is an integer, a sum what the
+  // projection holds and 0 over nothing; min, max and average are null
+  // over nothing, and an average is a number.
+  if (operandSource(operand) === 'collection') {
+    const read = operandRead(operand);
+    const target = read && projectionsOf(model)[read.projection];
+    if (operand.collect === 'count') return { base: 'integer', nullable: false };
+    if (!target || target.isList || !['sum', 'min', 'max', 'average'].includes(operand.collect)) return null;
+    const held = numericBaseOf(model, target.valueType);
+    if (!held) return null;
+    return { base: operand.collect === 'average' ? 'number' : held, nullable: operand.collect !== 'sum' };
+  }
   if (operandSource(operand) !== 'projection-read') return null;
   const target = projectionsOf(model)[operand.projection];
   if (!target || target.isList) return null;
+  // A record's field: what that field holds, null until the record is set.
+  if (operand.field !== undefined) {
+    const field = recordFieldType(model, target.valueType, operand.field);
+    const base = field && !field.isList && numericBaseOf(model, field.propertyType);
+    return base ? { base, nullable: true } : null;
+  }
   const base = numericBaseOf(model, target.valueType);
   if (!base) return null;
   const inner = derivedOf(target);
@@ -1616,7 +1691,30 @@ function introducedExperimentalFeatures(before, after) {
 // Both sides of a derived predicate, in evaluation order – the derived
 // analogue of `conditionOperands`.
 function derivedOperands(derived) {
-  return derived ? [derived.leftHandSide, derived.rightHandSide] : [];
+  if (!derived) return [];
+  return derivedHolds(derived) ? [derived.leftHandSide] : [derived.leftHandSide, derived.rightHandSide];
+}
+
+// Every projection read a derived value makes – a side that is one,
+// and a collection function's open read (11.0) – which is what its
+// query, its references and its cycles are made of.
+function derivedReads(derived) {
+  return derivedOperands(derived).map((operand) => (operandSource(operand) === 'collection' ? operand.read : operand))
+    .filter((operand) => operandSource(operand) === 'projection-read');
+}
+
+// The projection read an operand makes, if any: a read in place – the
+// open read of a collection function included – or none.
+function operandRead(operand) {
+  const source = operandSource(operand);
+  if (source === 'projection-read') return operand;
+  if (source === 'collection' && operandSource(operand.read) === 'projection-read') return operand.read;
+  return null;
+}
+
+// A read's tags that are left open (`*`, 11.0), by name.
+function openTagNames(read) {
+  return readTagEntries(read).filter(([, value]) => operandSource(value) === 'open').map(([name]) => name);
 }
 
 // What a reader of this projection supplies besides tags: its
@@ -2158,6 +2256,19 @@ function forEachCommandOperand(body, outerVisit) {
   const visit = (operand, meta) => {
     outerVisit(operand, meta);
     if (operandSource(operand) === 'each') { visit(operand.each, meta); return; }
+    // A collection function (11.0): its open read, then its `where`'s
+    // sides – `value`, parameters and literals, never a read.
+    if (operandSource(operand) === 'collection') {
+      visit(operand.read, { ...meta, collection: operand });
+      if (operand.where && typeof operand.where === 'object') {
+        for (const leaf of conditionLeaves(operand.where)) {
+          for (const side of conditionOperands(leaf)) {
+            for (const one of Array.isArray(side) ? side : [side]) visit(one, { ...meta, where: `${meta.where} (where)`, inWhere: operand });
+          }
+        }
+      }
+      return;
+    }
     if (operandSource(operand) === 'alias-property') {
       for (const [key, argument] of Object.entries(operand.arguments || {})) {
         visit(argument, { ...meta, where: `${meta.where} (${operandText(operand)} argument ${key})`, tag: false });
@@ -2235,7 +2346,18 @@ function forEachCommandOperand(body, outerVisit) {
 
 // The type an operand resolves to, or null when it cannot be worked out
 // (a literal, or a reference that does not resolve).
-function resolveOperandType(operand, { boundary, commandProperties, model }) {
+function resolveOperandType(operand, scope) {
+  const resolved = resolveOperandTypeWhole(operand, scope);
+  // A record value's field (11.0) is what that field holds.
+  if (resolved && operand && typeof operand === 'object' && operand.field !== undefined
+    && ['alias-property', 'projection-read'].includes(operandSource(operand))) {
+    return resolved.isList ? null : recordFieldType(scope.model, resolved.propertyType, operand.field);
+  }
+  if (operandSource(operand) === 'collection') return collectionResultType(scope.model, operand);
+  return resolved;
+}
+
+function resolveOperandTypeWhole(operand, { boundary, commandProperties, model }) {
   const source = operandSource(operand);
   if (source === 'alias-property') {
     const binding = (boundary || []).find((b) => b.alias === operand.alias);
@@ -2547,6 +2669,8 @@ function readTagTexts(model, body, read) {
   const held = (read && read.tags && typeof read.tags === 'object') ? read.tags : {};
   return uniq(projectionTagParams(projection).flatMap((tag) => {
     const operand = held[tag.name];
+    // An open tag (11.0) narrows nothing: the query is the bound tags'.
+    if (operandSource(operand) === 'open') return [];
     if (operandSource(operand) === 'each') {
       return tagsForIdentifierValue(model, tag.tagType, operand.each, { each: true });
     }
@@ -2595,7 +2719,7 @@ function projectionHandledTypes(model, projectionName, seen = []) {
     return uniq((projection.handlers || []).map((h) => h && h.event).filter(Boolean));
   }
   const out = [];
-  for (const operand of derivedOperands(derived)) {
+  for (const operand of derivedReads(derived)) {
     if (operandSource(operand) !== 'projection-read') continue;
     out.push(...projectionHandledTypes(model, operand.projection, [...seen, projectionName]));
   }
@@ -2622,7 +2746,7 @@ function foldedReads(model, read, seen = []) {
     ...((read.tags && typeof read.tags === 'object') ? read.tags : {}),
   };
   const out = [];
-  for (const operand of derivedOperands(derived)) {
+  for (const operand of derivedReads(derived)) {
     if (operandSource(operand) !== 'projection-read') continue;
     const passed = (values) => {
       const out_ = {};
@@ -2752,12 +2876,21 @@ function inlineReads(body) {
   const seen = new Set();
   forEachCommandOperand(body, (operand) => {
     if (operandSource(operand) !== 'projection-read') return;
-    const key = JSON.stringify(canonicalOperand(operand));
+    const key = readKey(operand);
     if (seen.has(key)) return;
     seen.add(key);
     out.push({ key, read: operand });
   });
   return out;
+}
+
+// What a read in place is known by: its canonical JSON, without the
+// record field it may take (11.0) – `P(x).city` and `P(x).street` are
+// one read of P(x).
+function readKey(read) {
+  if (!read || typeof read !== 'object' || read.field === undefined) return JSON.stringify(canonicalOperand(read));
+  const { field, ...whole } = read;
+  return JSON.stringify(canonicalOperand(whole));
 }
 
 // Naming a read in place, and taking the name back – the rule adder
@@ -2771,10 +2904,10 @@ function inlineReads(body) {
 function aliasInlineRead(body, key, alias) {
   const found = inlineReads(body).find((r) => r.key === key);
   if (!found) return body;
-  const read = deepClone(found.read);
+  const { field, ...read } = deepClone(found.read);
   (body.boundary = body.boundary || []).push({ alias, ...read });
-  mapConditionOperands(body, (operand) => (operandSource(operand) === 'projection-read'
-    && JSON.stringify(canonicalOperand(operand)) === key ? { alias } : operand));
+  mapConditionOperands(body, (operand) => (operandSource(operand) === 'projection-read' && readKey(operand) === key
+    ? { alias, ...(operand.field !== undefined ? { field: operand.field } : {}) } : operand));
   return body;
 }
 
@@ -2805,7 +2938,8 @@ function inlineAliasedRead(body, alias) {
   if (binding.arguments && Object.keys(binding.arguments).length) read.arguments = deepClone(binding.arguments);
   body.boundary = body.boundary.filter((b) => b !== binding);
   mapConditionOperands(body, (operand) => (operandSource(operand) === 'alias-property'
-    && operand.alias === alias && operand.property === undefined ? deepClone(read) : operand));
+    && operand.alias === alias && operand.property === undefined
+    ? { ...deepClone(read), ...(operand.field !== undefined ? { field: operand.field } : {}) } : operand));
   return body;
 }
 
@@ -2841,6 +2975,8 @@ function operandAliases(operand, out = []) {
     for (const argument of Object.values(operand.arguments || {})) operandAliases(argument, out);
   } else if (operandSource(operand) === 'each') {
     operandAliases(operand.each, out);
+  } else if (operandSource(operand) === 'collection') {
+    operandAliases(operand.read, out);
   } else if (operandSource(operand) === 'projection-read') {
     for (const inner of [...readTagOperands(operand), ...Object.values(operand.arguments || {})]) operandAliases(inner, out);
   }
@@ -3519,6 +3655,161 @@ function tagOperandProblem(model, body, operand, tag) {
   return resolved ? mismatch(resolved.propertyType) : null;
 }
 
+// ---------- open reads, collections, record fields (11.0) ----------
+
+// Why a read's open tags (`*`) cannot be read as written – or null. An
+// open read is read only as a collection function's (`inCollection`),
+// of a folded, top-level projection, with at least one tag left bound;
+// a read inside a collection leaves at least one open.
+function openReadProblem(model, read, inCollection) {
+  const open = openTagNames(read);
+  const text = operandText(read);
+  if (!open.length) {
+    return inCollection ? `${text} leaves no tag open – a collection function reads every instance of one, ${read.projection}(…, *).` : null;
+  }
+  if (!inCollection) return `${text} leaves a tag open – it is read inside count, sum, min, max, average, any or all.`;
+  if (splitQualifiedName(read.projection) || isLocalProjectionName(read.projection)) {
+    return `${text} leaves the tag of a group open – a group's projections are read by its one tag, so an open read is of a top-level projection tagged by several.`;
+  }
+  const target = projectionsOf(model)[read.projection];
+  if (!target) return null;
+  if (derivedOf(target)) return `${text} leaves a tag of ${read.projection} open, which is derived – an open read collects a folded projection's instances.`;
+  if (open.length >= projectionTagParams(target).length) {
+    return `${text} leaves every tag open – at least one stays bound; a projection read by none is untagged.`;
+  }
+  return null;
+}
+
+// Why a collection function cannot be read as written – or null: a
+// function of the set, over a read in place, whose `where` reads
+// `value` (a record's field of it), parameters and literals – never a
+// projection. `parameterSide(operand, where)` checks a parameter in the
+// owner's scope, throwing or returning a problem.
+function collectionProblem(model, operand, where, parameterSide = () => null) {
+  if (!COLLECTION_FUNCTIONS.includes(operand.collect)) {
+    return `${where}: "${operand.collect}" is not a collection function (${COLLECTION_FUNCTIONS.join(', ')}).`;
+  }
+  if (operandSource(operand.read) !== 'projection-read') {
+    return `${where} collects ${operandText(operand.read)} – a collection function reads a projection with a tag left open, P(x, *).`;
+  }
+  if (operand.where === undefined) return null;
+  const target = projectionsOf(model)[operand.read.projection];
+  for (const leaf of conditionLeaves(operand.where)) {
+    for (const side of conditionOperands(leaf).flatMap((o) => (Array.isArray(o) ? o : [o]))) {
+      const source = operandSource(side);
+      if (['projection-read', 'alias-property', 'collection'].includes(source)) {
+        return `${where} has a where that reads ${operandText(side)} – a where reads value, parameters and literals, never a projection.`;
+      }
+      if (source === 'instance-value' && side.field !== undefined && target) {
+        const fields = compositeFieldsOf(model, target.valueType);
+        if (!fields || !fields.some((f) => f.name === side.field)) {
+          return `${where} reads value.${side.field}, but ${target.valueType} has no field "${side.field}".`;
+        }
+      }
+      if (source === 'parameter') {
+        const problem = parameterSide(side, where);
+        if (problem) return problem;
+      }
+      if (source === 'enum-member') {
+        const found = whereEnumMembers(model, operand).find((pair) => pair.operand === side);
+        const members = found && enumMembersFor(model, found.type);
+        if (members && !members.includes(side.enumMember)) return `${where}: "${side.enumMember}" is not a member of ${found.type}.`;
+      }
+      if (!['instance-value', 'parameter', 'enum-member', 'static'].includes(source)) {
+        return `${where} has a where that reads ${operandText(side)} – a where reads value, parameters and literals.`;
+      }
+    }
+  }
+  return null;
+}
+
+// The enum members a collection's where compares `value` (or a record
+// value's field) with, each with the type it is a member of:
+// `[{operand, type}]` – what a member rename follows and validation
+// checks.
+function whereEnumMembers(model, collection) {
+  const read = operandRead(collection);
+  const target = read && projectionsOf(model)[read.projection];
+  if (!target || !collection.where) return [];
+  const typeOf = (operand) => (operandSource(operand) !== 'instance-value' ? null
+    : operand.field === undefined ? target.valueType : (recordFieldType(model, target.valueType, operand.field) || {}).propertyType);
+  const out = [];
+  for (const leaf of conditionLeaves(collection.where)) {
+    const rights = Array.isArray(leaf.rightHandSide) ? leaf.rightHandSide : [leaf.rightHandSide];
+    for (const right of rights) {
+      for (const [maybe, other] of [[right, leaf.leftHandSide], [leaf.leftHandSide, right]]) {
+        const type = typeOf(other);
+        if (operandSource(maybe) === 'enum-member' && type) out.push({ operand: maybe, type });
+      }
+    }
+  }
+  return out;
+}
+
+// Why a read's `field` cannot be taken from what `target` holds – or
+// null: it names a field of the record the projection holds.
+function recordFieldProblem(model, target, operand) {
+  if (!operand || operand.field === undefined || !target) return null;
+  const fields = !target.isList ? compositeFieldsOf(model, target.valueType) : null;
+  if (!fields) return `it holds ${typeArticle(target.valueType)} ${target.valueType}, which has no fields.`;
+  if (!fields.some((f) => f.name === operand.field)) return `${target.valueType} has no field "${operand.field}".`;
+  return null;
+}
+
+// The type a field of a record type holds, `{propertyType, isList}`.
+function recordFieldType(model, typeName, field) {
+  const found = (compositeFieldsOf(model, typeName) || []).find((f) => f && f.name === field);
+  return found ? { propertyType: found.propertyType, isList: !!found.isList } : null;
+}
+
+// What a collection function yields, as `resolveOperandType` says a
+// type: count an integer, any and all a boolean, sum, min and max what
+// the projection holds – or null for average, a number no declared type
+// names, and for what cannot be worked out.
+function collectionResultType(model, operand) {
+  const read = operandRead(operand);
+  const target = read && projectionsOf(model)[read.projection];
+  switch (operand.collect) {
+    case 'count': return { propertyType: 'integer', isList: false };
+    case 'any': case 'all': return { propertyType: 'boolean', isList: false };
+    case 'sum': case 'min': case 'max':
+      return target && !target.isList ? { propertyType: target.valueType, isList: false } : null;
+    default: return null;
+  }
+}
+
+// What a derived side yields, `{propertyType, isList}` – a read's value
+// or its field, a collection's result, a parameter's type – or null.
+function derivedOperandType(model, operand, owner) {
+  const source = operandSource(operand);
+  if (source === 'collection') {
+    if (operand.collect === 'average') return { propertyType: 'number', isList: false };
+    return collectionResultType(model, operand);
+  }
+  if (source === 'projection-read') {
+    const target = projectionsOf(model)[operand.projection];
+    if (!target) return null;
+    if (operand.field !== undefined) return recordFieldType(model, target.valueType, operand.field);
+    return { propertyType: target.valueType, isList: !!target.isList };
+  }
+  if (source === 'parameter') {
+    const parameter = projectionParameters(owner).find((p) => p.name === operand.parameterName);
+    return parameter ? { propertyType: parameter.type, isList: false } : null;
+  }
+  return null;
+}
+
+// Whether a value of type `held` may be held as `declared`: the same
+// type, or two numbers – an integer held as any number, a number only as
+// one that is not an integer.
+function sameValueKind(model, held, declared) {
+  if (held === declared) return true;
+  const a = held === 'number' ? 'number' : numericBaseOf(model, held);
+  const b = numericBaseOf(model, declared);
+  if (a && b) return a === 'integer' || b === 'number';
+  return false;
+}
+
 // "a" or "an", for a type name in a sentence.
 function typeArticle(word) {
   return /^[aeiou]/i.test(String(word || '')) ? 'an' : 'a';
@@ -3561,6 +3852,8 @@ function readTagsProblem(model, body, declared, read, label, chained = () => nul
   if (fans.length > 1) return `${label}, which fans out over ${fans.length} lists – a read fans out over one.`;
   for (const tag of declared) {
     const operand = held[tag.name];
+    // An open tag (11.0) is the open read's to judge (`openReadProblem`).
+    if (operandSource(operand) === 'open') continue;
     if (operand === undefined || operand === null || operandIncomplete(operand)) {
       return `${label} with no value for its "${tag.name}" tag.`;
     }
@@ -3670,8 +3963,13 @@ function validateHandlers(model, label, target, handlers) {
   const checkOperand = (operand, where) => {
     if (operandSource(operand) === 'successor') {
       // `hasSuccessor` is the rule; this is where breaking it is
-      // refused. (A composite has no successor either, but a projection
-      // never holds one – its valueType is refused before this runs.)
+      // refused. A record (11.0) has none either: it is replaced whole.
+      if (compositeFieldsOf(model, target.valueType)) {
+        throw new DomainError(
+          `${where} takes a successor, but ${label} holds ${target.valueType}, which is a composite – ` +
+          'a record has no successor; it is replaced whole.'
+        );
+      }
       if (!hasSuccessor(model, target.valueType)) {
         throw new DomainError(
           `${where} takes a successor, but ${label} is typed ${target.valueType}. ` +
@@ -3716,6 +4014,48 @@ function validateHandlers(model, label, target, handlers) {
         `Handler on ${label} sets "${leaf.enumMember}", which is not a member of ${target.valueType}.`
       );
     }
+    recordValueProblem(arm, event, where);
+  };
+
+  // A record value (11.0) is replaced whole: by an event field holding
+  // one of its type, by a record of event fields and literals naming
+  // every field it requires, or by null. Setting it from one field –
+  // or from a record that leaves one out – would merge independent
+  // facts into one value, composite state, which stays refused.
+  const recordFields = !target.isList ? compositeFieldsOf(model, target.valueType) : null;
+  const wholly = recordFields
+    ? `a record is replaced whole: set it to an event field holding ${typeArticle(target.valueType)} ${target.valueType}, `
+      + `or to { ${recordFields.map((f) => `${f.name}: …`).join(', ')} }.`
+    : '';
+  const recordValueProblem = (arm, event, where) => {
+    const value = arm.value;
+    if (operandSource(value) === 'record') {
+      if (!recordFields) throw new DomainError(`${where} sets a record, but ${label} holds ${typeArticle(target.valueType)} ${target.valueType}.`);
+      const given = value.record && typeof value.record === 'object' && !Array.isArray(value.record) ? value.record : {};
+      for (const key of Object.keys(given)) {
+        if (!recordFields.some((f) => f.name === key)) throw new DomainError(`${where} sets "${key}", which ${target.valueType} has no field of.`);
+        const field = given[key];
+        const source = operandSource(field);
+        if (source === 'event-property') {
+          if (field.property !== undefined || !(event.properties || []).some((p) => p.name === field.eventProperty)) {
+            throw new DomainError(`Handler on ${label} reads "${operandText(field)}", which "${arm.event}" does not carry.`);
+          }
+        } else if (source !== 'static' && source !== 'enum-member') {
+          throw new DomainError(`${where} sets "${key}" to ${operandText(field)} – a record's field takes an event field or a literal.`);
+        } else assertRecognisedOperand(field, where);
+      }
+      const missing = recordFields.find((f) => !f.isOptional && !(f.name in given));
+      if (missing) throw new DomainError(`${where} leaves out "${missing.name}" – ${wholly}`);
+      return;
+    }
+    if (!recordFields || value === null) return;
+    if (operandSource(value) === 'event-property') {
+      const property = (event.properties || []).find((p) => p.name === value.eventProperty);
+      if (!property || (property.propertyType === target.valueType && !property.isList)) return;
+      throw new DomainError(`${where} sets it to "${value.eventProperty}", ${typeArticle(property.propertyType)} `
+        + `${property.propertyType}${property.isList ? '[]' : ''} – ${wholly}`);
+    }
+    throw new DomainError(`${where} sets it to ${operandText(value)} – ${wholly}`);
   };
 
   // A condition's comparison (11.0): an event field, `==` or `!=`, one
@@ -3897,7 +4237,7 @@ function validateProjectionBody(model, projectionName, body) {
         'computes, not both. It reads as a comparison until one goes.'
       );
     }
-    if (!derivedComputes(body.derived) && (body.valueType !== 'boolean' || body.isList)) {
+    if (!derivedComputes(body.derived) && !derivedHolds(body.derived) && (body.valueType !== 'boolean' || body.isList)) {
       throw new DomainError(
         `Projection "${projectionName}" is derived by a comparison, so it holds its outcome – ` +
         `one boolean, never ${body.isList ? 'a list' : `${typeArticle(body.valueType)} ${body.valueType}`}.`
@@ -3919,13 +4259,13 @@ function validateProjectionBody(model, projectionName, body) {
     return;
   }
 
-  // The declared operations act on a single value and have nothing to
-  // act on in a record of fields, so no projection holds one.
-  if (valueCls.kind === 'value' && valueCls.composite) {
+  // A record (11.0) is held as one value its handlers replace whole –
+  // `validateHandlers` says what a whole replacement is. A list of
+  // records has no operation that keeps an element whole.
+  if (valueCls.kind === 'value' && valueCls.composite && body.isList) {
     throw new DomainError(
-      `Projection "${projectionName}" holds "${body.valueType}", which is a composite. ` +
-      'The operations that advance a projection act on a single value and have ' +
-      'nothing to act on in a record of fields.'
+      `Projection "${projectionName}" holds a list of "${body.valueType}", a record – a projection ` +
+      'holds one record, replaced whole; a list holds single values.'
     );
   }
 
@@ -4022,14 +4362,14 @@ function validateDerived(model, projectionName, body) {
     if (derived.negate !== undefined) {
       throw new DomainError(`${label} negates a computation – "negate" belongs to a comparison.`);
     }
-  } else if (!DERIVED_PREDICATES.includes(derived.predicate)) {
+  } else if (!derivedHolds(derived) && !DERIVED_PREDICATES.includes(derived.predicate)) {
     throw new DomainError(
       `${label} derives through "${derived.predicate}", which is not a predicate a derived ` +
       'projection can state.'
     );
   }
 
-  const reads = derivedOperands(derived).filter((o) => operandSource(o) === 'projection-read');
+  const reads = derivedReads(derived);
   if (!reads.length) {
     throw new DomainError(
       `${label} derives from no projection – at least one side of its predicate must read one.`
@@ -4050,22 +4390,7 @@ function validateDerived(model, projectionName, body) {
     return parameter;
   };
 
-  for (const operand of derivedOperands(derived)) {
-    assertRecognisedOperand(operand, `An operand of ${label}`);
-    const source = operandSource(operand);
-    if (source === 'parameter') {
-      ownParameter(operand, `An operand of ${label} is`);
-      continue;
-    }
-    if (source === 'alias-property' || source === 'event-property'
-        || source === 'successor') {
-      throw new DomainError(
-        `An operand of ${label} is "${operandText(operand)}" – a derived projection reads other ` +
-        'projections, its own parameters, enum members and literals; nothing else is in scope.'
-      );
-    }
-    if (source !== 'projection-read') continue;
-
+  const checkRead = (operand, collection = null) => {
     const target = projectionsOf(model)[operand.projection];
     if (!target) {
       throw new DomainError(
@@ -4073,12 +4398,15 @@ function validateDerived(model, projectionName, body) {
       );
     }
     const held = operand.tags && typeof operand.tags === 'object' && !Array.isArray(operand.tags) ? operand.tags : {};
+    const openProblem = openReadProblem(model, operand, !!collection);
+    if (openProblem) throw new DomainError(`${label}: ${openProblem}`);
     for (const tag of projectionTagParams(target)) {
       const value = held[tag.name];
       const where = `${label} reads ${operand.projection}`;
       if (value === undefined) {
         throw new DomainError(`${where} without a value for its "${tag.name}" tag (${tag.tagType}).`);
       }
+      if (operandSource(value) === 'open') continue;
       if (operandSource(value) === 'parameter') {
         const parameter = ownParameter(value, `${where} tagged`);
         if (parameter.type !== tag.tagType) {
@@ -4143,15 +4471,56 @@ function validateDerived(model, projectionName, body) {
         );
       }
     }
+    const fieldProblem = recordFieldProblem(model, target, operand);
+    if (fieldProblem) throw new DomainError(`${label} reads ${operandText(operand)}, but ${fieldProblem}`);
+  };
+
+  // A side: a read, a collection function over an open read (11.0),
+  // one of its own parameters, an enum member or a literal.
+  for (const operand of derivedOperands(derived)) {
+    assertRecognisedOperand(operand, `An operand of ${label}`);
+    const source = operandSource(operand);
+    if (source === 'parameter') {
+      ownParameter(operand, `An operand of ${label} is`);
+      continue;
+    }
+    if (source === 'collection') {
+      const problem = collectionProblem(model, operand, `${label}'s ${operandText(operand)}`, (side, where) => {
+        if (operandSource(side) === 'parameter') ownParameter(side, `${where} reads`);
+      });
+      if (problem) throw new DomainError(problem);
+      checkRead(operand.read, operand);
+      continue;
+    }
+    if (source !== 'projection-read' && source !== 'static' && source !== 'enum-member') {
+      throw new DomainError(
+        `An operand of ${label} is "${operandText(operand)}" – a derived projection reads other ` +
+        'projections, its own parameters, enum members and literals; nothing else is in scope.'
+      );
+    }
+    if (source === 'projection-read') checkRead(operand);
+  }
+
+  // A derived value that holds its operand holds what it yields: a
+  // collection's number or boolean, a field, another projection's value.
+  if (derivedHolds(derived)) {
+    const yielded = derivedOperandType(model, derived.leftHandSide, body);
+    if (yielded && (body.isList !== yielded.isList || !sameValueKind(model, yielded.propertyType, body.valueType))) {
+      throw new DomainError(
+        `${label} holds ${operandText(derived.leftHandSide)}, ${typeArticle(yielded.propertyType)} ` +
+        `${yielded.propertyType}${yielded.isList ? '[]' : ''} – but it is declared ` +
+        `${body.isList ? `a list of ${body.valueType}` : `${typeArticle(body.valueType)} ${body.valueType}`}.`
+      );
+    }
   }
 
   // An enum member is checked against the projection or parameter it
   // sits opposite, the same way a condition's is checked against its
   // alias property.
   const typeOfSide = (operand) => {
-    if (operandSource(operand) === 'projection-read') {
-      const target = projectionsOf(model)[operand.projection];
-      return target ? { type: target.valueType, isList: !!target.isList } : null;
+    if (operandSource(operand) === 'projection-read' || operandSource(operand) === 'collection') {
+      const yielded = derivedOperandType(model, operand, body);
+      return yielded ? { type: yielded.propertyType, isList: yielded.isList } : null;
     }
     if (operandSource(operand) === 'parameter') {
       const parameter = own.find((p) => p.name === operand.parameterName);
@@ -4231,8 +4600,7 @@ function validateDerived(model, projectionName, body) {
     const target = projectionsOf(model)[name];
     const inner = target && derivedOf(target);
     if (!inner) return;
-    for (const operand of derivedOperands(inner)) {
-      if (operandSource(operand) !== 'projection-read') continue;
+    for (const operand of derivedReads(inner)) {
       if (operand.projection === projectionName) {
         throw new DomainError(
           `${label} derives from itself through ${trail.join(' → ')} – a cycle has no value to start from.`
@@ -4639,9 +5007,40 @@ function validateCommandBody(model, body) {
         return;
       }
     }
-    if (source === 'projection-read') {
-      failure = readProblem(model, body, operand, meta.where);
+    // A where (11.0) reads value, the command's parameters and
+    // literals; `value` means nothing outside one; a record is built
+    // only by a handler.
+    if (meta.inWhere && ['projection-read', 'alias-property', 'collection'].includes(source)) {
+      failure = `${meta.where} reads ${operandText(operand)} – a where reads value, parameters and literals, never a projection.`;
       return;
+    }
+    if (source === 'instance-value' && !meta.inWhere) {
+      failure = `${meta.where} reads ${operandText(operand)}, which only a collection function's where has.`;
+      return;
+    }
+    if (source === 'record') {
+      failure = `${meta.where} builds a record – only a handler sets one.`;
+      return;
+    }
+    if (source === 'collection') {
+      failure = collectionProblem(model, operand, `${meta.where} ${operandText(operand)}`);
+      return;
+    }
+    if (source === 'projection-read') {
+      failure = openReadProblem(model, operand, !!meta.collection && meta.collection.read === operand)
+        || readProblem(model, body, operand, meta.where)
+        || (() => {
+          const problem = recordFieldProblem(model, projectionsOf(model)[operand.projection], operand);
+          return problem ? `${meta.where} reads ${operandText(operand)}, but ${problem}` : null;
+        })();
+      return;
+    }
+    if (source === 'alias-property' && operand.field !== undefined) {
+      const binding = boundary.find((b) => b.alias === operand.alias);
+      const target = binding && (binding.projection ? projectionsOf(model)[binding.projection]
+        : binding.group !== undefined && operand.property ? projectionsOf(model)[qualifiedProjectionName(binding.group, operand.property)] : null);
+      const problem = recordFieldProblem(model, target, operand);
+      if (problem) { failure = `${meta.where} reads ${operandText(operand)}, but ${problem}`; return; }
     }
     if (source === 'alias-property') {
       const binding = boundary.find((b) => b.alias === operand.alias);
@@ -5618,6 +6017,11 @@ function moveProjectionOutOfGroup(modelId, qualifiedName, newName) {
 function rewriteHandlerOperand(operand, visit) {
   if (!operand || typeof operand !== 'object') return;
   if (operand.successor !== undefined) return rewriteHandlerOperand(operand.successor, visit);
+  // A record's fields (11.0), each an operand of its own.
+  if (operandSource(operand) === 'record') {
+    for (const field of Object.values(operand.record || {})) rewriteHandlerOperand(field, visit);
+    return;
+  }
   visit(operand);
 }
 
@@ -5734,6 +6138,13 @@ const MEMBER_REWRITES = {
         }
       }
       if (derivedOf(body)) {
+        // A collection's where compares value with a member (11.0).
+        for (const operand of derivedOperands(body.derived)) {
+          if (operandSource(operand) !== 'collection') continue;
+          for (const { operand: member, type } of whereEnumMembers(model, operand)) {
+            if (member.enumMember === previous && type === typeName) { member.enumMember = next; touched = true; }
+          }
+        }
         const sides = [
           [body.derived.leftHandSide, body.derived.rightHandSide],
           [body.derived.rightHandSide, body.derived.leftHandSide],
@@ -5778,6 +6189,12 @@ const MEMBER_REWRITES = {
           touched = true;
         }
       }
+      forEachCommandOperand(command, (operand) => {
+        if (operandSource(operand) !== 'collection') return;
+        for (const { operand: member, type } of whereEnumMembers(model, operand)) {
+          if (member.enumMember === previous && type === typeName) { member.enumMember = next; touched = true; }
+        }
+      });
       return touched;
     }));
 
@@ -5898,18 +6315,64 @@ const MEMBER_REWRITES = {
         (typed.has(property) && field === previous ? [property, next] : null));
       return retagged ? [{ kind: 'event-definition', name, body: { ...deepClone(event), tags: retagged } }] : [];
     }),
+    // A projection holding the record (11.0): a handler sets it from a
+    // record of fields, a derived one reads one of its fields, a where
+    // compares value.field; and its initial value is one.
+    ...rewriteProjections(model, (body) => {
+      let touched = false;
+      if (body.valueType === typeName && !body.isList) {
+        for (const handler of body.handlers || []) {
+          for (const arm of handlerArms(handler)) {
+            const value = arm.value;
+            if (operandSource(value) === 'record' && value.record && previous in value.record) {
+              arm.holder.value = { record: renameKey(value.record, previous, next) };
+              touched = true;
+            }
+          }
+        }
+        if (body.initialValue && typeof body.initialValue === 'object' && previous in body.initialValue) {
+          body.initialValue = renameKey(body.initialValue, previous, next);
+          touched = true;
+        }
+      }
+      for (const operand of derivedOperands(body.derived)) {
+        const read = operandRead(operand);
+        const target = read && projectionsOf(model)[read.projection];
+        if (!target || target.valueType !== typeName) continue;
+        if (operand.field === previous) { operand.field = next; touched = true; }
+        if (operandSource(operand) === 'collection' && renameWhereField(operand, previous, next)) touched = true;
+      }
+      return touched;
+    }),
     ...rewriteCommands(model, (command) => {
       const parameters = new Set((command.properties || [])
         .filter((p) => p.propertyType === typeName).map((p) => p.name));
       let touched = false;
+      const holds = (operand) => {
+        const whole = resolveOperandTypeWhole(operand, { boundary: command.boundary || [], commandProperties: command.properties || [], model });
+        return !!whole && whole.propertyType === typeName && !whole.isList;
+      };
       forEachCommandOperand(command, (operand) => {
-        if (operandSource(operand) === 'parameter'
+        const source = operandSource(operand);
+        if (source === 'parameter'
             && parameters.has(operand.parameterName) && operand.property === previous) {
           operand.property = next;
           touched = true;
         }
+        if ((source === 'projection-read' || source === 'alias-property') && operand.field === previous && holds(operand)) {
+          operand.field = next;
+          touched = true;
+        }
+        if (source === 'collection' && operandRead(operand) && holds(operandRead(operand))
+          && renameWhereField(operand, previous, next)) touched = true;
       });
       return touched;
+    }),
+    ...Object.entries(model['projection-scenario-definitions'] || {}).flatMap(([key, scenario]) => {
+      const target = scenario && projectionsOf(model)[scenario.projection];
+      if (!target || target.valueType !== typeName || target.isList || !scenario.then
+        || typeof scenario.then !== 'object' || !(previous in scenario.then)) return [];
+      return [{ kind: 'projection-scenario-definition', name: key, body: { ...deepClone(scenario), then: renameKey(scenario.then, previous, next) } }];
     }),
     // A scenario holds composites as values, so the field name is a key
     // inside the payload rather than a reference beside it – one level
@@ -5977,7 +6440,7 @@ const MEMBER_REWRITES = {
     });
     out.push(...rewriteProjections(model, (body, name, owner) => {
       let touched = false;
-      for (const operand of derivedOperands(body.derived)) {
+      for (const operand of derivedReads(body.derived)) {
         if (operandSource(operand) === 'projection-read' && ours(operand.projection) && rekey(operand)) touched = true;
       }
       if (owner === groupName) {
@@ -5994,6 +6457,17 @@ const MEMBER_REWRITES = {
     return out;
   },
 };
+
+// Renames `value.previous` in a collection's where (11.0).
+function renameWhereField(collection, previous, next) {
+  let touched = false;
+  for (const leaf of conditionLeaves(collection.where)) {
+    for (const side of conditionOperands(leaf).flat()) {
+      if (operandSource(side) === 'instance-value' && side.field === previous) { side.field = next; touched = true; }
+    }
+  }
+  return touched;
+}
 
 // Every `{parameterName}` a projection names one of its own
 // parameters by: its derived predicate's, and its branched handlers'
@@ -6013,8 +6487,15 @@ function forEachOwnParameterRefOf(body, visit) {
 function forEachOwnParameterRef(derived, visit) {
   for (const operand of derivedOperands(derived)) {
     if (operandSource(operand) === 'parameter') visit(operand);
-    if (operandSource(operand) !== 'projection-read') continue;
-    for (const value of [...readTagOperands(operand), ...Object.values(operand.arguments || {})]) {
+    // A collection's where compares with them too (11.0).
+    if (operandSource(operand) === 'collection') {
+      for (const leaf of conditionLeaves(operand.where)) {
+        for (const side of conditionOperands(leaf).flat()) if (operandSource(side) === 'parameter') visit(side);
+      }
+    }
+  }
+  for (const read of derivedReads(derived)) {
+    for (const value of [...readTagOperands(read), ...Object.values(read.arguments || {})]) {
       if (operandSource(value) === 'parameter') visit(value);
     }
   }
@@ -6054,7 +6535,7 @@ function rewriteProjectionReads(model, projectionName, mutate, mutateOwner = () 
   out.push(...rewriteProjections(model, (body, name, groupName) => {
     let touched = false;
     if (body.derived && typeof body.derived === 'object') {
-      for (const operand of derivedOperands(body.derived)) {
+      for (const operand of derivedReads(body.derived)) {
         if (operandSource(operand) !== 'projection-read') continue;
         if (operand.projection === projectionName) {
           if (changes(operand, 'derived')) touched = true;
@@ -7145,7 +7626,7 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
   };
   const bodies = [...Object.values(out.projections), ...Object.values(groups).flatMap((g) => g.projections)];
   for (const body of bodies) {
-    for (const operand of derivedOperands(body && body.derived)) {
+    for (const operand of derivedReads(body && body.derived)) {
       if (operandSource(operand) === 'projection-read') movedRead(operand);
     }
   }
@@ -8470,6 +8951,13 @@ function loadPredefinedModel(index) {
 // (or, `each`, many) by the group's tag, and each member a rule reads,
 // `course.capacity`, is folded on first use as the read it stands for.
 //
+// **An open read is folded per instance** (11.0). `sum(P(c1, *))`
+// asks for P's handled types by the bound tags alone – on a store, the
+// same one item the derivation shows – and groups what comes back by
+// the open tags' values, folding each instance once and keeping those
+// not at the initial value (`evOpenRead`). A command folds one open
+// read once per spelling, like any read in place.
+//
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* – an ordinary, expected outcome
 // this returns. A scenario that cannot be run at all – an event that no
@@ -8731,6 +9219,12 @@ function evCompileHandlerOperand(operand) {
     }
     case 'enum-member':
       return () => operand.enumMember;
+    // A record built whole from the event (11.0): each field its own
+    // operand, in the order written.
+    case 'record': {
+      const fields = Object.entries(operand.record || {}).map(([key, value]) => [key, evCompileHandlerOperand(value)]);
+      return (state, event) => Object.fromEntries(fields.map(([key, value]) => [key, evNormalize(value(state, event))]));
+    }
     default:
       return () => evNormalize(operand);
   }
@@ -8869,6 +9363,7 @@ function evCompileTargetAfresh(model, target, label) {
 
   return {
     types: [...steps.keys()],
+    initial,
     // Every step returns a new value, so the initial one is shared by
     // every fold of this compiled target untouched.
     fold: (events, tags = {}) => {
@@ -8990,15 +9485,24 @@ function evDeriveProjection(model, events, projectionName, read, seen = []) {
     : operandSource(value) === 'tag-literal' ? value.tagValue : evNormalize(value));
   const readOperand = (operand) => {
     if (operandSource(operand) === 'parameter') return parameter(operand);
+    if (operandSource(operand) === 'collection') {
+      const read = operand.read || {};
+      const tags = {};
+      for (const [name, value] of readTagEntries(read)) if (operandSource(value) !== 'open') tags[name] = literal(value);
+      const instances = evOpenRead(model, events, read.projection, tags, `"${operandText(read)}"`);
+      return evCollect(operand, instances, parameter);
+    }
     if (operandSource(operand) !== 'projection-read') return evNormalize(operand);
+    if (openTagNames(operand).length) evOpenReadOutside(operand);
     const args = {};
     for (const [name, argument] of Object.entries(operand.arguments || {})) args[name] = literal(argument);
     const tags = {};
     for (const [name, value] of readTagEntries(operand)) tags[name] = literal(value);
-    return foldProjection(model, events, operand.projection, { tags, args }, [...seen, projectionName]);
+    return evField(foldProjection(model, events, operand.projection, { tags, args }, [...seen, projectionName]), operand.field);
   };
 
   const left = readOperand(derived.leftHandSide);
+  if (derivedHolds(derived)) return left;
   const right = readOperand(derived.rightHandSide);
   if (derivedComputes(derived)) return evApplyOperator(projectionName, derived, left, right);
   return evApplyPredicate(derived, left, right);
@@ -9024,6 +9528,146 @@ function evApplyOperator(projectionName, derived, left, right) {
     default:
       return fail(`"${derived.operator}" is not an operator this can compute.`);
   }
+}
+
+// ============================================================
+// Open reads and collection functions (11.0).
+//
+// `P(c1, *)` reads every present instance of P whose bound tags match:
+// the query is the handled types by the bound tags alone – the same
+// on a store as in the derivation – and the fold groups what comes back
+// by the open tags' values, each group folded once as the instance it
+// is, its condition-bearing handlers seeing every tag's value. An event
+// carrying no value for an open tag belongs to no instance; one
+// carrying two (a transfer's `from` and `to` of one type) belongs to
+// each. An instance at the projection's initial value is absent – that
+// is how setting the initial value deletes. Instances come in the order
+// of their first event.
+// ============================================================
+
+// A record value's field, or the whole value when no field is named; a
+// value with no such field (null, before anything set it) gives null.
+// Read off many values – a fanned read – it is one field per value.
+function evField(value, field) {
+  if (field === undefined) return value;
+  if (Array.isArray(value)) return value.map((element) => evField(element, field));
+  const held = evOwn(value, field);
+  return held === undefined ? null : held;
+}
+
+function evOpenReadOutside(read) {
+  fail(`${operandText(read)} leaves a tag open – it is read inside count, sum, min, max, average, any or all.`);
+}
+
+// The present instances of `projectionName` matching `bound` – its
+// bound tags' values by name – as `[{tags, value}]`, `tags` every tag's
+// value by name.
+function evOpenRead(model, events, projectionName, bound, label) {
+  const projection = evOwn(projectionsOf(model), projectionName);
+  if (!projection) fail(`${label} reads "${projectionName}", which this model does not define.`);
+  if (derivedOf(projection)) fail(`${label} leaves a tag of ${projectionName} open, which is derived – an open read collects a folded projection's instances.`);
+  const declared = projectionTagParams(projection);
+  const open = declared.filter((tag) => evOwn(bound, tag.name) === undefined);
+  if (!open.length) fail(`${label} leaves no tag open.`);
+  if (open.length === declared.length) fail(`${label} leaves every tag open – at least one stays bound.`);
+  const queryTags = [...new Set(declared.filter((tag) => !open.includes(tag))
+    .flatMap((tag) => evReadTagLeaves(model, projectionName, tag, evOwn(bound, tag.name)))
+    .map((leaf) => renderTag(identifierTypeOf(model, leaf.type), String(leaf.value))))];
+  const compiled = evCompileTarget(model, projection, `projection "${projectionName}"`);
+  const selected = evSelectEvents(model, events, compiled.types, queryTags);
+  // The identifier type each open tag is keyed by: one, for a scalar
+  // tag type – a record's tag fields would make an instance of several.
+  const keyed = open.map((tag) => {
+    const leaves = idLeavesOfType(model, tag.tagType);
+    if (leaves.length !== 1 || leaves[0].field !== null) {
+      fail(`${label} leaves "${tag.name}" open, a ${tag.tagType} – an open tag is of a scalar tag type.`);
+    }
+    return { name: tag.name, type: leaves[0].identifierType };
+  });
+  const instances = new Map();
+  for (const raw of selected) {
+    const event = evWithExplicitOptionals(model, raw);
+    const definition = evOwn(model['event-definitions'], event.type);
+    if (!definition || !compiled.types.includes(event.type)) continue;
+    const leaves = eventTagLeaves(model, definition);
+    // Each open tag's values in this event; none for one leaves it out.
+    let combos = [{}];
+    for (const { name, type } of keyed) {
+      const values = [];
+      for (const leaf of leaves.filter((l) => l.identifierType === type)) {
+        const held = evOwn(event.data, leaf.property);
+        for (const element of leaf.isList ? evAsList(held) : [held]) {
+          const value = evNormalize(leaf.field === null ? element : evOwn(element, leaf.field));
+          if (value !== null && value !== undefined && !values.some((v) => evDeepEqual(v, value))) values.push(value);
+        }
+      }
+      combos = combos.flatMap((combo) => values.map((value) => ({ ...combo, [name]: value })));
+    }
+    for (const combo of combos) {
+      const key = JSON.stringify(keyed.map(({ name }) => combo[name]));
+      if (!instances.has(key)) instances.set(key, { tags: { ...bound, ...combo }, events: [] });
+      instances.get(key).events.push(event);
+    }
+  }
+  const out = [];
+  for (const instance of instances.values()) {
+    const value = compiled.fold(instance.events, instance.tags);
+    if (!evDeepEqual(value, compiled.initial)) out.push({ tags: instance.tags, value });
+  }
+  return out;
+}
+
+// A collection function over an open read's instances. `where` keeps
+// the instances it holds for, reading `value` (`value.field` of a
+// record), the parameters in scope – `parameter(operand)` – and
+// literals. Over nothing: count and sum 0; min, max and average null;
+// any false; all true. Without a `where`, any says whether an instance
+// is present at all and all holds – every present instance is there.
+// A null value holds no number, and the numeric ones skip it.
+function evCollect(operand, instances, parameter) {
+  const label = `"${operandText(operand)}"`;
+  const holds = operand.where === undefined ? null : evCompileWhere(operand.where, parameter, label);
+  const kept = holds ? instances.filter((instance) => holds(instance.value)) : instances;
+  const numbers = () => kept.map((instance) => evNormalize(instance.value)).filter((value) => value !== null).map((value) => {
+    if (typeof value !== 'number') fail(`${label} computes over ${JSON.stringify(value)}, which is no number.`);
+    return value;
+  });
+  switch (operand.collect) {
+    case 'count': return kept.length;
+    case 'sum': return numbers().reduce((a, b) => a + b, 0);
+    case 'min': { const n = numbers(); return n.length ? Math.min(...n) : null; }
+    case 'max': { const n = numbers(); return n.length ? Math.max(...n) : null; }
+    case 'average': { const n = numbers(); return n.length ? n.reduce((a, b) => a + b, 0) / n.length : null; }
+    case 'any': return kept.length > 0;
+    case 'all': return kept.length === instances.length;
+    default: return fail(`"${operand.collect}" is not a collection function (${COLLECTION_FUNCTIONS.join(', ')}).`);
+  }
+}
+
+// A `where`, as `(value) => boolean`.
+function evCompileWhere(condition, parameter, label) {
+  if (isCompoundCondition(condition)) {
+    const parts = conditionMembers(condition).map((part) => evCompileWhere(part, parameter, label));
+    return Array.isArray(condition.all)
+      ? (value) => parts.every((part) => part(value))
+      : (value) => parts.some((part) => part(value));
+  }
+  if (!condition || typeof condition !== 'object') return () => false;
+  const side = (operand) => {
+    if (operand === undefined) return () => undefined;
+    if (Array.isArray(operand)) return () => operand.map(evNormalize);
+    switch (operandSource(operand)) {
+      case 'instance-value': return (value) => evField(evNormalize(value), operand.field);
+      case 'parameter': return () => evField(parameter(operand), operand.property);
+      case 'enum-member': return () => operand.enumMember;
+      case 'static': return () => evNormalize(operand);
+      default:
+        return () => fail(`${label} has a where that reads ${operandText(operand)} – a where reads value, parameters and literals, never a projection.`);
+    }
+  };
+  const left = side(condition.leftHandSide);
+  const right = side(condition.rightHandSide);
+  return (value) => evApplyPredicate(condition, left(value), right(value));
 }
 
 function evProjectionFold(model, events, projectionName, read) {
@@ -9101,15 +9745,26 @@ function evReadOperand(operand, scope) {
         }
         // Fanned out, it is one value per element; read whole, a list
         // of lists flattens, as a fanned group member's does.
-        if (binding.fanned) return binding.value.some(Array.isArray) ? binding.value.flat() : binding.value;
-        return binding.value;
+        if (binding.fanned) {
+          const each = binding.value.map((value) => evField(value, operand.field));
+          return each.some(Array.isArray) ? each.flat() : each;
+        }
+        return evField(binding.value, operand.field);
       }
       if (!operand.property) {
         fail(`"${operand.alias}" reads the group ${binding.group}, so reading it needs one of its projections.`);
       }
-      if (!binding.fanned) return binding.instances[0].read(operand, scope);
-      const each = binding.instances.map((instance) => instance.read(operand, scope));
+      if (!binding.fanned) return evField(binding.instances[0].read(operand, scope), operand.field);
+      const each = binding.instances.map((instance) => evField(instance.read(operand, scope), operand.field));
       return each.some(Array.isArray) ? each.flat() : each;
+    }
+    // A collection function (11.0): its open read made once per
+    // spelling, like any read in place, and reduced.
+    case 'collection': {
+      const read = operand.read || {};
+      const key = readKey(read);
+      if (!scope.inline.has(key)) scope.inline.set(key, evOpenReadInScope(read, scope));
+      return evCollect(operand, scope.inline.get(key).instances, (parameter) => evReadOperand({ parameterName: parameter.parameterName }, scope));
     }
     case 'enum-member':
       return operand.enumMember;
@@ -9117,12 +9772,14 @@ function evReadOperand(operand, scope) {
     // spelling – the same read written in two rules is one query – and
     // reported beside the aliases, under how it reads.
     case 'projection-read': {
-      const key = JSON.stringify(canonicalOperand(operand));
+      if (openTagNames(operand).length) evOpenReadOutside(operand);
+      const key = readKey(operand);
       if (!scope.inline.has(key)) {
         scope.inline.set(key, evProjectionRead(scope.model, scope.events, scope.body, operand, scope,
           `"${operandText(operand)}"`));
       }
-      return scope.inline.get(key).value;
+      const read = scope.inline.get(key);
+      return read.fanned ? read.value.map((value) => evField(value, operand.field)) : evField(read.value, operand.field);
     }
     default:
       return evNormalize(operand);
@@ -9223,6 +9880,35 @@ function evProjectionRead(model, events, body, read, scope, label) {
     sourceIndexes: fanned.roots,
     value: instances.map((instance) => instance.value),
   };
+}
+
+// An open read in a command's scope (11.0): its bound tags read like
+// any read's – of the declared type, one value each, never null – and
+// its instances collected (`evOpenRead`). Reported beside the reads in
+// place, under how it reads, `P(c1, *)`.
+function evOpenReadInScope(read, scope) {
+  const { model, body } = scope;
+  const label = `"${operandText(read)}"`;
+  const projection = evOwn(projectionsOf(model), read.projection);
+  if (!projection) fail(`${label} reads "${read.projection}", which this model does not define.`);
+  const held = (read.tags && typeof read.tags === 'object' && !Array.isArray(read.tags)) ? read.tags : {};
+  const bound = {};
+  const tags = projectionTagParams(projection).map((tag) => {
+    const operand = evOwn(held, tag.name);
+    if (operand === undefined) fail(`${label} gives no value for ${read.projection}'s "${tag.name}" tag.`);
+    if (operandSource(operand) === 'open') return { name: tag.name, type: tag.tagType, open: true, value: null };
+    if (operandSource(operand) === 'each') fail(`${label} fans out and leaves a tag open – an open read collects one set of instances.`);
+    const value = operandSource(operand) === 'tag-literal' ? operand.tagValue : evReadOperand(operand, scope);
+    const resolved = tagOperandType(model, body, operand);
+    if ((resolved && resolved.isList) || Array.isArray(value)) {
+      fail(`${label} is tagged by ${operandText(operand)}, a list – its "${tag.name}" tag takes one value.`);
+    }
+    bound[tag.name] = value;
+    return { name: tag.name, type: tag.tagType, value };
+  });
+  const instances = evOpenRead(model, scope.events, read.projection, bound, label);
+  return { kind: 'projection', projection: read.projection, open: true, tags, arguments: {}, instances,
+    value: instances.map((instance) => instance.value) };
 }
 
 // An alias's read, made the first time something needs it (11.0): a
@@ -9387,7 +10073,7 @@ function evCheckCondition(model, body, condition, scope) {
   const fannedReads = conditionOperands(condition)
     .filter((operand) => operandSource(operand) === 'projection-read' && readFanTag(operand));
   for (const read of fannedReads) evReadOperand(read, scope);
-  const inlineOf = (read) => scope.inline.get(JSON.stringify(canonicalOperand(read)));
+  const inlineOf = (read) => scope.inline.get(readKey(read));
   const fannedSources = [
     ...fannedAliases.map((alias) => scope.bound[alias]),
     ...fannedReads.map(inlineOf),
@@ -9406,10 +10092,11 @@ function evCheckCondition(model, body, condition, scope) {
     const source = operandSource(operand);
     if (source === 'alias-property' && fannedAliases.includes(operand.alias)) {
       const bound = scope.bound[operand.alias];
-      return bound.kind === 'projection' ? bound.instances[index].value : bound.instances[index].read(operand, scope);
+      return evField(bound.kind === 'projection' ? bound.instances[index].value : bound.instances[index].read(operand, scope),
+        operand.field);
     }
     if (source === 'projection-read' && fannedReads.includes(operand)) {
-      return inlineOf(operand).instances[index].value;
+      return evField(inlineOf(operand).instances[index].value, operand.field);
     }
     if (source === 'parameter' && isZipped(model, body, condition, operand)) {
       return evAsList(evReadOperand(operand, scope))[sourceIndexAt(index)];
@@ -9752,7 +10439,7 @@ function evDescribeReads(scope) {
   }
   // An inline read has no alias; it is reported under how it reads.
   for (const read of scope.inline.values()) {
-    const said = Object.fromEntries(read.tags.map((t) => [t.name, { tagType: t.type, tagValue: t.value }]));
+    const said = Object.fromEntries(read.tags.map((t) => [t.name, t.open ? { open: true } : { tagType: t.type, tagValue: t.value }]));
     out[operandText({ projection: read.projection, tags: said })] = {
       kind: 'projection',
       projection: read.projection,
@@ -9760,6 +10447,7 @@ function evDescribeReads(scope) {
       tags: read.tags,
       arguments: read.arguments,
       value: read.value,
+      ...(read.open ? { open: true, instances: read.instances } : {}),
     };
   }
   return out;
@@ -10766,6 +11454,10 @@ function parseModelSourceText(text, options) {
     if (++depth > SOURCE_MAX_DEPTH) fail(`This is nested more than ${SOURCE_MAX_DEPTH} levels deep.`);
   };
   const leave = (value) => { depth -= 1; return value; };
+  // Whether the read about to be parsed may leave a tag open (`*`,
+  // 11.0): only the one a collection function collects, never one
+  // nested inside it.
+  let openAllowed = false;
   const ident = (what) => (peek().t === 'ident' ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
   const declName = (what) => (peek().t === 'ident' || peek().t === 'string'
     ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
@@ -10892,6 +11584,14 @@ function parseModelSourceText(text, options) {
       ref['%ref'].push(property.v);
       mark(ref, 'property', property);
       if (is('(')) ref['%args'] = memberArguments(property, commandOperand);
+      // A record value's field (11.0), of a group's projection:
+      // `course.address.city`.
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        ref['%field'] = field.v;
+        mark(ref, 'field', field);
+      }
     }
     return ref;
   };
@@ -10914,6 +11614,7 @@ function parseModelSourceText(text, options) {
   // payload property.
   const commandOperand = () => {
     const token = peek();
+    if (startsCollection()) return collection(commandOperand);
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)
         && !['true', 'false', 'null', 'enum'].includes(token.v)) {
       if (is('(', 1)) return call(commandOperand);
@@ -10934,7 +11635,7 @@ function parseModelSourceText(text, options) {
   // be refused where the call is settled.
   const call = (valueOf) => {
     const callee = next();
-    const out = { '%call': callee.v, ...callArguments(valueOf) };
+    const out = { '%call': callee.v, ...callArguments(valueOf, callee) };
     mark(out, 'callee', callee);
     readMember(out, valueOf);
     // Its closing parenthesis: a read's extent, for introducing an
@@ -10949,13 +11650,36 @@ function parseModelSourceText(text, options) {
     out['%member'] = member.v;
     mark(out, 'member', member);
     if (is('(')) out['%memberArgs'] = memberArguments(member, valueOf);
+    // A record value's field after a group's projection (11.0):
+    // `Course(courseId).address.city`.
+    if (is('.') && peek(1).t === 'ident') {
+      next();
+      const field = next();
+      out['%field'] = field.v;
+      mark(out, 'field', field);
+    }
   };
-  const callArguments = (valueOf) => {
+  const callArguments = (valueOf, callee = null) => {
+    const allowOpen = openAllowed;
+    openAllowed = false;
     expect('(');
     enter();
     const out = { values: [] };
     while (!is(')')) {
       guardBlock(')');
+      // `*` leaves a tag open (11.0) – in the read a collection
+      // function collects, and nowhere else.
+      if (is('*') && (is(',', 1) || is(')', 1))) {
+        const star = next();
+        if (!allowOpen) {
+          fail(`An open read is no value of its own – ${callee ? callee.v : 'P'}(…, *) goes inside count, sum, min, max, average, any or all.`, star);
+        }
+        const open = { open: true };
+        mark(open, 'open', star);
+        out.values.push(open);
+        if (!accept(',')) break;
+        continue;
+      }
       if (peek().t === 'ident' && is(':', 1)) {
         const key = next();
         next();
@@ -10979,6 +11703,92 @@ function parseModelSourceText(text, options) {
     return leave(out);
   };
 
+  // ---------- collection functions (11.0) ----------
+  //
+  // `sum(P(x, *))`, `count(P(x, *) where value > 2)`: a function of the
+  // set, over a read that leaves a tag open – that read alone may – and
+  // an optional `where` over `value` (`value.field` of a record), the
+  // names in scope and literals. `count(xs)` over a list stays the
+  // count predicate, and `min(a, b)` / `max(a, b)` stay a derived
+  // projection's computation: which one it is shows inside the
+  // parentheses (`collectionAhead`).
+  const collectionAhead = () => {
+    let level = 0;
+    for (let i = at + 1; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token.t === 'eof') return false;
+      if (token.t === 'punct' && (token.v === '(' || token.v === '[' || token.v === '{')) level += 1;
+      else if (token.t === 'punct' && (token.v === ')' || token.v === ']' || token.v === '}')) {
+        level -= 1;
+        if (level === 0) return false;
+      } else if (level === 1 && token.t === 'ident' && token.v === 'where') return true;
+      else if (token.t === 'punct' && token.v === '*') {
+        const before = tokens[i - 1];
+        const after = tokens[i + 1];
+        if (before && before.t === 'punct' && (before.v === '(' || before.v === ',')
+          && after && after.t === 'punct' && (after.v === ')' || after.v === ',')) return true;
+      }
+    }
+    return false;
+  };
+  const startsCollection = () => peek().t === 'ident' && COLLECTION_FUNCTIONS.includes(peek().v) && is('(', 1)
+    && (['sum', 'average', 'any', 'all'].includes(peek().v) || collectionAhead());
+  const collection = (valueOf) => {
+    const fn = next();
+    next();
+    enter();
+    const token = peek();
+    if (!(token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1))) {
+      fail(`${fn.v}(…) collects a projection read with a tag left open: ${fn.v}(P(x, *)).`, token);
+    }
+    openAllowed = true;
+    const read = call(valueOf);
+    openAllowed = false;
+    const out = { collect: fn.v, read };
+    mark(out, 'collect', fn);
+    if (accept('where')) out.where = anyCondition(() => condition(whereOperand));
+    expect(')', `")" closing ${fn.v}(…)${out.where ? '' : ', or where and a condition'}`);
+    mark(out, 'close', last());
+    return leave(out);
+  };
+  // A `where`'s side: `value`, `value.field`, a name in scope – a
+  // parameter, `x.field` of a record one – or a literal. Never a read.
+  const whereOperand = () => {
+    const token = peek();
+    const never = () => fail('A where reads value, parameters and literals – never a projection.', token);
+    if (token.t === 'ident' && token.v === 'value') {
+      next();
+      const out = { instanceValue: true };
+      mark(out, 'value', token);
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        out.field = field.v;
+        mark(out, 'field', field);
+      }
+      return out;
+    }
+    if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && (is('(', 1) || is('.', 1))) never();
+    if (token.t === 'ident' && !startsLiteral()) {
+      if (COLLECTION_FUNCTIONS.includes(token.v) && is('(', 1)) never();
+      next();
+      const out = { parameterName: token.v };
+      // Marked both ways: a derived projection's own parameter, or a
+      // command's payload property.
+      mark(out, 'parameter', token);
+      mark(out, 'head', token);
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const property = next();
+        out.property = property.v;
+        mark(out, 'property', property);
+      }
+      if (is('(')) never();
+      return out;
+    }
+    return literalValue();
+  };
+
   // `X tagged …` and `X with (…)` were the draft of 8.0; a read gives
   // its values in parentheses now, in the order the projection declares.
   const oldReadSpelling = (target) => fail(
@@ -10992,6 +11802,7 @@ function parseModelSourceText(text, options) {
   // is, is settled like a command's names (`settle`).
   const derivedOperand = () => {
     const token = peek();
+    if (startsCollection()) return collection(derivedValue);
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1)) return call(derivedValue);
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)) {
       next();
@@ -11005,6 +11816,12 @@ function parseModelSourceText(text, options) {
       mark(local, 'local', token);
       if (is('(')) local['%memberArgs'] = memberArguments(token, derivedValue);
       mark(local, 'close', last());
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        local['%field'] = field.v;
+        mark(local, 'field', field);
+      }
       return local;
     }
     return derivedValue();
@@ -11026,7 +11843,7 @@ function parseModelSourceText(text, options) {
   // way a rule is.
   const derivedExpression = () => {
     for (const word of SOURCE_OPERATOR_CALLS) {
-      if (!is(word) || !is('(', 1)) continue;
+      if (!is(word) || !is('(', 1) || collectionAhead()) continue;
       next(); next();
       const leftHandSide = derivedOperand();
       expect(',', `"," and the other side of ${word}(…)`);
@@ -11034,7 +11851,7 @@ function parseModelSourceText(text, options) {
       expect(')');
       return { leftHandSide, operator: word, rightHandSide };
     }
-    if (!is('not') && !(is('count') && is('(', 1))) {
+    if (!is('not') && !(is('count') && is('(', 1) && !collectionAhead())) {
       const from = at;
       const leftHandSide = derivedOperand();
       const op = peek();
@@ -11042,6 +11859,9 @@ function parseModelSourceText(text, options) {
         next();
         return { leftHandSide, operator: SOURCE_OPERATORS[op.v], rightHandSide: derivedOperand() };
       }
+      // One operand alone is the value it holds (11.0): a collection's
+      // result, a record's field.
+      if (is('}') || is('scenarios') || is('scenario')) return { leftHandSide };
       at = from;
     }
     return condition(derivedOperand);
@@ -11065,9 +11885,26 @@ function parseModelSourceText(text, options) {
       expect(')');
       return leave({ successor: inner });
     }
+    // A record, set whole (11.0): every field by name, each an event
+    // field or a literal.
+    if (is('{')) {
+      next();
+      enter();
+      const record = {};
+      while (!is('}')) {
+        guardBlock('}');
+        const key = ident('a field of the record');
+        mark(record, 'key:' + key.v, key);
+        expect(':', `":" and the value of ${key.v} – a record is set whole, { field: …, … }`);
+        sourcePut(record, key.v, handlerOperand());
+        if (!accept(',')) break;
+      }
+      expect('}', '"}" or ","');
+      return leave({ record });
+    }
     return literalValue();
   };
-  const startsHandlerOperand = () => startsLiteral() || is('event') || is('currentValue') || is('successor');
+  const startsHandlerOperand = () => startsLiteral() || is('event') || is('currentValue') || is('successor') || is('{');
 
   // `name: operand` pairs – or a bare `name`, short for `name: name`.
   const argumentList = (close, operand) => {
@@ -11094,7 +11931,7 @@ function parseModelSourceText(text, options) {
   const condition = (operand) => {
     let negate = false;
     while (accept('not')) negate = !negate;
-    if (is('count') && is('(', 1)) {
+    if (is('count') && is('(', 1) && !collectionAhead()) {
       next(); next();
       const leftHandSide = operand();
       expect(')');
@@ -11186,6 +12023,11 @@ function parseModelSourceText(text, options) {
       fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
     }
     const out = { operation: op.v };
+    // `set x.field = …` would update one field of a record – composite
+    // state, which stays refused (11.0).
+    if (peek().t === 'ident' && !startsHandlerOperand() && (is('.', 1) || is('=', 1))) {
+      fail('A record is replaced whole – set it to an event field holding one, or to { field: …, … } naming every field.');
+    }
     if (startsHandlerOperand()) out.value = handlerOperand();
     if (inBranch && peek().t === 'ident' && OPERATIONS.includes(peek().v)) {
       fail('One operation per branch – a second one is a second if.');
@@ -11824,6 +12666,16 @@ function parseModelSourceText(text, options) {
           }
           out.arguments = resolve(value['%args']);
         }
+        if (value['%field'] !== undefined) {
+          if (!asRead) {
+            const token = (marksOf(value) || {}).field;
+            diagnostics.push({
+              severity: 'error', message: `${head}.${property} is a field of a payload property – it has no fields of its own.`,
+              line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
+            });
+          }
+          out.field = value['%field'];
+        }
         return copyMarks(value, out);
       }
       const out = {};
@@ -12262,9 +13114,14 @@ function parseModelSourceText(text, options) {
       report(token, `${name} takes ${count(slots.length, 'value')}`
         + `${slots.length ? ` (${slots.map(([, key]) => key).join(', ')})` : ''} – this gives ${values.length}.`);
     }
+    const isOpen = (value) => !!value && typeof value === 'object' && value.open === true;
+    if (values.length && params.tags.length && values.slice(0, params.tags.length).every(isOpen)) {
+      report(token, `${name}(${values.map((v) => (isOpen(v) ? '*' : '…')).join(', ')}) leaves every tag open – at least one stays bound.`);
+    }
     values.forEach((value, index) => {
       if (!slots[index]) return;
       const [where, key] = slots[index];
+      if (where === 'arguments' && isOpen(value)) report(token, `${key} is an argument of ${name} – only a tag is left open.`);
       if (where === 'arguments' && value && typeof value === 'object' && value.each !== undefined) {
         report(token, `"each" fans a read out over one of its tags – ${key} is an argument.`);
       }
@@ -12295,6 +13152,10 @@ function parseModelSourceText(text, options) {
         read.tags = {};
         sourcePut(read.tags, tag, values[0]);
       }
+      if (values.some((v) => v && typeof v === 'object' && v.open === true)) {
+        report(token, `${name}'s projections are read by its one tag, ${tag || '…'} – it never opens; `
+          + 'an open read collects a top-level projection tagged by several.');
+      }
     }
     if (target['%memberArgs'] !== undefined) read.arguments = settle(target['%memberArgs']);
     mark(read, 'projection', token);
@@ -12311,8 +13172,24 @@ function parseModelSourceText(text, options) {
       const token = marked.callee;
       const values = value.values.map((v) => settle(v));
       if (value.named) for (const key of Object.keys(value.named)) value.named[key] = settle(value.named[key]);
+      // `P(x).city`: a field of the record a projection holds (11.0).
+      if (value['%member'] !== undefined && !declaresGroup(name) && declares('projection-definition', 'projectionNames', name)) {
+        if (value.named) report(token, `A read gives its values in order, as ${name} declares them – no names.`);
+        if (value['%memberArgs'] !== undefined || value['%field'] !== undefined) {
+          report(marked.member, `${name}(…).${value['%member']} reads a field of the record ${name} holds – a field takes no arguments and has no fields.`);
+        }
+        const read = readOf(name, values, value.named ? null : token);
+        read.field = value['%member'];
+        mark(read, 'field', marked.member);
+        mark(read, 'close', marked.close);
+        return read;
+      }
       if (value['%member'] !== undefined) {
         const read = groupRead(name, values, value.named, value, token);
+        if (value['%field'] !== undefined) {
+          read.field = value['%field'];
+          mark(read, 'field', marked.field);
+        }
         mark(read, 'close', marked.close);
         return read;
       }
@@ -12368,10 +13245,15 @@ function parseModelSourceText(text, options) {
     if (sibling) {
       const read = { projection: name };
       if (value['%memberArgs'] !== undefined) read.arguments = settle(value['%memberArgs']);
+      if (value['%field'] !== undefined) {
+        read.field = value['%field'];
+        mark(read, 'field', marked.field);
+      }
       mark(read, 'projection', marked.local);
       mark(read, 'close', marked.close);
       return read;
     }
+    if (value['%field'] !== undefined) report(marked.field, `${name} is a parameter – only a read's record value has fields.`);
     if (value['%memberArgs'] !== undefined) {
       report(marked.local, group
         ? `${name} is no projection of this group – a sibling is read by its name, a top-level projection by its capitalised one.`
@@ -12420,14 +13302,30 @@ function parseModelSourceText(text, options) {
       return out;
     });
   }
+  // `address.city` through an alias of a projection reads a field of
+  // the record it holds (11.0) – through a group's, `course.capacity`
+  // names a projection. Which one, the settled binding says.
+  const aliasFields = (value, projections) => {
+    if (Array.isArray(value)) { value.forEach((v) => aliasFields(v, projections)); return; }
+    if (!value || typeof value !== 'object') return;
+    if (typeof value.alias === 'string' && projections.has(value.alias) && value.property !== undefined && value.field === undefined) {
+      value.field = value.property;
+      delete value.property;
+      const marked = marksOf(value);
+      if (marked && marked.property) mark(value, 'field', marked.property);
+    }
+    for (const key of Object.keys(value)) aliasFields(value[key], projections);
+  };
   for (const body of Object.values(collections['command-definition'])) {
     if (!body || typeof body !== 'object') continue;
     if (Array.isArray(body.steps)) body.steps = settle(body.steps);
+    const projections = new Set((body.boundary || []).filter((b) => b && b.projection !== undefined).map((b) => b.alias));
+    if (projections.size) aliasFields(body.steps, projections);
   }
   const settleProjection = (body, group) => {
     if (!body || !body.derived || typeof body.derived !== 'object') return;
     body.derived.leftHandSide = settleDerived(body.derived.leftHandSide, group);
-    body.derived.rightHandSide = settleDerived(body.derived.rightHandSide, group);
+    if (body.derived.rightHandSide !== undefined) body.derived.rightHandSide = settleDerived(body.derived.rightHandSide, group);
   };
   for (const body of Object.values(collections['projection-definition'])) settleProjection(body, null);
   for (const body of Object.values(collections['group-definition'])) {
@@ -12562,6 +13460,11 @@ function sourceBlock(head, items, { inline = 3, width = 90, separator = ', ' } =
 // `min(a, b)` – or a comparison, spelled as a rule is.
 function sourceDerived(derived, operand) {
   if (!derived || typeof derived !== 'object') unprintable('what it derives is not an object');
+  // One operand, held as it is (11.0).
+  if (derivedHolds(derived)) {
+    if (Object.keys(derived).some((k) => k !== 'leftHandSide')) unprintable('what it derives carries extra fields');
+    return operand(derived.leftHandSide);
+  }
   if (derived.operator === undefined) return sourceCondition(derived, operand);
   if (derived.predicate !== undefined) unprintable('it states both a predicate and an operator');
   if (derived.negate !== undefined) unprintable('it negates a computation');
@@ -12647,8 +13550,13 @@ function sourceNamedArguments(args, operand) {
   return Object.entries(args).map(([key, value]) => `${sourceRef(key, 'argument')}: ${operand(value)}`).join(', ');
 }
 
-// One value of a read: `each x`, a tag literal, or an operand.
+// One value of a read: `each x`, `*` (an open tag, 11.0), a tag
+// literal, or an operand.
 function sourceReadValue(value, operand) {
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.open !== undefined) {
+    if (value.open !== true || Object.keys(value).length !== 1) unprintable('an open tag carries more than open: true');
+    return '*';
+  }
   if (value && typeof value === 'object' && !Array.isArray(value) && value.each !== undefined) {
     if (Object.keys(value).length !== 1) unprintable('an each carries extra fields');
     return `each ${operand(value.each)}`;
@@ -12683,7 +13591,7 @@ function sourceRead(read, names, operand) {
     if (!SOURCE_LOCAL_RE.test(member)) unprintable(`the projection ${JSON.stringify(member)} of a group is not lowerCamel`);
     const args = read.arguments === undefined || isEmptyContainer(read.arguments) ? ''
       : `(${sourceNamedArguments(read.arguments, operand)})`;
-    return `${sourceGroupCall(split.group, read.tags, names, operand)}.${member}${args}`;
+    return `${sourceGroupCall(split.group, read.tags, names, operand)}.${member}${args}${sourceField(read)}`;
   }
   const name = sourceRef(read.projection, 'projection');
   if (!SOURCE_MEMBER_RE.test(name)) unprintable(`the projection ${JSON.stringify(name)} does not start with a capital`);
@@ -12699,7 +13607,44 @@ function sourceRead(read, names, operand) {
     }
     for (const n of declared) values.push(held[n]);
   }
-  return `${name}(${values.map((value) => sourceReadValue(value, operand)).join(', ')})`;
+  return `${name}(${values.map((value) => sourceReadValue(value, operand)).join(', ')})${sourceField(read)}`;
+}
+
+// `.field` after a read of a record value (11.0), or nothing.
+function sourceField(read) {
+  return read.field === undefined ? '' : `.${sourceRef(read.field, 'field')}`;
+}
+
+// `sum(P(x, *) where value > 2)` (11.0): the function, its open read –
+// written by `read` – and the where, its sides `value`, names in scope
+// (`name`) and literals.
+function sourceCollection(operand, read, name) {
+  if (Object.keys(operand).some((k) => !['collect', 'read', 'where'].includes(k))) unprintable('a collection function carries extra fields');
+  if (!COLLECTION_FUNCTIONS.includes(operand.collect)) unprintable(`"${operand.collect}" is not a collection function the code form knows`);
+  const target = operand.read;
+  if (!target || typeof target !== 'object' || target.projection === undefined || target.field !== undefined) {
+    unprintable('a collection function collects no read of a projection');
+  }
+  if (!readTagOperands(target).some((tag) => tag && typeof tag === 'object' && tag.open === true)) {
+    unprintable('a collection function\'s read leaves no tag open');
+  }
+  const side = (value) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (value.instanceValue !== undefined) {
+        if (value.instanceValue !== true || Object.keys(value).some((k) => !['instanceValue', 'field'].includes(k))) unprintable('a where\'s value carries extra fields');
+        return value.field === undefined ? 'value' : `value.${sourceRef(value.field, 'field')}`;
+      }
+      if (value.parameterName !== undefined) {
+        if (Object.keys(value).some((k) => !['parameterName', 'property'].includes(k))) unprintable('a where reads more than a name');
+        if (value.parameterName === 'value') unprintable('a where names a parameter called value');
+        return name(value);
+      }
+      if (value.enumMember === undefined) unprintable('a where reads something other than value, a name or a literal');
+    }
+    return sourceLiteral(value);
+  };
+  const where = operand.where === undefined ? '' : ` where ${sourceAnyCondition(operand.where, side)}`;
+  return `${operand.collect}(${read(target)}${where})`;
 }
 
 function sourceHandlerOperand(operand) {
@@ -12709,6 +13654,14 @@ function sourceHandlerOperand(operand) {
       return `event.data.${sourceRef(operand.eventProperty, 'event property')}`;
     }
     if (keys.length === 1 && operand.successor !== undefined) return `successor(${sourceHandlerOperand(operand.successor)})`;
+    // A record set whole (11.0).
+    if (keys.length === 1 && operand.record !== undefined) {
+      const fields = operand.record;
+      if (!fields || typeof fields !== 'object' || Array.isArray(fields)) unprintable('a record\'s fields are not an object');
+      const entries = Object.entries(fields);
+      if (!entries.length) unprintable('a record sets no field');
+      return `{ ${entries.map(([key, value]) => `${sourceRef(key, 'field')}: ${sourceHandlerOperand(value)}`).join(', ')} }`;
+    }
   }
   return sourceLiteral(operand);
 }
@@ -12782,19 +13735,23 @@ function sourceDerivedOperand(names, siblings = null) {
     }
     return sourceLiteral(v);
   };
-  return (operand) => {
-    if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.projection !== undefined) {
-      if (Object.keys(operand).some((k) => !['projection', 'tags', 'arguments'].includes(k))) unprintable('a derived operand carries extra fields');
-      if (typeof operand.projection === 'string' && isLocalProjectionName(operand.projection)) {
-        if (!siblings) unprintable(`it reads "${operand.projection}", a sibling, outside any group`);
-        if (operand.tags !== undefined && !isEmptyContainer(operand.tags)) unprintable('a sibling read gives tags – the group\'s is implied');
-        const local = sourceRef(operand.projection, 'sibling');
-        const args = operand.arguments === undefined || isEmptyContainer(operand.arguments) ? ''
-          : `(${sourceNamedArguments(operand.arguments, value)})`;
-        return local + args;
-      }
-      return sourceRead(operand, names, value);
+  const read = (operand) => {
+    if (Object.keys(operand).some((k) => !['projection', 'tags', 'arguments', 'field'].includes(k))) unprintable('a derived operand carries extra fields');
+    if (typeof operand.projection === 'string' && isLocalProjectionName(operand.projection)) {
+      if (!siblings) unprintable(`it reads "${operand.projection}", a sibling, outside any group`);
+      if (operand.tags !== undefined && !isEmptyContainer(operand.tags)) unprintable('a sibling read gives tags – the group\'s is implied');
+      const local = sourceRef(operand.projection, 'sibling');
+      const args = operand.arguments === undefined || isEmptyContainer(operand.arguments) ? ''
+        : `(${sourceNamedArguments(operand.arguments, value)})`;
+      return local + args + sourceField(operand);
     }
+    return sourceRead(operand, names, value);
+  };
+  return (operand) => {
+    if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.collect !== undefined) {
+      return sourceCollection(operand, read, value);
+    }
+    if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.projection !== undefined) return read(operand);
     if (siblings && operand && typeof operand === 'object' && siblings.includes(operand.parameterName)) {
       unprintable(`"${operand.parameterName}" names both a parameter and a projection of the group`);
     }
@@ -12951,18 +13908,29 @@ function sourceCommandOperand(body, names) {
         const head = sourceRef(value.alias, 'alias');
         const declared = aliases.has(head);
         if (!declared && parameters.has(head)) unprintable(`"${head}" names both a payload property and an alias`);
+        const binding = (body.boundary || []).find((b) => b && b.alias === head);
         if (value.property === undefined) {
           if (value.arguments !== undefined && !isEmptyContainer(value.arguments)) unprintable('an alias without a property is given arguments');
           if (!declared) unprintable(`it reads "${head}", which no alias here declares`);
+          // A field of the record a projection holds (11.0).
+          if (value.field !== undefined) {
+            if (!binding || binding.projection === undefined) unprintable(`it reads a field of "${head}", which binds no projection`);
+            return `${head}${sourceField(value)}`;
+          }
           return head;
         }
+        if (binding && binding.projection !== undefined) unprintable(`"${head}" binds a projection, which has no projection "${value.property}"`);
         // A group's projection, its arguments by name.
         const args = value.arguments === undefined || isEmptyContainer(value.arguments) ? ''
           : `(${sourceNamedArguments(value.arguments, sourceCommandOperand(body, names))})`;
-        return `${head}.${sourceRef(value.property, 'property')}${args}`;
+        return `${head}.${sourceRef(value.property, 'property')}${args}${sourceField(value)}`;
+      }
+      if (value.collect !== undefined) {
+        const operand = sourceCommandOperand(body, names);
+        return sourceCollection(value, (read) => sourceRead(read, names, operand), operand);
       }
       if (value.projection !== undefined) {
-        if (Object.keys(value).some((k) => !['projection', 'tags', 'arguments'].includes(k))) unprintable('an inline read carries extra fields');
+        if (Object.keys(value).some((k) => !['projection', 'tags', 'arguments', 'field'].includes(k))) unprintable('an inline read carries extra fields');
         return sourceRead(value, names, sourceCommandOperand(body, names));
       }
       // A typed literal stands where a tag does; anywhere else it is no
@@ -14024,6 +14992,34 @@ function sourceSymbols(parsed) {
     }
   };
 
+  // A record value's field read off a projection that holds one (11.0).
+  const fieldOf = (projectionName, value) => {
+    if (!has(value, 'field')) return;
+    const target = projectionBody(projectionName);
+    if (target && recordFields(target.valueType)) add(sourceSymbol('field', target.valueType, value.field), slotsOf(value).field);
+  };
+  // A collection's where (11.0): `value` and its field, the names in
+  // scope (`name(operand)`), and a member opposite value typed by what
+  // the collected projection holds.
+  const whereSymbols = (collection, projectionName, name) => {
+    const target = projectionBody(projectionName);
+    const typeOf = (side) => (!has(side, 'instanceValue') || !target ? null
+      : side.field === undefined ? target.valueType
+        : ((recordFields(target.valueType) || []).find((f) => f.name === side.field) || {}).propertyType || null);
+    for (const leaf of conditionLeaves(collection.where)) {
+      const sides = [leaf.leftHandSide, ...(Array.isArray(leaf.rightHandSide) ? leaf.rightHandSide : [leaf.rightHandSide])];
+      const typed = sides.map(typeOf).find(Boolean) || null;
+      for (const side of sides) {
+        if (has(side, 'instanceValue')) {
+          if (side.field !== undefined && target && recordFields(target.valueType)) {
+            add(sourceSymbol('field', target.valueType, side.field), slotsOf(side).field);
+          }
+        } else if (has(side, 'parameterName')) name(side);
+        else literal(side, typed);
+      }
+    }
+  };
+
   // ---------- types, events ----------
   for (const [name, body] of Object.entries(types)) {
     if (!declare('type', name, body)) continue;
@@ -14058,7 +15054,12 @@ function sourceSymbols(parsed) {
   const handlerValue = (value, typeName, event) => {
     if (has(value, 'eventProperty')) add(sourceSymbol('eventProperty', event, value.eventProperty), slotsOf(value).eventProperty);
     else if (has(value, 'successor')) handlerValue(value.successor, typeName, event);
-    else literal(value, typeName);
+    else if (has(value, 'record') && value.record && typeof value.record === 'object') {
+      // A record set whole (11.0): its keys are the record's fields.
+      const fields = recordFields(typeName) || [];
+      keyed(value.record, (key) => (recordFields(typeName) ? sourceSymbol('field', typeName, key) : []),
+        (field, key) => handlerValue(field, ((fields.find((f) => f.name === key)) || {}).propertyType || null, event));
+    } else literal(value, typeName);
   };
   // One projection's body, read as `name` (qualified in a group). In a
   // group (`inGroup`: its name and tag) a parameter may be the group's
@@ -14137,12 +15138,16 @@ function sourceSymbols(parsed) {
       if (Array.isArray(value)) return value.forEach((v) => operand(v, expected));
       const marked = slotsOf(value);
       if (has(value, 'parameterName')) ownRef(value);
-      else if (has(value, 'projection')) {
+      else if (has(value, 'collect')) {
+        operand(value.read, null);
+        if (has(value.read, 'projection')) whereSymbols(value, value.read.projection, ownRef);
+      } else if (has(value, 'projection')) {
         projectionRef(value.projection, marked, group);
         const owner = group && isLocalProjectionName(value.projection) ? qualifiedProjectionName(group, value.projection) : value.projection;
         tagOperands(value.tags, (tag) => { if (has(tag, 'parameterName')) ownRef(tag); });
         keyed(value.arguments, (key) => sourceSymbol('projectionParameter', owner, key),
           (arg, key) => operand(arg, parameterType(owner, key)));
+        fieldOf(owner, value);
       } else literal(value, expected);
     };
     const { leftHandSide, rightHandSide } = body.derived;
@@ -14186,6 +15191,11 @@ function sourceSymbols(parsed) {
     } else if (has(value, 'parameterName')) {
       parameter = value.parameterName;
       ({ property } = value);
+    } else if (has(value, 'collect')) {
+      // A collection function (11.0): its open read, and its where.
+      commandOperand(commandName, body, value.read, null);
+      if (has(value.read, 'projection')) whereSymbols(value, value.read.projection, (side) => commandOperand(commandName, body, side, null));
+      return;
     } else if (has(value, 'projection')) {
       // An inline read: its projection, and its tags and arguments in
       // the same scope as everything around it.
@@ -14193,6 +15203,7 @@ function sourceSymbols(parsed) {
       tagOperands(value.tags, (tag) => commandOperand(commandName, body, tag, null));
       keyed(value.arguments, (key) => sourceSymbol('projectionParameter', value.projection, key),
         (arg, key) => commandOperand(commandName, body, arg, parameterType(value.projection, key)));
+      fieldOf(value.projection, value);
       return;
     } else return literal(value, expected);
     if (alias !== undefined) {
@@ -14204,7 +15215,8 @@ function sourceSymbols(parsed) {
         add(sourceSymbol('groupProjection', binding.group, property), marked.property);
         keyed(value.arguments, (key) => sourceSymbol('projectionParameter', qualified, key),
           (arg, key) => commandOperand(commandName, body, arg, parameterType(qualified, key)));
-      }
+        fieldOf(qualified, value);
+      } else if (binding && binding.projection !== undefined) fieldOf(binding.projection, value);
       return;
     }
     add(sourceSymbol('commandProperty', commandName, parameter), marked.head);
@@ -15041,6 +16053,10 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
       definitionItems('group-definition', { sort: 1, call: (n) => `${n}($1).` });
       push('count', 'keyword', 'count(…)', { insert: 'count($1)', snippet: true, sort: 1 });
+      // A collection function over an open read (11.0).
+      for (const word of COLLECTION_FUNCTIONS.filter((w) => w !== 'count')) {
+        push(word, 'keyword', `${word}(P(x, *))`, { insert: `${word}($1)`, snippet: true, sort: 2 });
+      }
       if (!cond.length) push('not', 'keyword', '', { sort: 2 });
       return done();
     }
@@ -15669,7 +16685,21 @@ another projection or the state, and never narrows the query.
 
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
 a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
-an enum member (Archived), a tag literal naming its type (CourseId("c1")).
+an enum member (Archived), a tag literal naming its type (CourseId("c1")), a collection
+function, and a field of a projection's record value: P(…).city, alias.city, G(…).p.city.
+
+An open tag, *, reads every present instance of a projection tagged by several – one whose
+value is not its initial one – matching the tags it binds; at least one stays bound:
+  count(P(x, *))    sum(P(x, *))    min(…)    max(…)    average(…)    any(…)    all(…)
+  count(P(x, *) where value > 2 and (value.city == city or value.city == "Berlin"))
+An open read stands only inside one of these. Its where reads value (value.field of a record),
+names in scope and literals – never a projection. Over no instance: count and sum 0;
+min, max and average null; any false; all true. Without a where, any says whether one is
+present, and all holds. A derived projection may hold one such value: { sum(P(x, *)) }.
+
+A projection may hold a record its handlers replace whole – set event.data.address, or
+set { street: event.data.street, city: event.data.city } naming every field. Setting one
+field at a time (composite state) is refused.
 
 Scenarios sit in one scenarios { … } group at the end of the block of the command or
 projection they exercise, and name it:
@@ -15696,6 +16726,7 @@ tag type LoanId = string { pattern: "^l[0-9]+$" }
 enum BookStatus { Unknown, Available, Lent, Withdrawn }
 // A record is a composite value; every field is one required value.
 record Copy { bookId: BookId, isbn: Isbn }
+record Shelf { room: string, row: integer }
 
 // ---- Events ----
 // "tag" marks each value the event is tagged by; "name?:" is optional
@@ -15708,6 +16739,7 @@ event BookReturned { tag bookId: BookId, tag memberId: MemberId }
 event BookPassedOn { tag bookId: BookId, tag fromMemberId: MemberId, tag toMemberId: MemberId }
 event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
+event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
 
 // ---- Projections ----
@@ -15732,6 +16764,13 @@ projection BookTitle (tag bookId: BookId): string = null {
 
 projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
   on BookLent => append event.data.memberId
+}
+
+// A projection may hold a record, replaced whole: an event field of its
+// type, or "{ field: …, … }" naming every field. A read gives a field
+// of it, BookShelf(bookId).room.
+projection BookShelf (tag bookId: BookId): Shelf = null {
+  on BookShelved => set { room: event.data.room, row: event.data.row }
 }
 
 projection MemberHasBook (tag memberId: MemberId, tag bookId: BookId): boolean = false {
@@ -15812,6 +16851,14 @@ derived projection MemberLoansLeftCapped (tag memberId: MemberId): integer {
   min(Member(memberId).loansLeft, 3)
 }
 
+// "*" leaves a tag open: MemberHasBook(memberId, *) is every book the
+// member has – every instance not at its initial value, false. It is
+// read inside count, sum, min, max, average, any or all, which may say
+// "where" over value; its query is the bound tags' alone.
+derived projection MemberBooksHeld (tag memberId: MemberId): integer {
+  count(MemberHasBook(memberId, *))
+}
+
 // ---- Commands ----
 // Parameters are typed like event properties. A projection is read
 // with its tag values (then arguments) in parentheses, in header order,
@@ -15878,6 +16925,10 @@ command LendBook(bookId: BookId, memberId: MemberId) {
     else reject "Too many loans"
   require BookBorrowers(bookId) not contains memberId
     else reject "Borrowed this book before"
+  require all(MemberHasBook(memberId, *) where value is true) is true and MemberBooksHeld(memberId) < 10
+    else reject "Holds too many books"
+  require BookShelf(bookId).room is not empty
+    else reject "Book is not shelved"
 
   emit BookLent { bookId, memberId, loanId: loanNumber }
 }
@@ -16028,6 +17079,8 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 - A read needs a value for each tag, and is made only when a step reached needs it. So read by an optional parameter, or emit it into a required property, inside if x is not empty => … or after require x is not empty – not in a command of its own.
 - Cases that end differently are arms of one command, not one command each: if … => emit A { … }  else if … => emit B { … }  else => reject "…". Each arm that emits and each message owes a scenario.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
+- An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
+- A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
 `;
 
 const SOURCE_REFERENCE_UNOFFERED = 'Not in the definition tools\' schemas: the arguments a read passes, '
@@ -16056,6 +17109,7 @@ const SOURCE_KEYWORDS = [
   'projection', 'min', 'max', 'on', 'set', 'increment', 'decrement', 'append',
   'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'or', 'not', 'is', 'if',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
+  'sum', 'average', 'any', 'all', 'where',
   'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject',
 ];

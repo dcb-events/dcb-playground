@@ -1943,7 +1943,7 @@ check('completion knows a command\'s reads and payload', () => {
   const text = modelToSource(buildText().model());
   const rule = (insert) => completeAt(swap(text, '    else reject "Course has more subscriptions than that"',
     `    else reject "Course has more subscriptions than that"\n  ${insert}`));
-  eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'Student', 'Course', 'count', 'not'],
+  eq(rule('require |').labels, ['course', 'courseId', 'newCapacity', 'Student', 'Course', 'count', 'sum', 'min', 'max', 'average', 'any', 'all', 'not'],
     'what a rule can be about – its reads and payload, then any group or projection, read in place');
   eq(rule('require |').items.find((i) => i.label === 'Course').insert, 'Course($1).', 'a group, for one of its projections');
   eq(rule('require course.|').labels, ['status', 'capacity', 'subscriptionCount', 'subscribedStudentIds'], 'the group\'s projections');
@@ -2714,6 +2714,141 @@ projection Moves (tag accountId: AccountId): integer = 0 {
       'the tag it compares with');
     eq(at('member State Released'), [`${lineOf("set Released")}:37`], 'a member set in a branch');
     eq(at('field Address city'), [`${lineOf("address.city")}:27`], 'a record field');
+  });
+}
+
+
+// ---------------------------------------------------------------
+// Open tags, collection functions and record values (11.0).
+// ---------------------------------------------------------------
+{
+  const SEATS = `model "Seats"
+
+// Types
+tag type CourseId = string
+tag type ReservationId = string
+tag type CustomerId = string
+type Seats = integer
+enum Kind { Single, Group }
+record Address { street: string, city: string }
+
+// Events
+event SeatsWereReserved { tag courseId: CourseId, tag reservationId: ReservationId, numberOfSeatsReserved: Seats, kind: Kind }
+event SeatReservationWasCancelled { tag courseId: CourseId, tag reservationId: ReservationId }
+event CustomerMoved { tag customerId: CustomerId, address: Address }
+event CustomerRelocated { tag customerId: CustomerId, street: string, city: string }
+event ParcelSent { tag customerId: CustomerId, city: string, total: Seats }
+
+// Projections
+projection ReservationSeats (tag courseId: CourseId, tag reservationId: ReservationId): Seats = 0 {
+  on SeatsWereReserved => set event.data.numberOfSeatsReserved
+  on SeatReservationWasCancelled => set 0
+}
+
+projection ReservationKind (tag courseId: CourseId, tag reservationId: ReservationId): Kind = null {
+  on SeatsWereReserved => set event.data.kind
+  on SeatReservationWasCancelled => set null
+}
+
+derived projection CourseSeatsReserved (tag courseId: CourseId): integer {
+  sum(ReservationSeats(courseId, *))
+}
+
+derived projection BigReservations (tag courseId: CourseId, least: Seats): integer {
+  count(ReservationSeats(courseId, *) where value >= least and (value < 100 or value == 1000))
+}
+
+derived projection SeatsLeft (tag courseId: CourseId): integer {
+  10 - sum(ReservationSeats(courseId, *))
+}
+
+derived projection AnyGroup (tag courseId: CourseId): boolean {
+  any(ReservationKind(courseId, *) where value == Group)
+}
+
+projection CustomerAddress (tag customerId: CustomerId): Address = null {
+  on CustomerMoved => set event.data.address
+  on CustomerRelocated => set { street: event.data.street, city: event.data.city }
+}
+
+derived projection CustomerCity (tag customerId: CustomerId): string {
+  CustomerAddress(customerId).city
+}
+
+// Commands
+command SendParcel(customerId: CustomerId, courseId: CourseId, city: string, least: Seats) {
+  alias address = CustomerAddress(customerId)
+
+  require address.city == city
+    else reject "Wrong city"
+  require CustomerAddress(customerId).street is not empty
+    else reject "No street"
+  require count(ReservationSeats(courseId, *) where value >= least) == 0
+    else reject "Too many big ones"
+
+  if max(ReservationSeats(courseId, *)) > 5 or all(ReservationKind(courseId, *) where value != Single) is true => reject "Too big"
+
+  emit ParcelSent {
+    customerId,
+    city: address.city,
+    total: sum(ReservationSeats(courseId, *)),
+  }
+}
+`;
+
+  check('open reads, collection functions and record fields print as written and parse back equal', () => {
+    const { model } = buildText(SEATS);
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const text = modelToSource(model());
+    eq(text.slice(text.indexOf('// Projections')), SEATS.slice(SEATS.indexOf('// Projections')), 'printed as written');
+    const parsed = parseModelSource(text);
+    eq(parsed.diagnostics, [], 'it reads');
+    assertSameModel(model(), parsed, 'package 5');
+    const projections = model()['projection-definitions'];
+    eq(projections.CourseSeatsReserved.derived, { leftHandSide: { collect: 'sum', read: { projection: 'ReservationSeats',
+      tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } } } } }, 'the stored collection');
+    eq(projections.BigReservations.derived.leftHandSide.where.all[0],
+      { leftHandSide: { instanceValue: true }, predicate: 'greaterThanOrEquals', rightHandSide: { parameterName: 'least' } }, 'a where');
+    eq(projections.CustomerAddress.handlers[1].value,
+      { record: { street: { eventProperty: 'street' }, city: { eventProperty: 'city' } } }, 'a record set whole');
+    const steps = model()['command-definitions'].SendParcel.steps;
+    eq(steps[0].condition.leftHandSide, { alias: 'address', field: 'city' }, 'an alias\'s field');
+    eq(steps[1].condition.leftHandSide.field, 'street', 'a read\'s field');
+  });
+
+  const errorOf = (from, to) => {
+    const { diagnostics } = parseModelSource(swap(SEATS, from, to));
+    return diagnostics.map((d) => `${d.line}:${d.col} ${d.message}`);
+  };
+  const lineOf = (needle) => SEATS.split('\n').findIndex((line) => line.includes(needle)) + 1;
+
+  check('an open read outside a collection function, and a where that reads a projection, are positioned errors', () => {
+    eq(errorOf('require address.city == city', 'require ReservationSeats(courseId, *) == city'),
+      [`${lineOf('require address.city')}:38 An open read is no value of its own – ReservationSeats(…, *) goes inside count, sum, min, max, average, any or all.`],
+      'in a rule');
+    eq(errorOf('where value >= least)', 'where CustomerCity(customerId) == city)'),
+      [`${lineOf('where value >= least)')}:53 A where reads value, parameters and literals – never a projection.`], 'a read in a where');
+    eq(errorOf('sum(ReservationSeats(courseId, *))\n}', 'sum(ReservationSeats(*, *))\n}'),
+      [`${lineOf('  sum(ReservationSeats(courseId, *))')}:7 ReservationSeats(*, *) leaves every tag open – at least one stays bound.`],
+      'every tag open');
+    eq(errorOf('set { street: event.data.street, city: event.data.city }', 'set address.city = event.data.city').slice(0, 1),
+      [`${lineOf('set { street')}:31 A record is replaced whole – set it to an event field holding one, or to { field: …, … } naming every field.`],
+      'a partial update');
+  });
+
+  check('the code view names what an open read, a where and a record field read', () => {
+    const parsed = parseModelSource(SEATS);
+    const symbols = sandbox.sourceSymbols(parsed).occurrences.filter((o) => !o.decl);
+    const at = (symbol) => symbols.filter((o) => o.symbol === symbol).map((o) => o.token.line);
+    eq(at('projection ReservationSeats').length, 6, 'the projection an open read reads');
+    eq(at('projectionParameter BigReservations least'), [lineOf('where value >= least and')], 'a parameter in a where');
+    eq(at('commandProperty SendParcel least'), [lineOf('where value >= least)')], 'and a command\'s');
+    eq(at('member Kind Group'), [lineOf('value == Group')], 'a member compared with value');
+    eq(at('field Address city').sort(), [lineOf('CustomerAddress(customerId).city'), lineOf('set { street'),
+      lineOf('address.city == city'), lineOf('city: address.city')].sort(), 'a record field, read and set');
+    const renamed = renameAt(SEATS, 'record Address { street: string, city', 'record Address { street: string, '.length, 'town');
+    eq(parseModelSource(renamed.text).diagnostics, [], `a field rename reads back: ${renamed.error || ''}`);
+    eq(renamed.text.includes('address.town == city') && renamed.text.includes('town: event.data.city'), true, 'and follows every use');
   });
 }
 

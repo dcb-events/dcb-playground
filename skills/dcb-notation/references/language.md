@@ -56,7 +56,21 @@ another projection or the state, and never narrows the query.
 
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
 a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
-an enum member (Archived), a tag literal naming its type (CourseId("c1")).
+an enum member (Archived), a tag literal naming its type (CourseId("c1")), a collection
+function, and a field of a projection's record value: P(…).city, alias.city, G(…).p.city.
+
+An open tag, *, reads every present instance of a projection tagged by several – one whose
+value is not its initial one – matching the tags it binds; at least one stays bound:
+  count(P(x, *))    sum(P(x, *))    min(…)    max(…)    average(…)    any(…)    all(…)
+  count(P(x, *) where value > 2 and (value.city == city or value.city == "Berlin"))
+An open read stands only inside one of these. Its where reads value (value.field of a record),
+names in scope and literals – never a projection. Over no instance: count and sum 0;
+min, max and average null; any false; all true. Without a where, any says whether one is
+present, and all holds. A derived projection may hold one such value: { sum(P(x, *)) }.
+
+A projection may hold a record its handlers replace whole – set event.data.address, or
+set { street: event.data.street, city: event.data.city } naming every field. Setting one
+field at a time (composite state) is refused.
 
 Scenarios sit in one scenarios { … } group at the end of the block of the command or
 projection they exercise, and name it:
@@ -77,6 +91,8 @@ Leave it as it is, or rewrite it in the language.
 - A read needs a value for each tag, and is made only when a step reached needs it. So read by an optional parameter, or emit it into a required property, inside if x is not empty => … or after require x is not empty – not in a command of its own.
 - Cases that end differently are arms of one command, not one command each: if … => emit A { … }  else if … => emit B { … }  else => reject "…". Each arm that emits and each message owes a scenario.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
+- An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
+- A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
 
 
 ## Tour – a complete model using every construct
@@ -96,6 +112,7 @@ tag type LoanId = string { pattern: "^l[0-9]+$" }
 enum BookStatus { Unknown, Available, Lent, Withdrawn }
 // A record is a composite value; every field is one required value.
 record Copy { bookId: BookId, isbn: Isbn }
+record Shelf { room: string, row: integer }
 
 // ---- Events ----
 // "tag" marks each value the event is tagged by; "name?:" is optional
@@ -108,6 +125,7 @@ event BookReturned { tag bookId: BookId, tag memberId: MemberId }
 event BookPassedOn { tag bookId: BookId, tag fromMemberId: MemberId, tag toMemberId: MemberId }
 event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
+event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
 
 // ---- Projections ----
@@ -132,6 +150,13 @@ projection BookTitle (tag bookId: BookId): string = null {
 
 projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
   on BookLent => append event.data.memberId
+}
+
+// A projection may hold a record, replaced whole: an event field of its
+// type, or "{ field: …, … }" naming every field. A read gives a field
+// of it, BookShelf(bookId).room.
+projection BookShelf (tag bookId: BookId): Shelf = null {
+  on BookShelved => set { room: event.data.room, row: event.data.row }
 }
 
 projection MemberHasBook (tag memberId: MemberId, tag bookId: BookId): boolean = false {
@@ -212,6 +237,14 @@ derived projection MemberLoansLeftCapped (tag memberId: MemberId): integer {
   min(Member(memberId).loansLeft, 3)
 }
 
+// "*" leaves a tag open: MemberHasBook(memberId, *) is every book the
+// member has – every instance not at its initial value, false. It is
+// read inside count, sum, min, max, average, any or all, which may say
+// "where" over value; its query is the bound tags' alone.
+derived projection MemberBooksHeld (tag memberId: MemberId): integer {
+  count(MemberHasBook(memberId, *))
+}
+
 // ---- Commands ----
 // Parameters are typed like event properties. A projection is read
 // with its tag values (then arguments) in parentheses, in header order,
@@ -278,6 +311,10 @@ command LendBook(bookId: BookId, memberId: MemberId) {
     else reject "Too many loans"
   require BookBorrowers(bookId) not contains memberId
     else reject "Borrowed this book before"
+  require all(MemberHasBook(memberId, *) where value is true) is true and MemberBooksHeld(memberId) < 10
+    else reject "Holds too many books"
+  require BookShelf(bookId).room is not empty
+    else reject "Book is not shelved"
 
   emit BookLent { bookId, memberId, loanId: loanNumber }
 }

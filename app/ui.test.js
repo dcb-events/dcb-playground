@@ -718,13 +718,17 @@ function build(which) {
     eq(offered.includes('Item'), false, 'the composite stays off the list');
   });
 
-  check('a declared projection holding a composite is advisory-flagged', () => {
+  check('a declared projection may hold a record (11.0), but not a list of them', () => {
     addDefinition('projection-definition', id, 'ItemSnapshot', {
       valueType: 'Item', isList: false, initialValue: null, tags: [], handlers: [],
     });
+    eq(sandbox.modelAdvisories(model()).some((a) => a.name === 'ItemSnapshot'), false, 'one record, replaced whole');
+    addDefinition('projection-definition', id, 'ItemSnapshots', {
+      valueType: 'Item', isList: true, initialValue: [], tags: [], handlers: [],
+    });
     eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'ItemSnapshot' && /composite/.test(a.message)
-    ), true, 'stored, and reported');
+      (a) => a.name === 'ItemSnapshots' && /a list holds single values/.test(a.message)
+    ), true, 'a list of records is stored, and reported');
   });
 
 }
