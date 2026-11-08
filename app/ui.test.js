@@ -2544,6 +2544,59 @@ check('importing an older model with entities says what became of them', () => {
 }
 
 // ---------------------------------------------------------------
+// A command with branches (11.0): every page shows them, and an edit
+// on the page never flattens or drops one.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build('course-simple');
+  sandbox.setActiveModelId(id);
+  const course = { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } };
+  const branch = {
+    branches: [
+      { condition: { any: [
+        { leftHandSide: course, predicate: 'equals', rightHandSide: { enumMember: 'Archived' } },
+        { leftHandSide: course, predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      ] }, steps: [{ reject: 'Course is gone' }] },
+    ],
+    otherwise: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } }],
+  };
+  sandbox.updateDefinition('command-definition', id, 'ArchiveCourse', {
+    ...model()['command-definitions'].ArchiveCourse,
+    steps: [{ condition: { leftHandSide: { parameterName: 'courseId' }, predicate: 'isNotEmpty' }, rejection: 'No course' }, branch],
+  });
+
+  check('a branch shows on the command page, the rule map and the overview, read-only', () => {
+    const current = model();
+    sandbox.state.slice = 'ArchiveCourse';
+    const slice = sandbox.sliceOf(current, 'ArchiveCourse');
+    eq([slice.rules.length, slice.branches.length, slice.emits.length, slice.allEmits.length], [1, 1, 0, 1],
+      'one rule and one branch on top, its emission inside');
+    const decision = textOf(sandbox.stepDecision(current, slice));
+    eq(decision.includes('Branch – the first arm that holds runs'), true, decision);
+    eq(decision.includes('Course is gone') && decision.includes('Edit in code'), true, 'its reject, and the way to edit it');
+    eq(decision.includes(' or '), true, 'its condition joined with or');
+    const paint = (fn) => { const main = sandbox.document.createElement('div'); fn(current, main); return textOf(main); };
+    const map = paint(sandbox.renderRuleMap);
+    eq(map.includes('else → emit'), true, 'the rule map says each arm');
+    paint(sandbox.renderCoupling);
+    eq(sandbox.problems(current).some((p) => p.what === 'Archive course' && /records nothing/.test(p.why)), false,
+      'an emission inside a branch is still recorded');
+  });
+
+  check('editing the rules on the page keeps the branch where it was', () => {
+    sandbox.state.slice = 'ArchiveCourse';
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => { b.conditions.push({ leftHandSide: { parameterName: 'courseId' }, predicate: 'startsWith', rightHandSide: 'c', rejection: 'Not a course id' }); });
+    const steps = model()['command-definitions'].ArchiveCourse.steps;
+    eq(steps.map((step) => sandbox.stepKind(step)), ['rule', 'rule', 'branch'], 'the new rule after the last, the branch kept');
+    eq(steps[2], branch, 'unchanged');
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => { b.conditions = []; });
+    eq(model()['command-definitions'].ArchiveCourse.steps, [branch], 'removing every rule leaves the branch');
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
 // Undo batching: however many appends one gesture makes – nested
 // `run` calls included – the gesture is one undo step.
 // ---------------------------------------------------------------
