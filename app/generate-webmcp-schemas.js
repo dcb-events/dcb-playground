@@ -17,7 +17,9 @@
 //   - a projection read in place is written compactly, its shape said
 //     in words rather than inlined: any operand of a command may be
 //     one, its tags are operands in turn, and inlining that at every
-//     operand more than doubled a command's schema.
+//     operand more than doubled a command's schema. A collection
+//     function (11.0) is written the same way, for the same reason –
+//     inlined, its read and its where tripled the file.
 //
 // The members WebMCP does not offer are cut before anything is
 // inlined (see webmcp.js): the arguments a read passes, a group
@@ -150,6 +152,21 @@ function inline(value, stack) {
         tags: { type: 'object' },
       },
       required: ['projection'],
+    };
+  }
+  if (name === 'CollectionValue') {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' ' + defs[name].description.trim()
+        + ' `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any'
+        + ' read\'s. `where`: a condition, as a rule\'s, whose sides are {instanceValue: true} (value),'
+        + ' {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.').trim(),
+      properties: {
+        collect: inline(defs[name].properties.collect, stack),
+        read: { type: 'object' },
+        where: { type: 'object' },
+      },
+      required: ['collect', 'read'],
     };
   }
   if (stack.includes(name)) {

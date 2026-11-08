@@ -139,7 +139,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               "default": []
             },
             "valueType": {
-              "description": "The type of the value held.\n\nNever a composite value type: the operations that advance a\nprojection act on a single value, and a record of fields has none.\n",
+              "description": "The type of the value held.\n\nA record (a composite value type, 11.0) is held whole: every handler\nreplaces it – from an event field of its type, or a `RecordValue` – and\nnone sets one field of it. A list holds single values, never records.\n",
               "type": "string",
               "anyOf": [
                 {
@@ -244,7 +244,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               "additionalProperties": false,
               "properties": {
                 "leftHandSide": {
-                  "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\n",
+                  "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\n",
                   "oneOf": [
                     {
                       "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters. A grouped projection is named qualified, `Course.capacity`,\nand tagged by its group's tag; inside its own group a derived\nprojection names a sibling bare, `capacity`, and gives no tags – the\ngroup's, passed on, is implied: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
@@ -363,10 +363,35 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   "tagType",
                                   "tagValue"
                                 ]
+                              },
+                              {
+                                "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "open": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "open"
+                                ]
                               }
                             ]
                           },
                           "default": {}
+                        },
+                        "field": {
+                          "type": "string",
+                          "minLength": 2,
+                          "maxLength": 100,
+                          "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                          "examples": [
+                            "someProperty"
+                          ],
+                          "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                         }
                       },
                       "required": [
@@ -425,6 +450,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "string",
                         "number",
                         "boolean"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                      "properties": {
+                        "collect": {
+                          "enum": [
+                            "count",
+                            "sum",
+                            "min",
+                            "max",
+                            "average",
+                            "any",
+                            "all"
+                          ]
+                        },
+                        "read": {
+                          "type": "object"
+                        },
+                        "where": {
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "collect",
+                        "read"
                       ]
                     }
                   ]
@@ -456,7 +508,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   ]
                 },
                 "rightHandSide": {
-                  "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\n",
+                  "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\n",
                   "oneOf": [
                     {
                       "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters. A grouped projection is named qualified, `Course.capacity`,\nand tagged by its group's tag; inside its own group a derived\nprojection names a sibling bare, `capacity`, and gives no tags – the\ngroup's, passed on, is implied: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
@@ -575,10 +627,35 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   "tagType",
                                   "tagValue"
                                 ]
+                              },
+                              {
+                                "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "open": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "open"
+                                ]
                               }
                             ]
                           },
                           "default": {}
+                        },
+                        "field": {
+                          "type": "string",
+                          "minLength": 2,
+                          "maxLength": 100,
+                          "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                          "examples": [
+                            "someProperty"
+                          ],
+                          "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                         }
                       },
                       "required": [
@@ -638,6 +715,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "number",
                         "boolean"
                       ]
+                    },
+                    {
+                      "type": "object",
+                      "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                      "properties": {
+                        "collect": {
+                          "enum": [
+                            "count",
+                            "sum",
+                            "min",
+                            "max",
+                            "average",
+                            "any",
+                            "all"
+                          ]
+                        },
+                        "read": {
+                          "type": "object"
+                        },
+                        "where": {
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "collect",
+                        "read"
+                      ]
                     }
                   ]
                 },
@@ -648,13 +752,13 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 }
               },
               "required": [
-                "leftHandSide",
-                "rightHandSide"
+                "leftHandSide"
               ],
               "oneOf": [
                 {
                   "required": [
-                    "predicate"
+                    "predicate",
+                    "rightHandSide"
                   ],
                   "not": {
                     "required": [
@@ -664,13 +768,40 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                 },
                 {
                   "required": [
-                    "operator"
+                    "operator",
+                    "rightHandSide"
                   ],
                   "not": {
                     "anyOf": [
                       {
                         "required": [
                           "predicate"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "negate"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "predicate"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "operator"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "rightHandSide"
                         ]
                       },
                       {
@@ -712,7 +843,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     ]
                   },
                   "value": {
-                    "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+                    "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                     "oneOf": [
                       {
                         "description": "A property of the event being handled.",
@@ -770,6 +901,70 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           "string",
                           "number",
                           "boolean"
+                        ]
+                      },
+                      {
+                        "description": "A record set whole by a handler (11.0): each field of the record\nthe projection holds, by name, from an event field or a literal –\nevery field it requires. Setting fields one at a time, composite\nstate, has no shape.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "record": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "oneOf": [
+                                {
+                                  "description": "A property of the event being handled.",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "eventProperty": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "eventProperty"
+                                  ]
+                                },
+                                {
+                                  "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "enumMember": {
+                                      "type": [
+                                        "string",
+                                        "number",
+                                        "boolean"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "enumMember"
+                                  ]
+                                },
+                                {
+                                  "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "record"
                         ]
                       }
                     ]
@@ -951,7 +1146,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 ]
                               },
                               "value": {
-                                "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+                                "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                                 "oneOf": [
                                   {
                                     "description": "A property of the event being handled.",
@@ -1010,6 +1205,70 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       "number",
                                       "boolean"
                                     ]
+                                  },
+                                  {
+                                    "description": "A record set whole by a handler (11.0): each field of the record\nthe projection holds, by name, from an event field or a literal –\nevery field it requires. Setting fields one at a time, composite\nstate, has no shape.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "record": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "oneOf": [
+                                            {
+                                              "description": "A property of the event being handled.",
+                                              "type": "object",
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "eventProperty": {
+                                                  "type": "string",
+                                                  "minLength": 2,
+                                                  "maxLength": 100,
+                                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                                  "examples": [
+                                                    "someProperty"
+                                                  ]
+                                                }
+                                              },
+                                              "required": [
+                                                "eventProperty"
+                                              ]
+                                            },
+                                            {
+                                              "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                              "type": "object",
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "enumMember": {
+                                                  "type": [
+                                                    "string",
+                                                    "number",
+                                                    "boolean"
+                                                  ]
+                                                }
+                                              },
+                                              "required": [
+                                                "enumMember"
+                                              ]
+                                            },
+                                            {
+                                              "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                              "type": [
+                                                "string",
+                                                "number",
+                                                "boolean"
+                                              ]
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "record"
+                                    ]
                                   }
                                 ]
                               }
@@ -1036,7 +1295,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               ]
                             },
                             "value": {
-                              "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+                              "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                               "oneOf": [
                                 {
                                   "description": "A property of the event being handled.",
@@ -1094,6 +1353,70 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "string",
                                     "number",
                                     "boolean"
+                                  ]
+                                },
+                                {
+                                  "description": "A record set whole by a handler (11.0): each field of the record\nthe projection holds, by name, from an event field or a literal –\nevery field it requires. Setting fields one at a time, composite\nstate, has no shape.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "record": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "oneOf": [
+                                          {
+                                            "description": "A property of the event being handled.",
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "eventProperty": {
+                                                "type": "string",
+                                                "minLength": 2,
+                                                "maxLength": 100,
+                                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                                "examples": [
+                                                  "someProperty"
+                                                ]
+                                              }
+                                            },
+                                            "required": [
+                                              "eventProperty"
+                                            ]
+                                          },
+                                          {
+                                            "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "enumMember": {
+                                                "type": [
+                                                  "string",
+                                                  "number",
+                                                  "boolean"
+                                                ]
+                                              }
+                                            },
+                                            "required": [
+                                              "enumMember"
+                                            ]
+                                          },
+                                          {
+                                            "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                            "type": [
+                                              "string",
+                                              "number",
+                                              "boolean"
+                                            ]
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "record"
                                   ]
                                 }
                               ]
@@ -1359,7 +1682,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "default": []
       },
       "valueType": {
-        "description": "The type of the value held.\n\nNever a composite value type: the operations that advance a\nprojection act on a single value, and a record of fields has none.\n",
+        "description": "The type of the value held.\n\nA record (a composite value type, 11.0) is held whole: every handler\nreplaces it – from an event field of its type, or a `RecordValue` – and\nnone sets one field of it. A list holds single values, never records.\n",
         "type": "string",
         "anyOf": [
           {
@@ -1464,7 +1787,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "additionalProperties": false,
         "properties": {
           "leftHandSide": {
-            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\n",
+            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\n",
             "oneOf": [
               {
                 "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters. A grouped projection is named qualified, `Course.capacity`,\nand tagged by its group's tag; inside its own group a derived\nprojection names a sibling bare, `capacity`, and gives no tags – the\ngroup's, passed on, is implied: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
@@ -1583,10 +1906,35 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "tagType",
                             "tagValue"
                           ]
+                        },
+                        {
+                          "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "open": {
+                              "enum": [
+                                true
+                              ]
+                            }
+                          },
+                          "required": [
+                            "open"
+                          ]
                         }
                       ]
                     },
                     "default": {}
+                  },
+                  "field": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100,
+                    "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                    "examples": [
+                      "someProperty"
+                    ],
+                    "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                   }
                 },
                 "required": [
@@ -1645,6 +1993,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "string",
                   "number",
                   "boolean"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                "properties": {
+                  "collect": {
+                    "enum": [
+                      "count",
+                      "sum",
+                      "min",
+                      "max",
+                      "average",
+                      "any",
+                      "all"
+                    ]
+                  },
+                  "read": {
+                    "type": "object"
+                  },
+                  "where": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "collect",
+                  "read"
                 ]
               }
             ]
@@ -1676,7 +2051,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
             ]
           },
           "rightHandSide": {
-            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\n",
+            "description": "One side of a derived projection's predicate or computation:\nanother projection's value, read by the tags the operand gives it,\none of the owning projection's own parameters – a tag or an argument,\nby name (`{parameterName}`, 10.0) – or a literal / enum-member\nreference to compare against. A computation's sides are numbers – a\nread of a numeric projection, a numeric parameter or a number literal.\nInside a group, a sibling is read by its local name (`ProjectionReadValue`).\nA collection function over an open read (11.0) is one too.\n",
             "oneOf": [
               {
                 "description": "Another projection's value, as a derived projection's operand. It\ngives the projection's tags by name – each one of the *owning*\nprojection's own parameters (`{parameterName}`, a tag or an argument)\nor a `TagLiteral`, of the type the tag declares – and `arguments` one\nper argument the projection takes, a literal or one of the owner's\nparameters. A grouped projection is named qualified, `Course.capacity`,\nand tagged by its group's tag; inside its own group a derived\nprojection names a sibling bare, `capacity`, and gives no tags – the\ngroup's, passed on, is implied: the same \"required here, rejected there\" rule every other\nmap of them follows.\n",
@@ -1795,10 +2170,35 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "tagType",
                             "tagValue"
                           ]
+                        },
+                        {
+                          "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "open": {
+                              "enum": [
+                                true
+                              ]
+                            }
+                          },
+                          "required": [
+                            "open"
+                          ]
                         }
                       ]
                     },
                     "default": {}
+                  },
+                  "field": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100,
+                    "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                    "examples": [
+                      "someProperty"
+                    ],
+                    "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                   }
                 },
                 "required": [
@@ -1858,6 +2258,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "number",
                   "boolean"
                 ]
+              },
+              {
+                "type": "object",
+                "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                "properties": {
+                  "collect": {
+                    "enum": [
+                      "count",
+                      "sum",
+                      "min",
+                      "max",
+                      "average",
+                      "any",
+                      "all"
+                    ]
+                  },
+                  "read": {
+                    "type": "object"
+                  },
+                  "where": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "collect",
+                  "read"
+                ]
               }
             ]
           },
@@ -1868,13 +2295,13 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           }
         },
         "required": [
-          "leftHandSide",
-          "rightHandSide"
+          "leftHandSide"
         ],
         "oneOf": [
           {
             "required": [
-              "predicate"
+              "predicate",
+              "rightHandSide"
             ],
             "not": {
               "required": [
@@ -1884,13 +2311,40 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           },
           {
             "required": [
-              "operator"
+              "operator",
+              "rightHandSide"
             ],
             "not": {
               "anyOf": [
                 {
                   "required": [
                     "predicate"
+                  ]
+                },
+                {
+                  "required": [
+                    "negate"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "predicate"
+                  ]
+                },
+                {
+                  "required": [
+                    "operator"
+                  ]
+                },
+                {
+                  "required": [
+                    "rightHandSide"
                   ]
                 },
                 {
@@ -1932,7 +2386,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
               ]
             },
             "value": {
-              "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+              "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
               "oneOf": [
                 {
                   "description": "A property of the event being handled.",
@@ -1990,6 +2444,70 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                     "string",
                     "number",
                     "boolean"
+                  ]
+                },
+                {
+                  "description": "A record set whole by a handler (11.0): each field of the record\nthe projection holds, by name, from an event field or a literal –\nevery field it requires. Setting fields one at a time, composite\nstate, has no shape.\n",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "record": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "oneOf": [
+                          {
+                            "description": "A property of the event being handled.",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "eventProperty": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                "examples": [
+                                  "someProperty"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "eventProperty"
+                            ]
+                          },
+                          {
+                            "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "enumMember": {
+                                "type": [
+                                  "string",
+                                  "number",
+                                  "boolean"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "enumMember"
+                            ]
+                          },
+                          {
+                            "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                            "type": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "record"
                   ]
                 }
               ]
@@ -2171,7 +2689,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                           ]
                         },
                         "value": {
-                          "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+                          "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                           "oneOf": [
                             {
                               "description": "A property of the event being handled.",
@@ -2230,6 +2748,70 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 "number",
                                 "boolean"
                               ]
+                            },
+                            {
+                              "description": "A record set whole by a handler (11.0): each field of the record\nthe projection holds, by name, from an event field or a literal –\nevery field it requires. Setting fields one at a time, composite\nstate, has no shape.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "record": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "oneOf": [
+                                      {
+                                        "description": "A property of the event being handled.",
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "eventProperty": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                            "examples": [
+                                              "someProperty"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "eventProperty"
+                                        ]
+                                      },
+                                      {
+                                        "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "enumMember": {
+                                            "type": [
+                                              "string",
+                                              "number",
+                                              "boolean"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "enumMember"
+                                        ]
+                                      },
+                                      {
+                                        "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                        "type": [
+                                          "string",
+                                          "number",
+                                          "boolean"
+                                        ]
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              "required": [
+                                "record"
+                              ]
                             }
                           ]
                         }
@@ -2256,7 +2838,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         ]
                       },
                       "value": {
-                        "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\n",
+                        "description": "Where a handler's value comes from. Resolved while projecting a\nsingle event, so the only things in scope are that event's\nproperties and literals.\nA projection holding a record (11.0) is set from an event field of\nits type, or from a `RecordValue`.\n",
                         "oneOf": [
                           {
                             "description": "A property of the event being handled.",
@@ -2314,6 +2896,70 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "string",
                               "number",
                               "boolean"
+                            ]
+                          },
+                          {
+                            "description": "A record set whole by a handler (11.0): each field of the record\nthe projection holds, by name, from an event field or a literal –\nevery field it requires. Setting fields one at a time, composite\nstate, has no shape.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "record": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "oneOf": [
+                                    {
+                                      "description": "A property of the event being handled.",
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "eventProperty": {
+                                          "type": "string",
+                                          "minLength": 2,
+                                          "maxLength": 100,
+                                          "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                          "examples": [
+                                            "someProperty"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "eventProperty"
+                                      ]
+                                    },
+                                    {
+                                      "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "enumMember": {
+                                          "type": [
+                                            "string",
+                                            "number",
+                                            "boolean"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "enumMember"
+                                      ]
+                                    },
+                                    {
+                                      "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                      "type": [
+                                        "string",
+                                        "number",
+                                        "boolean"
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "record"
                             ]
                           }
                         ]
@@ -2476,7 +3122,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "description": "A value for the group's one tag, keyed by its name, and nothing else\n– of the declared type; a literal states it (`TagLiteral`). A value may\nname a binding above this one, which is what puts the group into the\nchain. **Many instances are read where it says so:** `{each: …}` over a\nlist binds one instance per element (`Course(each\nstudent.subscribedCourseIds)`), and a rule over a projection read\nthrough the alias holds for every one of them.\n",
                   "type": "object",
                   "additionalProperties": {
-                    "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\n",
+                    "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\nAn `OpenTag` only in a collection function's read.\n",
                     "oneOf": [
                       {
                         "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
@@ -2508,7 +3154,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         ]
                       },
                       {
-                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -2530,6 +3176,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "examples": [
                               "someProperty"
                             ]
+                          },
+                          "field": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                            "examples": [
+                              "someProperty"
+                            ],
+                            "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                           }
                         },
                         "required": [
@@ -2629,7 +3285,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 ]
                               },
                               {
-                                "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -2651,6 +3307,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "examples": [
                                       "someProperty"
                                     ]
+                                  },
+                                  "field": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 100,
+                                    "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                    "examples": [
+                                      "someProperty"
+                                    ],
+                                    "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                                   }
                                 },
                                 "required": [
@@ -2662,6 +3328,21 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         },
                         "required": [
                           "each"
+                        ]
+                      },
+                      {
+                        "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "open": {
+                            "enum": [
+                              true
+                            ]
+                          }
+                        },
+                        "required": [
+                          "open"
                         ]
                       }
                     ]
@@ -2717,7 +3398,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "description": "A value for each tag the projection declares, keyed by its name,\nand none it does not – of the declared type, which is the tag's\nkey; a literal states it (`TagLiteral`). An untagged projection is\ngiven none. A value may name a binding above this one, which is\nwhat puts a projection into the chain; it may not resolve to a\nlist, except under `each` (`TagEach`).\n",
                   "type": "object",
                   "additionalProperties": {
-                    "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\n",
+                    "description": "The value one tag of a read is given: a value in the command's\nscope of the tag's declared type (a tag-marked value type directly,\nor a record with tag-marked fields – one tag per field), a\n`TagLiteral`, a projection read in place, or a `TagEach`, reading once\nper element of a list.\nAn `OpenTag` only in a collection function's read.\n",
                     "oneOf": [
                       {
                         "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
@@ -2749,7 +3430,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         ]
                       },
                       {
-                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -2771,6 +3452,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "examples": [
                               "someProperty"
                             ]
+                          },
+                          "field": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                            "examples": [
+                              "someProperty"
+                            ],
+                            "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                           }
                         },
                         "required": [
@@ -2870,7 +3561,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                 ]
                               },
                               {
-                                "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                                 "type": "object",
                                 "additionalProperties": false,
                                 "properties": {
@@ -2892,6 +3583,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "examples": [
                                       "someProperty"
                                     ]
+                                  },
+                                  "field": {
+                                    "type": "string",
+                                    "minLength": 2,
+                                    "maxLength": 100,
+                                    "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                    "examples": [
+                                      "someProperty"
+                                    ],
+                                    "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                                   }
                                 },
                                 "required": [
@@ -2903,6 +3604,21 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         },
                         "required": [
                           "each"
+                        ]
+                      },
+                      {
+                        "description": "A tag left open (11.0), `*`: the read collects every present\ninstance of the projection – one whose value is not its initial value –\nwhose other tags match. It stands only in the `read` of a\n`CollectionValue`, and at least one tag of that read stays bound; a\ngroup's one tag never opens. Its query is the handled event types by\nthe bound tags alone, and the events are grouped by the open tags'\nvalues – an event carrying none belongs to no instance.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "open": {
+                            "enum": [
+                              true
+                            ]
+                          }
+                        },
+                        "required": [
+                          "open"
                         ]
                       }
                     ]
@@ -2937,7 +3653,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "additionalProperties": false,
                       "properties": {
                         "leftHandSide": {
-                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
                           "oneOf": [
                             {
                               "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
@@ -2969,7 +3685,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               ]
                             },
                             {
-                              "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                              "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                               "type": "object",
                               "additionalProperties": false,
                               "properties": {
@@ -2991,6 +3707,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   "examples": [
                                     "someProperty"
                                   ]
+                                },
+                                "field": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                  "examples": [
+                                    "someProperty"
+                                  ],
+                                  "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                                 }
                               },
                               "required": [
@@ -3035,6 +3761,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               },
                               "required": [
                                 "projection"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                              "properties": {
+                                "collect": {
+                                  "enum": [
+                                    "count",
+                                    "sum",
+                                    "min",
+                                    "max",
+                                    "average",
+                                    "any",
+                                    "all"
+                                  ]
+                                },
+                                "read": {
+                                  "type": "object"
+                                },
+                                "where": {
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "collect",
+                                "read"
                               ]
                             }
                           ]
@@ -3064,7 +3817,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                       "additionalProperties": false,
                       "properties": {
                         "leftHandSide": {
-                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
                           "oneOf": [
                             {
                               "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
@@ -3096,7 +3849,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               ]
                             },
                             {
-                              "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                              "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                               "type": "object",
                               "additionalProperties": false,
                               "properties": {
@@ -3118,6 +3871,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   "examples": [
                                     "someProperty"
                                   ]
+                                },
+                                "field": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                  "examples": [
+                                    "someProperty"
+                                  ],
+                                  "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                                 }
                               },
                               "required": [
@@ -3163,6 +3926,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "required": [
                                 "projection"
                               ]
+                            },
+                            {
+                              "type": "object",
+                              "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                              "properties": {
+                                "collect": {
+                                  "enum": [
+                                    "count",
+                                    "sum",
+                                    "min",
+                                    "max",
+                                    "average",
+                                    "any",
+                                    "all"
+                                  ]
+                                },
+                                "read": {
+                                  "type": "object"
+                                },
+                                "where": {
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "collect",
+                                "read"
+                              ]
                             }
                           ]
                         },
@@ -3186,7 +3976,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "rightHandSide": {
                           "oneOf": [
                             {
-                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
                               "oneOf": [
                                 {
                                   "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
@@ -3218,7 +4008,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   ]
                                 },
                                 {
-                                  "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                  "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                                   "type": "object",
                                   "additionalProperties": false,
                                   "properties": {
@@ -3240,6 +4030,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                       "examples": [
                                         "someProperty"
                                       ]
+                                    },
+                                    "field": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ],
+                                      "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                                     }
                                   },
                                   "required": [
@@ -3284,6 +4084,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                   },
                                   "required": [
                                     "projection"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                                  "properties": {
+                                    "collect": {
+                                      "enum": [
+                                        "count",
+                                        "sum",
+                                        "min",
+                                        "max",
+                                        "average",
+                                        "any",
+                                        "all"
+                                      ]
+                                    },
+                                    "read": {
+                                      "type": "object"
+                                    },
+                                    "where": {
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "collect",
+                                    "read"
                                   ]
                                 }
                               ]
@@ -3405,7 +4232,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere – and writes no tag for it, when the property is\ntag-marked.\n",
                   "type": "object",
                   "additionalProperties": {
-                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
                     "oneOf": [
                       {
                         "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
@@ -3437,7 +4264,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         ]
                       },
                       {
-                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -3459,6 +4286,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "examples": [
                               "someProperty"
                             ]
+                          },
+                          "field": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                            "examples": [
+                              "someProperty"
+                            ],
+                            "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                           }
                         },
                         "required": [
@@ -3504,6 +4341,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                         "required": [
                           "projection"
                         ]
+                      },
+                      {
+                        "type": "object",
+                        "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                        "properties": {
+                          "collect": {
+                            "enum": [
+                              "count",
+                              "sum",
+                              "min",
+                              "max",
+                              "average",
+                              "any",
+                              "all"
+                            ]
+                          },
+                          "read": {
+                            "type": "object"
+                          },
+                          "where": {
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "collect",
+                          "read"
+                        ]
                       }
                     ]
                   }
@@ -3534,7 +4398,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "additionalProperties": false,
                             "properties": {
                               "leftHandSide": {
-                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
                                 "oneOf": [
                                   {
                                     "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
@@ -3566,7 +4430,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     ]
                                   },
                                   {
-                                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                                     "type": "object",
                                     "additionalProperties": false,
                                     "properties": {
@@ -3588,6 +4452,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                         "examples": [
                                           "someProperty"
                                         ]
+                                      },
+                                      "field": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ],
+                                        "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                                       }
                                     },
                                     "required": [
@@ -3632,6 +4506,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     },
                                     "required": [
                                       "projection"
+                                    ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                                    "properties": {
+                                      "collect": {
+                                        "enum": [
+                                          "count",
+                                          "sum",
+                                          "min",
+                                          "max",
+                                          "average",
+                                          "any",
+                                          "all"
+                                        ]
+                                      },
+                                      "read": {
+                                        "type": "object"
+                                      },
+                                      "where": {
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": [
+                                      "collect",
+                                      "read"
                                     ]
                                   }
                                 ]
@@ -3661,7 +4562,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             "additionalProperties": false,
                             "properties": {
                               "leftHandSide": {
-                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
                                 "oneOf": [
                                   {
                                     "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
@@ -3693,7 +4594,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     ]
                                   },
                                   {
-                                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                                     "type": "object",
                                     "additionalProperties": false,
                                     "properties": {
@@ -3715,6 +4616,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                         "examples": [
                                           "someProperty"
                                         ]
+                                      },
+                                      "field": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ],
+                                        "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                                       }
                                     },
                                     "required": [
@@ -3760,6 +4671,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                     "required": [
                                       "projection"
                                     ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                                    "properties": {
+                                      "collect": {
+                                        "enum": [
+                                          "count",
+                                          "sum",
+                                          "min",
+                                          "max",
+                                          "average",
+                                          "any",
+                                          "all"
+                                        ]
+                                      },
+                                      "read": {
+                                        "type": "object"
+                                      },
+                                      "where": {
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": [
+                                      "collect",
+                                      "read"
+                                    ]
                                   }
                                 ]
                               },
@@ -3783,7 +4721,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                               "rightHandSide": {
                                 "oneOf": [
                                   {
-                                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\n",
                                     "oneOf": [
                                       {
                                         "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\n",
@@ -3815,7 +4753,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                         ]
                                       },
                                       {
-                                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
                                         "type": "object",
                                         "additionalProperties": false,
                                         "properties": {
@@ -3837,6 +4775,16 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                             "examples": [
                                               "someProperty"
                                             ]
+                                          },
+                                          "field": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                            "examples": [
+                                              "someProperty"
+                                            ],
+                                            "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
                                           }
                                         },
                                         "required": [
@@ -3881,6 +4829,33 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                                         },
                                         "required": [
                                           "projection"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.",
+                                        "properties": {
+                                          "collect": {
+                                            "enum": [
+                                              "count",
+                                              "sum",
+                                              "min",
+                                              "max",
+                                              "average",
+                                              "any",
+                                              "all"
+                                            ]
+                                          },
+                                          "read": {
+                                            "type": "object"
+                                          },
+                                          "where": {
+                                            "type": "object"
+                                          }
+                                        },
+                                        "required": [
+                                          "collect",
+                                          "read"
                                         ]
                                       }
                                     ]

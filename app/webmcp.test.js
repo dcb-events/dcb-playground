@@ -483,6 +483,25 @@ async function call(name, args) {
     eq(restored.isError, false, restored.text);
   });
 
+  await check('an open read in a collection function and a record value are offered, and land as written', async () => {
+    const schema = registered.get('add_projection_definition').inputSchema;
+    eq(/collect/.test(JSON.stringify(schema.properties.derived)), true, 'a collection function among a derived side\'s shapes');
+    eq(/"record"/.test(JSON.stringify(schema.properties.handlers)), true, 'a record among a handler\'s values');
+    const tags = [{ name: 'courseId', tagType: 'CourseId' }, { name: 'studentId', tagType: 'StudentId' }];
+    const added = await call('add_projection_definition', { name: 'Enrolled', tags, valueType: 'boolean', isList: false,
+      initialValue: false, handlers: [{ event: 'StudentSubscribedToCourse', operation: 'set', value: true }] });
+    eq(added.isError, false, added.text);
+    const derived = { leftHandSide: { collect: 'count', read: { projection: 'Enrolled',
+      tags: { courseId: { parameterName: 'courseId' }, studentId: { open: true } } },
+    where: { leftHandSide: { instanceValue: true }, predicate: 'isTrue' } } };
+    const counted = await call('add_projection_definition', { name: 'EnrolledCount', tags: tags.slice(0, 1),
+      valueType: 'integer', isList: false, derived });
+    eq(counted.isError, false, counted.text);
+    eq(model()['projection-definitions'].EnrolledCount.derived, derived, 'stored as sent');
+    eq(sandbox.modelAdvisories(model()).filter((a) => /Enrolled/.test(a.name)), [], 'advisory-clean');
+    for (const name of ['EnrolledCount', 'Enrolled']) await call('remove_definition', { kind: 'projection-definition', name });
+  });
+
   await check('add_group_projection adds one under its local name, read by the group\'s tag', async () => {
     const { isError, text } = await call('add_group_projection', {
       group: 'Course', name: 'archived', valueType: 'boolean', isList: false, initialValue: false,
