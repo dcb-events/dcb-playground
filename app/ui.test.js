@@ -7109,12 +7109,12 @@ command ChangeHold(courseId: CourseId, hold: duration) {
     eq(sandbox.literalOfType(model(), 'duration', '15m'), undefined, 'the notation\'s spelling is no stored value');
   });
 
-  check('the pages show a duration and arithmetic as written, with the way to edit them', () => {
+  check('the pages show a duration and arithmetic as written, and edit them', () => {
     sandbox.state.slice = 'ReserveSeats';
     const slice = sandbox.sliceOf(model(), 'ReserveSeats');
     const decision = textOf(sandbox.stepDecision(model(), slice));
     eq(decision.includes('- sum(Reservation(courseId, *).seats where value.expiresAt > now)'), true, decision.slice(0, 600));
-    eq(decision.includes('Edit in code'), true, 'edited in the code view');
+    eq(decision.includes('Edit in code'), false, 'a sum holding a collection, edited on the page');
     sandbox.state.openEvent = 'SeatsWereReserved';
     const emits = textOf(sandbox.stepEmits(model(), slice));
     eq(emits.includes('now + 15m') && emits.includes('Edit') && !emits.includes('Edit in code'), true, 'the arithmetic, edited beside the field: ' + emits.slice(0, 600));
@@ -7204,6 +7204,109 @@ command ChangeHold(courseId: CourseId, hold: duration) {
     const draft = sandbox.draftFromCondition(rule.condition);
     eq(draft.left, ' collect', 'opens as a collection');
     eq(sandbox.collectionFromDraft(draft.leftCollect), rule.condition.leftHandSide, 'no loss');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a sum on the left opens with each of its terms, a collection among them, and loses nothing', () => {
+    const rule = model()['command-definitions'].ReserveSeats.steps[0];
+    const draft = sandbox.draftFromCondition(rule.condition);
+    eq(draft.left, ' arith', 'opens as a sum');
+    eq(draft.leftArith.right, ' collect', 'its second term a collection');
+    eq(sandbox.draftOperand(draft, 'left'), rule.condition.leftHandSide, 'no loss');
+    const three = { operator: 'add', leftHandSide: rule.condition.leftHandSide, rightHandSide: { duration: 'PT1H' } };
+    eq(sandbox.arithmeticFromDraft(sandbox.arithmeticDraftFrom(three)), three, 'three terms, left to right');
+    eq(sandbox.arithmeticDraftFrom(three).more, [{ operator: 'add', value: ' literal', valueText: '1h' }], 'the third in more');
+  });
+
+  check('a rule about a sum is written through the questions: a read minus a collection minus a typed value', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    const wizard = () => findAll(paint(), (n) => /rule-wizard/.test(n.className || ''))[0];
+    const selects = () => findAll(wizard(), (n) => n.tag === 'select');
+    const buttonOf = (label, nth = 0) => {
+      const found = findAll(wizard(), (n) => n.tag === 'button' && textOf(n) === label)[nth];
+      if (!found) throw new Error(`no "${label}" in ${textOf(wizard())}`);
+      return found;
+    };
+    const withOption = (value, nth = 0) => selects().filter((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === value))[nth];
+    selects()[0].onchange({ target: { value: 'projection:CourseCapacity' } });
+    buttonOf('+ / − a value').onclick();
+    const draft = sandbox.state.ruleDraft;
+    eq(draft.left, ' arith', 'the value is the sum\'s first term');
+    // Its second term a collection: the sum of the reservations' seats.
+    withOption(' collect', 1).onchange({ target: { value: ' collect' } });
+    const collect = draft.leftArith.rightCollect;
+    eq(collect.fn, 'sum', 'a sum proposed');
+    withOption('Reservation').onchange({ target: { value: 'Reservation' } });
+    paint();
+    eq([collect.tags.reservationId, collect.field], ['*', 'seats'], 'every reservation, its seats');
+    buttonOf('+ / − more').onclick();
+    Object.assign(draft.leftArith.more[0], { operator: 'subtract', value: ' literal', valueText: '1' });
+    draft.leftArith.operator = 'subtract';
+    eq(/What must be true of it\?/.test(textOf(wizard())), true, 'complete: on to the test');
+    Object.assign(draft, { predicate: 'greaterThanOrEquals', right: JSON.stringify({ parameterName: 'seats' }), rejection: 'Full' });
+    buttonOf('Add rule').onclick();
+    const added = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    const course = { projection: 'CourseCapacity', tags: { courseId: { parameterName: 'courseId' } } };
+    const seats = { collect: 'sum', read: { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } }, field: 'seats' } };
+    eq(added.condition.leftHandSide, { operator: 'subtract', leftHandSide: { operator: 'subtract', leftHandSide: course, rightHandSide: seats }, rightHandSide: 1 },
+      'the read in place, then the collection, then the number');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('require CourseCapacity(courseId) - sum(Reservation(courseId, *).seats) - 1 >= seats'), true,
+      text.slice(text.indexOf('command ReserveSeats'), text.indexOf('command ReserveSeats') + 600));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and parses back');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a rule compares with a collection, and with a sum holding one', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    const wizard = () => findAll(paint(), (n) => /rule-wizard/.test(n.className || ''))[0];
+    const selects = () => findAll(wizard(), (n) => n.tag === 'select');
+    const withOption = (value, nth = 0) => selects().filter((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === value))[nth];
+    const add = () => findAll(wizard(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    const course = { projection: 'CourseCapacity', tags: { courseId: { parameterName: 'courseId' } } };
+    const seats = { collect: 'sum', read: { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } }, field: 'seats' } };
+    // A collection alone on the right.
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    selects()[0].onchange({ target: { value: 'projection:CourseCapacity' } });
+    sandbox.state.ruleDraft.predicate = 'greaterThanOrEquals';
+    withOption(' collect').onchange({ target: { value: ' collect' } });
+    eq(sandbox.state.ruleDraft.right, ' collect', 'a collection picked on the right');
+    withOption('Reservation').onchange({ target: { value: 'Reservation' } });
+    sandbox.state.ruleDraft.rejection = 'Overbooked';
+    add();
+    let added = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    eq(added.condition, { leftHandSide: course, predicate: 'greaterThanOrEquals', rightHandSide: seats }, 'stored');
+    eq(sandbox.modelToSource(model()).includes('require CourseCapacity(courseId) >= sum(Reservation(courseId, *).seats)'), true, 'printed');
+    eq(textOf(paint()).includes('Edit in code'), false, 'edited on the page');
+    // A sum of three on the right, a collection its middle term.
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    selects()[0].onchange({ target: { value: 'projection:CourseCapacity' } });
+    sandbox.state.ruleDraft.predicate = 'greaterThanOrEquals';
+    withOption(' arith').onchange({ target: { value: ' arith' } });
+    paint();
+    const arith = sandbox.state.ruleDraft.rightArith;
+    arith.left = JSON.stringify({ parameterName: 'seats' });
+    // The pickers offering a collection: the right side's, then the sum's two terms.
+    withOption(' collect', 2).onchange({ target: { value: ' collect' } });
+    withOption('Reservation').onchange({ target: { value: 'Reservation' } });
+    findAll(wizard(), (n) => n.tag === 'button' && textOf(n) === '+ / − more')[0].onclick();
+    Object.assign(arith.more[0], { value: ' literal', valueText: '2' });
+    sandbox.state.ruleDraft.rejection = 'No room';
+    add();
+    added = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    eq(added.condition.rightHandSide, { operator: 'add', leftHandSide: { operator: 'add', leftHandSide: { parameterName: 'seats' }, rightHandSide: seats }, rightHandSide: 2 }, 'stored');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('require CourseCapacity(courseId) >= seats + sum(Reservation(courseId, *).seats) + 2'), true, 'printed');
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and parses back');
+    eq(sandbox.draftOperand(sandbox.draftFromCondition(added.condition), 'right'), added.condition.rightHandSide, 'opens again, no loss');
     sandbox.applyModelSource(id, TIME);
   });
 
@@ -7520,7 +7623,10 @@ command Return(memberId: MemberId, bookId: BookId) {
     eq(derived.includes('count(list(Lent(memberId, *)))') && derived.includes('Edit in code'), true, derived.slice(0, 600));
     sandbox.state.projDraft = null;
     const decision = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'Lend')));
-    eq(decision.includes('count(Lent(memberId, *)) + count(bookIds)') && decision.includes('Edit in code'), true, decision.slice(0, 600));
+    eq(decision.includes('count(Lent(memberId, *)) + count(bookIds)') && !decision.includes('Edit in code'), true,
+      'a sum of a collection and a count, edited through the rule\'s questions: ' + decision.slice(0, 600));
+    const lend = model()['command-definitions'].Lend.steps[0].condition;
+    eq(sandbox.draftOperand(sandbox.draftFromCondition(lend), 'left'), lend.leftHandSide, 'opens as a sum, no loss');
     sandbox.state.slice = 'Leave';
     sandbox.state.openEvent = 'MemberLeft';
     const emits = textOf(sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'Leave')));

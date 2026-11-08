@@ -4905,9 +4905,9 @@ function draftFromOperand(draft, key, operand) {
 
 // ---------- values beyond a read: collections and arithmetic (11.0) ----------
 //
-// A side of a rule may be a collection function over an open read (on
-// the left: what the rule is about) or `a + b` / `a - b` (on the
-// right: what it is compared with). Each is a draft of its own beside
+// Either side of a rule may be a collection function over an open read
+// or a sum, `a + b - c`, whose terms may be collections in turn. Each
+// is a draft of its own beside
 // the side's picker, the picker holding a sentinel (`COLLECT`, `ARITH`)
 // that `draftOperand` reads through, so every reader of a draft side
 // sees the operand it builds, or nothing while it is unfinished.
@@ -5050,16 +5050,38 @@ function draftTreeControls(root, key, { leaf, propose, changed, emptyable = fals
   return out;
 }
 
+// `a + b - c` (11.0), left to right, the code view's only reading: a
+// chain of terms, each one a draft side of its own – a value in scope,
+// a typed number or duration (`15m`) or a collection function
+// (`sum(…)`, `COLLECT`). Drafted as its first two terms (`left`,
+// `right`) and what follows in `more`, each `{ operator, value }`, so a
+// chain of two keeps the shape it always had.
 function arithmeticDraftFrom(operand) {
-  return draftFromOperand({ left: JSON.stringify(operand.leftHandSide), operator: operand.operator }, 'right', operand.rightHandSide);
+  const { terms, operators } = arithmeticChain(operand);
+  const draft = draftFromOperand({ left: '', operator: operators[0] }, 'left', terms[0]);
+  draftFromOperand(draft, 'right', terms[1]);
+  if (terms.length > 2) {
+    draft.more = terms.slice(2).map((term, i) => draftFromOperand({ operator: operators[i + 1] }, 'value', term));
+  }
+  return draft;
 }
 
 function arithmeticFromDraft(draft) {
-  if (!draft || !draft.left) return undefined;
-  const right = draftOperand(draft, 'right');
-  if (right === undefined) return undefined;
-  return { operator: draft.operator || 'add', leftHandSide: JSON.parse(draft.left), rightHandSide: right };
+  if (!draft) return undefined;
+  const first = draftOperand(draft, 'left');
+  const second = draftOperand(draft, 'right');
+  if (first === undefined || second === undefined) return undefined;
+  let operand = { operator: draft.operator || 'add', leftHandSide: first, rightHandSide: second };
+  for (const term of draft.more || []) {
+    const value = draftOperand(term, 'value');
+    if (value === undefined) return undefined;
+    operand = { operator: term.operator || 'add', leftHandSide: operand, rightHandSide: value };
+  }
+  return operand;
 }
+
+// A collection draft with nothing answered but its function.
+const blankCollect = (fn = 'count') => ({ fn, projection: '', tags: {}, field: '', where: [], joiner: null });
 
 // The projections a collection reads or a loop runs over: top-level,
 // folded, tagged by several – one tag stays bound, one at least open.
@@ -5158,20 +5180,50 @@ function collectionStages(model, slice, values, typeScope, collect, stageRow) {
   ];
 }
 
-// `a + b` / `a - b`: a value in scope that computes – a number, a
-// datetime, a duration – and what it adds or takes away: another, or a
-// typed number or duration (`15m`).
-function arithmeticControls(model, values, typeScope, arith) {
+// `a + b - c`, left to right: each term a value in scope that computes
+// – a number, a datetime, a duration – a typed number or duration
+// (`15m`), or, with `collections`, a collection function over an open
+// read, whose questions follow as stages of their own
+// (`arithmeticCollectionStages`). `+ / − more` adds a term, × takes one
+// beyond the first two away.
+function arithmeticControls(model, values, typeScope, arith, { collections = false } = {}) {
   const computes = values.filter(([v]) => {
     const resolved = resolveOperandType(JSON.parse(v), typeScope);
     return resolved && !resolved.isList && arithmeticBaseOf(model, resolved.propertyType);
   });
-  if (!computes.some(([v]) => v === arith.left)) arith.left = computes.length ? computes[0][0] : '';
+  const rows = [...computes, ...(collections && openReadableProjections(model).length ? [[COLLECT, 'a collection…']] : [])];
+  const term = (holder, key) => operandPicker(rows, holder, key, {
+    placeholder: rows.length ? 'what?' : 'nothing here computes',
+    intercept: (v) => {
+      if (v !== COLLECT) return false;
+      holder[key] = COLLECT;
+      if (!holder[key + 'Collect']) holder[key + 'Collect'] = blankCollect('sum');
+      holder.touched = true;
+      render();
+      return true;
+    },
+  });
+  const operator = (holder) => pick([['add', '+'], ['subtract', '-']], holder.operator || 'add', (v) => { holder.operator = v; render(); });
+  const more = arith.more || [];
   return [
-    pick(computes, arith.left, (v) => { arith.left = v; render(); }, computes.length ? 'what?' : 'nothing here computes'),
-    pick([['add', '+'], ['subtract', '-']], arith.operator || 'add', (v) => { arith.operator = v; render(); }),
-    ...operandPicker(computes.filter(([v]) => v !== arith.left), arith, 'right', { placeholder: 'what?' }),
+    ...term(arith, 'left'), operator(arith), ...term(arith, 'right'),
+    ...more.flatMap((next, i) => [operator(next), ...term(next, 'value'),
+      h('button', { class: 'btn tiny ghost', title: 'Take this value out of the sum', onclick: () => { more.splice(i, 1); render(); } }, '×')]),
+    h('button', {
+      class: 'btn tiny ghost', title: 'Add or take away one more value – left to right, as the code view reads it',
+      onclick: () => { (arith.more = arith.more || []).push({ operator: 'add', value: '' }); render(); },
+    }, '+ / − more'),
   ];
+}
+
+// The questions of each term of a chain that is a collection function,
+// as stages under the chain, each named by its place in it.
+function arithmeticCollectionStages(model, slice, values, typeScope, arith, stageRow, label) {
+  const holders = [[arith, 'left'], [arith, 'right'], ...(arith.more || []).map((next) => [next, 'value'])];
+  return holders.flatMap(([holder, key], i) => (holder[key] === COLLECT
+    ? collectionStages(model, slice, values, typeScope, holder[key + 'Collect'],
+      (question, ...controls) => stageRow(`${label}, value ${i + 1} – ${question.toLowerCase()}`, ...controls))
+    : []));
 }
 
 // The draft a stored rule opens as. An `equalsAny` right-hand
@@ -8271,7 +8323,7 @@ function ruleEditor(model, sliceIn, index, target = null) {
     if ('parameterName' in operand) return false;
     return aboutAlias ? operand.alias === aboutAlias : true;
   });
-  if (draft.left && draft.left !== COLLECT && !leftScope.some(([v]) => v === draft.left)) draft.left = '';
+  if (draft.left && draft.left !== COLLECT && draft.left !== ARITH && !leftScope.some(([v]) => v === draft.left)) draft.left = '';
 
   const leftRows = leftScope;
   // One row is an answer already. Answered before the picker reads it,
@@ -8344,11 +8396,18 @@ function ruleEditor(model, sliceIn, index, target = null) {
   // computes: `now + 15m`, `capacity - 2`.
   const computes = !!leftType && !leftType.isList && !!arithmeticBaseOf(model, leftType.propertyType)
     && !['countEquals', 'countLessThan', 'countGreaterThan'].includes(draft.predicate);
-  const rightRows = [...rightScope, ...enums, ...(computes ? [[ARITH, 'a sum or difference…']] : [])];
+  // A collection function is compared with as well (11.0):
+  // `CourseCapacity(c) >= sum(Reservation(c, *).seats)`.
+  const collects = !!leftType && !leftType.isList && openReadableProjections(model).length > 0
+    && !['countEquals', 'countLessThan', 'countGreaterThan'].includes(draft.predicate);
+  const rightRows = [...rightScope, ...enums,
+    ...(computes ? [[ARITH, 'a sum or difference…']] : []),
+    ...(collects ? [[COLLECT, 'a collection…']] : [])];
   if (draft.right && draft.right !== LITERAL && !rightRows.some(([v]) => v === draft.right)) {
     draft.right = '';
   }
   if (draft.right === ARITH && !draft.rightArith) draft.rightArith = { operator: 'add', left: '', right: '' };
+  if (draft.right === COLLECT && !draft.rightCollect) draft.rightCollect = blankCollect('sum');
   // "Is one of" also takes a list held in data – the project's required
   // seniorities, not only values typed here. The rule stays about the
   // one value, so that is how it is asked; it is stored as `contains`
@@ -8389,6 +8448,10 @@ function ruleEditor(model, sliceIn, index, target = null) {
     const inline = pending && pending.projection ? inlineReadOf(pending) : null;
     const binding = pending && !inline ? deepClone(pending) : null;
     const swap = (operand) => {
+      // A sum's terms are swapped where they stand.
+      if (operandSource(operand) === 'arithmetic') {
+        return { ...operand, leftHandSide: swap(operand.leftHandSide), rightHandSide: swap(operand.rightHandSide) };
+      }
       if (!inline || operandSource(operand) !== 'alias-property' || operand.alias !== pending.alias) return operand;
       return operand.property === undefined ? deepClone(inline) : operand;
     };
@@ -8590,7 +8653,7 @@ function ruleEditor(model, sliceIn, index, target = null) {
       && isProjectionRead(storedLeft.alias))
     || operandSource(storedLeft) === 'projection-read'
     || (!!editingExisting && operandSource(leftNow) === 'projection-read');
-  const valueStage = stage < VALUE_STAGE || (oneValue && valueSettled) || draft.left === COLLECT ? null
+  const valueStage = stage < VALUE_STAGE || (oneValue && valueSettled) || draft.left === COLLECT || draft.left === ARITH ? null
     : stageRow('Which of its values?',
         ...operandPicker(leftRows, draft, 'left',
           {
@@ -8615,8 +8678,44 @@ function ruleEditor(model, sliceIn, index, target = null) {
           }));
 
   // ---------- stage three: what must be true of it? ----------
+  // What the rule is about may be a sum or a difference (11.0) – `+ / −`
+  // turns the value into the first term of one: `CourseCapacity(c) -
+  // sum(Reservation(c, *).seats) >= seats`. × beside the sum goes back
+  // to its first term alone.
+  const leftSide = (holder, key) => Object.fromEntries(['', 'Text', 'Collect']
+    .filter((suffix) => holder[key + suffix] !== undefined).map((suffix) => [suffix, holder[key + suffix]]));
+  const leftComputes = draft.left !== ARITH && !!leftType && !leftType.isList && !!arithmeticBaseOf(model, leftType.propertyType);
+  const toSum = leftComputes ? h('button', {
+    class: 'btn tiny ghost', title: 'Compare a sum or a difference with it as the first value – capacity - sum(…) >= seats',
+    onclick: () => {
+      const first = leftSide(draft, 'left');
+      draft.leftArith = { operator: 'subtract', right: '' };
+      for (const [suffix, value] of Object.entries(first)) draft.leftArith['left' + suffix] = value;
+      draft.left = ARITH;
+      delete draft.leftText;
+      delete draft.leftCollect;
+      draft.touched = true;
+      render();
+    },
+  }, '+ / − a value') : null;
+  const sumStage = draft.left !== ARITH ? null
+    : stageRow('Which value, computed?',
+        ...arithmeticControls(model, [...scope, ...readRows], typeScope, draft.leftArith, { collections: true }),
+        h('button', {
+          class: 'btn tiny ghost', title: 'No sum – the first value alone',
+          onclick: () => {
+            const first = leftSide(draft.leftArith, 'left');
+            delete draft.leftArith;
+            draft.left = first[''] || '';
+            if (first.Text !== undefined) draft.leftText = first.Text;
+            if (first.Collect !== undefined) draft.leftCollect = first.Collect;
+            draft.touched = true;
+            render();
+          },
+        }, 'no sum'));
   const testStage = stage < TEST_STAGE ? null
     : stageRow('What must be true of it?',
+        toSum,
         h('label', { class: 'tiny muted' },
           h('input', {
             type: 'checkbox', checked: !!draft.negate,
@@ -8646,8 +8745,17 @@ function ruleEditor(model, sliceIn, index, target = null) {
             ]
           : [
               ...operandPicker(rightRows, draft, 'right', { placeholder: 'what?', allowLiteral: !enums.length }),
-              ...(draft.right === ARITH ? arithmeticControls(model, [...scope, ...readRows], typeScope, draft.rightArith) : []),
+              ...(draft.right === ARITH ? arithmeticControls(model, [...scope, ...readRows], typeScope, draft.rightArith, { collections: true }) : []),
             ]));
+  // The questions a collection on the right asks, and those of each
+  // collection a sum holds, follow the test.
+  const rightStages = stage < TEST_STAGE || unary || membership ? []
+    : draft.right === COLLECT
+      ? collectionStages(model, slice, scope, typeScope, draft.rightCollect,
+        (question, ...controls) => stageRow('Compared with – ' + question.toLowerCase(), ...controls))
+      : draft.right === ARITH
+        ? arithmeticCollectionStages(model, slice, scope, typeScope, draft.rightArith, stageRow, 'Compared with')
+        : [];
 
   // ---------- and what is it refused with? ----------
   //
@@ -8687,7 +8795,9 @@ function ruleEditor(model, sliceIn, index, target = null) {
   },
     readStage,
     ...(draft.left === COLLECT ? collectionStages(model, slice, scope, typeScope, draft.leftCollect, stageRow) : []),
-    valueStage, testStage, rejectionStage,
+    sumStage,
+    ...(draft.left === ARITH ? arithmeticCollectionStages(model, slice, scope, typeScope, draft.leftArith, stageRow, 'Computed') : []),
+    valueStage, testStage, ...rightStages, rejectionStage,
     h('div', { class: 'adder' },
       // Only once there is a rule to write. Until then the row is a
       // question waiting for an answer, and a button that could only

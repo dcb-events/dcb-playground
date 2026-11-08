@@ -336,13 +336,25 @@ and prune what no longer holds.
   or a typed value, joined and bracketed as a command's condition is
   (`collectionStages`, index.html).
   The draft holds it beside the side's picker under a sentinel
-  (`COLLECT`; `ARITH` for `a + b` on the right) that `draftOperand`
+  (`COLLECT`; `ARITH` for a sum) that `draftOperand`
   reads through, so every reader of a draft side sees the operand
   built, or nothing while it is unfinished, and no stage needs a Next.
+  **Either side may be a collection or a sum.** The right side's
+  picker offers `a collection…` and `a sum or difference…`; the left
+  side's value becomes the first term of a sum by `+ / − a value`
+  (`no sum` goes back to it alone) – `CourseCapacity(c) -
+  sum(Reservation(c, *).seats where …) >= seats`. A sum is a chain, left
+  to right, the code view's only reading (`arithmeticChain`, shared.js):
+  its first two terms `left` / `right`, the rest in `more`, each a draft
+  side of its own – a value in scope that computes, a typed number or
+  duration, or a collection whose questions follow as stages named by
+  its place (`arithmeticCollectionStages`); `+ / − more` adds a term.
+  The read a rule brought is swapped in place inside a sum too.
   A record value's field and a list's count are rows of the pickers
   beside the value (`valueRowsBeyondReads`), rules and emission fields
-  alike. What the editors cannot say – a collection on the right,
-  arithmetic on the left or over three values – is shown as the code view writes it with *Edit in code*
+  alike. What the editors cannot say – a sum on the right of `+` / `-`,
+  which the code view cannot spell either, a term no picker offers –
+  is shown as the code view writes it with *Edit in code*
   (`collectionEditable`, `arithmeticEditable`, `conditionBeyondEditors`,
   shared.js) and kept through every other edit.
   **Over nothing**: `count` and `sum` 0, `min` / `max` / `average`

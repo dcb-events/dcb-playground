@@ -2049,24 +2049,38 @@ function collectionEditable(operand) {
     && operandSource(leaf.leftHandSide) === 'instance-value' && simpleSide(leaf.rightHandSide));
 }
 
-// `a + b` / `a - b` over two sides a picker or a typed value gives –
-// a duration among them (`now + 15m`).
-function arithmeticEditable(operand) {
-  return operandSource(operand) === 'arithmetic' && ['add', 'subtract'].includes(operand.operator)
-    && !Array.isArray(operand.leftHandSide) && simpleSide(operand.leftHandSide) && typeof operand.leftHandSide === 'object'
-    && operandSource(operand.rightHandSide) !== 'arithmetic' && simpleSide(operand.rightHandSide);
+// `a + b - c` as its terms, left to right, and the operators between
+// them – the only reading the code view has: a sum on the right of
+// `+` / `-` has no spelling, and stays a term of its own here.
+function arithmeticChain(operand) {
+  const terms = [];
+  const operators = [];
+  let node = operand;
+  while (operandSource(node) === 'arithmetic' && ['add', 'subtract'].includes(node.operator)) {
+    terms.unshift(node.rightHandSide);
+    operators.unshift(node.operator);
+    node = node.leftHandSide;
+  }
+  terms.unshift(node);
+  return { terms, operators };
 }
 
-// Whether a condition holds an operand no editor here writes: a
-// collection is edited on the left, arithmetic on the right.
+// `+` / `-` left to right over terms a picker or a typed value gives
+// – a duration among them (`now + 15m`) – or a collection function the
+// collection questions write (`capacity - sum(…)`), as many as written.
+function arithmeticEditable(operand) {
+  if (operandSource(operand) !== 'arithmetic') return false;
+  const { terms } = arithmeticChain(operand);
+  return terms.length >= 2 && terms.every((term) => term !== null && !Array.isArray(term)
+    && operandSource(term) !== 'arithmetic' && (simpleSide(term) || collectionEditable(term)));
+}
+
+// Whether a condition holds an operand no editor here writes: either
+// side may be a collection function or a sum.
 function conditionBeyondEditors(condition) {
-  return conditionLeaves(condition).some((leaf) => {
-    const left = leaf.leftHandSide;
-    const right = leaf.rightHandSide;
-    const leftBeyond = operandBeyondEditors(left) && !collectionEditable(left);
-    const rightBeyond = right !== undefined && operandBeyondEditors(right) && !arithmeticEditable(right);
-    return leftBeyond || rightBeyond;
-  });
+  const editable = (operand) => !operandBeyondEditors(operand) || collectionEditable(operand) || arithmeticEditable(operand);
+  return conditionLeaves(condition).some((leaf) =>
+    !editable(leaf.leftHandSide) || (leaf.rightHandSide !== undefined && !editable(leaf.rightHandSide)));
 }
 
 // A condition as a sentence. Returns parts so a renderer can style the
