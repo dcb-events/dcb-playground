@@ -17491,7 +17491,16 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const lineText = prefix.slice(prefix.lastIndexOf('\n') + 1).replace(/"([^"\\]|\\.)*"/g, '""');
   if (lineText.includes('//')) return none;
   const tokens = lexed.tokens.slice(0, -1);
-  if (tokens.length && tokens[tokens.length - 1].t === 'number' && /[0-9.]$/.test(prefix)) return none;
+  // A whole number added or taken away (11.0) may be a duration: its
+  // units are offered, `15` → `15m`. Any other number is left alone.
+  if (tokens.length && tokens[tokens.length - 1].t === 'number' && /[0-9.]$/.test(prefix)) {
+    const number = tokens[tokens.length - 1];
+    const before = tokens[tokens.length - 2];
+    if (!/^\d+$/.test(String(number.v)) || !before || !['+', '-'].includes(before.v)) return none;
+    const units = [['s', 'seconds'], ['m', 'minutes'], ['h', 'hours'], ['d', 'days']];
+    return { items: units.map(([unit, word], i) => ({ label: `${number.v}${unit}`, kind: 'keyword', detail: `duration – ${word}`,
+      insert: `${number.v}${unit}`, sort: String(i) })), slot: true };
+  }
   if (/[\p{L}\p{M}\p{Nd}_]$/u.test(prefix) && tokens.length && tokens[tokens.length - 1].t === 'ident') tokens.pop();
   const atLineStart = !tokens.length || tokens[tokens.length - 1].endLine < line;
 
@@ -17571,8 +17580,17 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'command', name: frame.command } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'command', name: frame.command } });
       if (opener === '(' && prev === 'count') return own('count');
-      if (opener === '(' && /^\p{Lu}/u.test(prev || '')) return own('callArgs', { callee: prev });
+      // A collection function's read and its where (11.0).
+      if (opener === '(' && COLLECTION_FUNCTIONS.includes(prev)) return own('collection', { fn: prev });
+      if (opener === '(' && /^\p{Lu}/u.test(prev || '')) {
+        return own('callArgs', { callee: prev, openTags: v(s[0]) === 'for' && s.map(v).includes('in') });
+      }
       if (opener === '[' && prev === 'in') return own('list', { left: conditionLeft(s.slice(0, -1)) });
+      return own('json');
+    }
+    if (k === 'collection') {
+      if (opener === '(' && /^\p{Lu}/u.test(prev || '')) return own('callArgs', { callee: prev, openTags: true });
+      if (opener === '(' && COLLECTION_FUNCTIONS.includes(prev)) return own('collection', { fn: prev });
       return own('json');
     }
     if (k === 'projection') {
@@ -17585,6 +17603,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (opener === '(' && base.decl.derived) {
         if (SOURCE_OPERATOR_CALLS.includes(prev)) return own('derivedOperands');
         if (prev === 'count') return own('count');
+        if (COLLECTION_FUNCTIONS.includes(prev)) return own('collection', { fn: prev });
         if (/^\p{Lu}/u.test(prev || '')) return own('derivedArgs', { callee: prev });
       }
       return own('json');
@@ -17882,6 +17901,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     if (SOURCE_COMPARISONS.includes(last)) {
       if (leftType && !leftType.isList) valueItems(leftType.propertyType);
       operandItems(scope, { sort: 1 });
+      // A value inside a loop over an open read (11.0).
+      if (openReadAround() && inLoop) push('value', 'keyword', 'the instance\'s value', { sort: 1 });
+      // A collection's result is a value like any other.
+      if (!SOURCE_WORD_PREDICATES.includes(last)) {
+        for (const word of COLLECTION_FUNCTIONS) push(word, 'keyword', `${word}(…)`, { insert: `${word}($1)`, snippet: true, sort: 2 });
+      }
       return done();
     }
     if (last === 'is') {
@@ -18019,6 +18044,29 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     return { valueType: v(tokens[i + 1]), isList: v(tokens[i + 2]) === '[', parameters };
   };
 
+  // The projection an open read near the cursor reads: the one inside
+  // the collection being written, or the one the loop around it runs
+  // over – `value` is its instance's value.
+  function openReadAround() {
+    for (let f = frames.length - 1; f >= 0; f -= 1) {
+      const at = frames[f];
+      if (at.kind === 'collection') {
+        const inside = tokens.slice(at.open + 1).find((t) => t.t === 'ident' && /^\p{Lu}/u.test(t.v));
+        if (inside) return inside.v;
+      }
+    }
+    const lines = tokens.filter((t) => t.first && t.v === 'for');
+    const loop = lines[lines.length - 1];
+    if (!loop) return null;
+    const from = tokens.indexOf(loop);
+    const inAt = tokens.slice(from).findIndex((t) => t.v === 'in');
+    const read = inAt >= 0 ? tokens[from + inAt + 1] : null;
+    return read && read.t === 'ident' ? read.v : null;
+  }
+  // Whether the cursor is inside a `for each` block.
+  const inLoop = frames.some((f) => f.kind === 'command' && f.open >= 0
+    && v(tokens.slice(0, f.open).reverse().find((t) => t.first)) === 'for');
+
   // ---------- by place ----------
   const k = frame.kind;
   // The command a rule is about: the block's, or a top-level
@@ -18040,6 +18088,27 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (k === 'projection') eventName = v(s[1]);
       const event = def('event-definition', eventName);
       for (const p of list(event && event.properties)) push(p.name, 'eventProperty', typeText(p), { sort: 0 });
+      return done();
+    }
+    // A record's field one hop into the event (11.0):
+    // `event.data.signUp.emailAddress`.
+    if (v(s[s.length - 3]) === '.' && v(s[s.length - 4]) === 'data' && v(s[s.length - 6]) === 'event') {
+      const event = def('event-definition', frame.event || (k === 'projection' ? v(s[1]) : null));
+      const field = list(event && event.properties).find((p) => p.name === head);
+      for (const f of (field && !field.isList && recordFields(field.propertyType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
+      return done();
+    }
+    // `value.` inside a where or a loop over an open read: the
+    // instance's record fields.
+    if (head === 'value') {
+      const projection = def('projection-definition', openReadAround());
+      for (const f of (projection && !projection.isList && recordFields(projection.valueType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
+      return done();
+    }
+    // `P(x, *).` inside a collection: a record's field to compute over.
+    if (k === 'collection' && v(s[s.length - 2]) === ')') {
+      const projection = def('projection-definition', openReadAround());
+      for (const f of (projection && !projection.isList && recordFields(projection.valueType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
       return done();
     }
     if (commandName) return dotted(commandScope(commandName));
@@ -18107,6 +18176,10 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   // A group's block: its projections, each declared the way a
   // top-level one is, minus the tag header.
   if (k === 'group') {
+    if (prev === '@' && s.length === 1) {
+      for (const name of SOURCE_GROUPED_ANNOTATIONS) push(name, 'keyword', 'grouped projection', { insert: `${name}("$1")`, snippet: true, sort: 0 });
+      return done();
+    }
     if (!s.length) {
       for (const [label, insert] of SOURCE_GROUP_PROJECTION_SNIPPETS) {
         push(label, 'keyword', 'projection', { insert, snippet: true, sort: 0 });
@@ -18137,7 +18210,22 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     if (OPERATIONS.includes(prev)) { eventData(); valueItems(body.valueType, 0); return done(); }
     if (['if', 'and', 'or', '('].includes(prev)) { eventData(); return done(); }
-    if (prev === '==' || prev === '!=') { ownParameterItems(ownName); return done(false); }
+    if (prev === '==' || prev === '!=') {
+      // The tags of this projection, then the members of the field's
+      // enum (or true / false) – the field's type read off the path.
+      ownParameterItems(ownName);
+      const path = s.slice(0, -1);
+      const at = path.map(v).lastIndexOf('data');
+      const event = def('event-definition', frame.event);
+      const field = at >= 0 ? list(event && event.properties).find((p) => p.name === v(path[at + 2])) : null;
+      let type = field && field.propertyType;
+      if (field && v(path[at + 3]) === '.') {
+        const inner = (recordFields(field.propertyType) || []).find((f) => f.name === v(path[at + 4]));
+        type = inner && inner.propertyType;
+      }
+      if (type) valueItems(type, 1);
+      return done(false);
+    }
     return done(false);
   }
   if (k === 'projection' || k === 'successor') {
@@ -18197,6 +18285,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   if (k === 'command') {
     const scope = commandScope(commandName);
     if (!s.length) {
+      // Inside a loop a step emits or branches – nothing else is one.
+      if (inLoop) { keywords([['emit', 'emit '], ['if', 'if ']]); return done(false); }
       keywords([['alias', 'alias ${1:name} = ', true], ['require', 'require '], ['emit', 'emit '],
         ['if', 'if '], ['for each', 'for each ${1:name} in ', true], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
       return done(false);
@@ -18207,8 +18297,19 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     if (first === 'for') {
       const words = s.map(v);
       if (prev === 'in') {
-        operandItems(scope, { sort: 0, prefer: (x) => !!x.isList });
-        definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
+        // What a loop runs over: a list in scope, a list projection, an
+        // open read of one tagged by several, `list(…)`.
+        for (const p of scope.properties) if (p.isList) push(p.name, 'commandProperty', typeText(p), { sort: 0 });
+        for (const b of scope.boundary) {
+          const target = b.projection && def('projection-definition', b.projection);
+          if (target && target.isList) push(b.alias, 'alias', `alias ${b.projection}(…)`, { sort: 0 });
+        }
+        definitionItems('projection-definition', {
+          sort: (n, b) => (b.isList ? 1 : 2), call: (n, b) => (!b.isList && projectionTagParams(b).length >= 2
+            ? `${n}(${projectionTagParams(b).map((t, i) => (i ? '*' : `$${i + 1}`)).join(', ')})` : projectionCall(n)),
+          detail: (n, b) => (b.isList ? `${b.valueType}[]` : projectionTagParams(b).length >= 2 ? 'every instance, P(x, *)' : b.valueType),
+        });
+        push('list', 'keyword', 'list(P(x, *))', { insert: 'list($1)', snippet: true, sort: 2 });
         return done();
       }
       if (prev === '=>') { keywords([['emit', 'emit ']]); return done(); }
@@ -18282,7 +18383,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         operandItems(scope, { sort: 1, prefer: (x) => (x.propertyType ? x.propertyType === (p && p.propertyType) : true) });
         // A list from an open read (G1) fills a list; a count (G3) a number.
         if (p && p.isList) push('list', 'keyword', 'list(P(x, *))', { insert: 'list($1)', snippet: true, sort: 2 });
-        if (p && !p.isList && numericBaseOf(known, p.propertyType)) push('count', 'keyword', 'count(…)', { insert: 'count($1)', snippet: true, sort: 2 });
+        if (p && !p.isList && numericBaseOf(known, p.propertyType)) {
+          for (const word of ['count', 'sum', 'min', 'max', 'average']) push(word, 'keyword', `${word}(…)`, { insert: `${word}($1)`, snippet: true, sort: 2 });
+        }
+        if (p && !p.isList && p.propertyType === 'boolean') {
+          for (const word of ['any', 'all']) push(word, 'keyword', `${word}(P(x, *))`, { insert: `${word}($1)`, snippet: true, sort: 2 });
+        }
         return done();
       },
     });
@@ -18298,9 +18404,56 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       : projectionParameters(frame.callee)[position];
     if (segment.length > (v(segment[0]) === 'each' ? 1 : 0)) return done(false);
     if (slot && slot.tag && !segment.length) push('each', 'keyword', 'once per element of a list', { insert: 'each ', sort: 2 });
+    // Inside a collection or a loop's source (11.0), a tag left open.
+    if (slot && slot.tag && !segment.length && frame.openTags) push('*', 'keyword', 'every instance – an open tag', { sort: 1 });
     if (slot && !slot.tag) valueItems(slot.propertyType);
     operandItems(scope, { prefer: (x) => (slot && x.propertyType ? x.propertyType === slot.propertyType : true) });
     return done();
+  }
+  // Inside `sum(…)` and the rest (11.0): the read – a projection tagged
+  // by several first, its tags to fill and `*` – then, once it is
+  // closed, `where` and what the where compares: `value`, its fields,
+  // the names in scope, `and` / `or`.
+  if (k === 'collection') {
+    const scope = commandName ? commandScope(commandName) : null;
+    const words = s.map(v);
+    const whereAt = words.lastIndexOf('where');
+    if (whereAt >= 0) {
+      const cond = s.slice(whereAt + 1);
+      const tail = cond.slice(cond.map(v).reduce((at, w, i) => (['and', 'or'].includes(w) ? i + 1 : at), 0));
+      if (!tail.length) {
+        push('value', 'keyword', 'the instance\'s value', { sort: 0 });
+        const projection = def('projection-definition', openReadAround());
+        for (const f of (projection && !projection.isList && recordFields(projection.valueType)) || []) {
+          push(`value.${f.name}`, 'field', f.propertyType, { sort: 0 });
+        }
+        return done();
+      }
+      const last = v(tail[tail.length - 1]);
+      if (SOURCE_COMPARISONS.includes(last)) {
+        if (scope) operandItems(scope, { sort: 0, prefer: (x) => !x.group });
+        else if (frame.decl) ownParameterItems(frame.decl.name);
+        return done();
+      }
+      if (tail[tail.length - 1].t === 'ident' || last === ')') {
+        for (const word of ['==', '!=', '<', '<=', '>', '>=']) push(word, 'keyword', 'predicate', { sort: 0 });
+        keywords([['and', 'and '], ['or', 'or ']], 1);
+        return done(false);
+      }
+      return done(false);
+    }
+    if (!s.length) {
+      definitionItems('projection-definition', {
+        sort: (n, b) => (projectionTagParams(b).length >= 2 && !splitQualifiedName(n) ? 0 : 2),
+        call: (n, b) => (projectionTagParams(b).length >= 2
+          ? `${n}(${projectionTagParams(b).map((t, i) => (i ? '*' : `$${i + 1}`)).join(', ')})` : projectionCall(n)),
+        detail: (n, b) => (projectionTagParams(b).length >= 2 ? 'every instance, P(x, *)' : `${b.valueType}`),
+      });
+      if (frame.fn === 'count' && scope) for (const p of scope.properties) if (p.isList) push(p.name, 'commandProperty', typeText(p), { sort: 1 });
+      return done();
+    }
+    if (prev === ')') { keywords([['where', 'where ']]); return done(false); }
+    return done(false);
   }
   if (k === 'count') {
     if (commandName) { operandItems(commandScope(commandName)); return done(); }

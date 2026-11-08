@@ -1441,7 +1441,21 @@ Watched, Decision, Store. Only the panel scrolls.
   of the projection or a literal on the right, so a read of another
   projection, `state`, an unknown name, an ordering, a second operation
   or a block is an error at the token that says it. Completion offers
-  `if` / `else`, `event.data`, the tags and the operations there.
+  `if` / `else`, `event.data` (and a record field's own fields one hop
+  in), the tags and the field's enum members after `==`, and the
+  operations there.
+  **Completion knows 11.0's values** (`sourceCompletions`): inside a
+  collection function the projections tagged by several first, read
+  with their last tag `*`, `*` for a tag, `.field` of a record value,
+  `where`, then `value` / `value.field`, the names in scope and `and` /
+  `or`; after `for each … in` the lists in scope, list and open-read
+  projections and `list(…)`; in a loop's block only `emit` and `if`,
+  and `value` in a loop over an open read; collection functions
+  wherever a value fits (a comparison's right side, an emission's
+  number or boolean); a duration's units after a whole number added or
+  taken away (`now + 15` → `15m`); and a grouped projection's notes
+  after `@` in a group. Each is read off the frames of brackets still
+  open (`collection` is one), as the rest is.
   Printing is **lossless by contract**:
   each definition is printed, parsed back and compared
   (`sameDefinition`), and one that does not survive is written as its

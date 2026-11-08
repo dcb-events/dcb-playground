@@ -3197,6 +3197,49 @@ command ConfirmSignUp(token: OptInToken, now: datetime) {
 }
 `;
 
+  check('completion knows collections, open reads, where, durations and loop bodies', () => {
+    const head = TIME.slice(0, TIME.indexOf('// Commands')) + '// Commands\ncommand X(courseId: CourseId, ids: ReservationId[], now: datetime) {\n  ';
+    const labels = (text) => completeAt(text + '|\n}').labels;
+    eq(labels(head + 'require sum(').includes('Reservation'), true, 'a projection tagged by several, inside sum(');
+    const read = completeAt(head + 'require sum(|\n}').items.find((i) => i.label === 'Reservation');
+    eq(read.insert, 'Reservation($1, *)', 'read with its last tag open');
+    eq(labels(head + 'require sum(Reservation(courseId, ').includes('*'), true, 'an open tag in a collection\'s read');
+    eq(labels(head + 'require sum(Reservation(courseId, *)) ').includes('where') || labels(head + 'require sum(Reservation(courseId, *) ').includes('where'), true, 'where after the read');
+    eq(labels(head + 'require sum(Reservation(courseId, *).').includes('seats'), true, 'a record field to sum');
+    const where = labels(head + 'require sum(Reservation(courseId, *).seats where ');
+    eq(['value', 'value.seats', 'value.expiresAt'].every((l) => where.includes(l)), true, 'value and its fields: ' + where);
+    eq(labels(head + 'require sum(Reservation(courseId, *).seats where value.expiresAt > ').includes('now'), true, 'a name in scope');
+    eq(labels(head + 'require sum(Reservation(courseId, *).seats where value.expiresAt > now ').includes('and'), true, 'and / or');
+    eq(labels(head + 'require CourseCapacity(courseId) > ').includes('sum'), true, 'a collection where a value fits');
+    eq(labels(head + 'emit SeatsWereReserved { seats: ').includes('sum'), true, 'and in an emission');
+    eq(labels(head + 'emit SeatsWereReserved { expiresAt: now + 15'), ['15s', '15m', '15h', '15d'], 'duration units after a number');
+    eq(labels(head + 'require now > 15').length, 0, 'not after any number');
+    const source = labels(head + 'for each id in ');
+    eq(source.includes('ids') && source.includes('Reservation') && !source.includes('now'), true, 'lists and open reads to run over: ' + source);
+    eq(labels(head + 'for each id in ids {\n    '), ['emit', 'if'], 'a loop\'s steps');
+    eq(labels(head + 'for each (c, r) in Reservation(courseId, *) {\n    if CourseCapacity(courseId) > ').includes('value'), true, 'value in a loop over an open read');
+  });
+
+  check('completion knows a handler branch\'s nested fields and enum members, and annotations in a group', () => {
+    const text = [
+      'model "H"', 'tag type AccountId = string', 'enum Kind { Debit, Credit }', 'record Party { accountId: AccountId, kind: Kind }',
+      'event Moved { tag accountId: AccountId, from: Party }',
+      'group Account (tag accountId: AccountId) {',
+      '  @',
+    ].join('\n');
+    eq(completeAt(text + '|\n}').labels, ['assumption', 'external', 'unresolved'], 'a grouped projection\'s notes');
+    const handler = [
+      'model "H"', 'tag type AccountId = string', 'enum Kind { Debit, Credit }', 'record Party { accountId: AccountId, kind: Kind }',
+      'event Moved { tag accountId: AccountId, from: Party }',
+      'projection Count (tag accountId: AccountId): integer = 0 {',
+      '  on Moved {',
+      '    if event.data.from.',
+    ].join('\n');
+    eq(completeAt(handler + '|\n  }\n}').labels, ['accountId', 'kind'], 'a record field one hop in');
+    eq(completeAt(handler + 'kind == |\n  }\n}').labels.includes('Debit'), true, 'the field\'s enum members');
+    eq(completeAt(handler + 'accountId == |\n  }\n}').labels.includes('accountId'), true, 'the projection\'s tag');
+  });
+
   check('time prints as written and parses back equal', () => {
     const { model } = buildText(TIME);
     eq(advisedOtherwise(model()), [], 'advisory-clean');
