@@ -743,12 +743,7 @@ function evReadOperand(operand, scope) {
       if (!operand.property) {
         fail(`"${operand.alias}" reads the group ${binding.group}, so reading it needs one of its projections.`);
       }
-      if (!binding.fanned) {
-        // An absent optional binding bound nothing; reading it yields
-        // null – the one spelling of "no value" – rather than erroring.
-        if (!binding.instances.length) return null;
-        return binding.instances[0].read(operand, scope);
-      }
+      if (!binding.fanned) return binding.instances[0].read(operand, scope);
       const each = binding.instances.map((instance) => instance.read(operand, scope));
       return each.some(Array.isArray) ? each.flat() : each;
     }
@@ -898,19 +893,9 @@ function evResolveBinding(model, events, body, binding, scope) {
       `many – ${binding.group}(each ${operandText(operand)}) reads one instance per element.`);
   }
   // A null tag binds nothing. Folding at "Type:null" would invent one
-  // phantom instance every unset value shares. A binding flagged
-  // `isOptional` declares the absence expected and binds zero instances
-  // instead: conditions over it hold vacuously and reading a member of
-  // it yields null. Without the flag the error stays – an unset value
-  // nobody declared possible is an accident, and this is the error the
-  // optional-parameter advisory promises.
+  // phantom instance every unset value shares, so it is an error – the
+  // one the optional-parameter advisory promises.
   if (!fanned && evNormalize(held) === null) {
-    if (binding.isOptional) {
-      scope.bound[binding.alias] = {
-        kind: 'group', group: binding.group, fanned: false, absent: true, sourceIndexes: [], instances: [],
-      };
-      return;
-    }
     fail(`${label} has no instance to read: ${operandText(operand)} is unset (null).`);
   }
   // Order is preserved and duplicates are kept: a binding fanned from a
@@ -1013,18 +998,6 @@ function evFannedAliasesOf(condition, scope) {
 }
 
 function evCheckCondition(model, body, condition, scope) {
-  // A condition reading an alias the boundary flagged optional and
-  // could not bind holds vacuously – the same reading a fanned alias
-  // with zero instances already gets. `skippedFor` names the alias, so
-  // an interface can say the rule stepped aside rather than passed.
-  for (const operand of conditionOperands(condition)) {
-    if (operandSource(operand) !== 'alias-property') continue;
-    const binding = scope.bound[operand.alias];
-    if (binding && binding.kind === 'group' && binding.absent) {
-      return { held: true, index: null, skippedFor: operand.alias };
-    }
-  }
-
   const fannedAliases = evFannedAliasesOf(condition, scope);
   // A read in place that fans out quantifies the same way an alias
   // does: folded once (`scope.inline`), then read at the index.
@@ -1307,10 +1280,6 @@ function evDescribeReads(scope) {
       group: binding.group,
       ...(binding.tag ? { tag: { name: binding.tag.name, type: binding.tag.tagType } } : {}),
       fanned: binding.fanned,
-      // An optional binding whose tag was unset – it bound nothing, and
-      // the reader deserves to see that said, not an empty list that
-      // looks like a fan-out over nothing.
-      ...(binding.absent ? { absent: true } : {}),
       instances: binding.instances.map((instance) => {
         const properties = {};
         for (const [name, value] of instance.cache || []) properties[name] = value;

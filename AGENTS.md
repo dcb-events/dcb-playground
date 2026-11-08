@@ -231,12 +231,10 @@ was decided, why, and what was tried and reverted:
   event property publishes it); readers are lenient (an absent key on an
   optional property reads as null). Downstream it is an ordinary value —
   equality and emptiness work — except where it would become a tag or an
-  ordering: a null exclusion or tag of a projection read is an
-  evaluation _error_, and so is a null boundary identifier _unless the binding is
-  marked `isOptional`_ — then it binds zero instances, conditions over
-  the alias hold vacuously, and reading a property of it yields null.
-  The optional-parameter, derived-null and absent-binding advisories say
-  all of this ahead of time.
+  ordering: a null tag of a projection read is an evaluation _error_,
+  and so is a null boundary identifier (11.0 removed the optional read
+  that bound nothing instead). The optional-parameter and derived-null
+  advisories say so ahead of time.
 - **Wire format majors**: a new member of a closed vocabulary is a
   _major_, judged from the reader's side; a field an old reader can
   ignore without misreading anything is a minor. The importer reads

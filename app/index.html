@@ -2379,7 +2379,7 @@ const UI_SETTINGS = [
       + 'shows it either way; this decides whether the pages offer to author them.',
     options: [
       ['off', 'Off', 'Types, events, projections, commands and the consistency boundary'],
-      ['on', 'On', 'Also scripted projections, optional reads and the overview pages'],
+      ['on', 'On', 'Also scripted projections and the overview pages'],
     ],
     get: () => (experimental() ? 'on' : 'off'),
     set: (value) => setExperimental(value === 'on'),
@@ -6594,11 +6594,7 @@ function readCard(model, slice, binding, index, waitsFor) {
           ? (r.plural
               ? opRef(r.tags[0].operand.each, null, operandWords(r.tags[0].operand.each))
               : opRef(r.tags[0].operand, null, r.tags[0].words))
-          : h('span', { class: 'muted' }, '?'),
-        // The declared absence, said where the read is: an unset
-        // identifier binds nothing here instead of erroring, and rules
-        // over this alias step aside.
-        binding.isOptional ? h('span', { class: 'verb' }, ' – may be absent') : null);
+          : h('span', { class: 'muted' }, '?'));
 
   const names = (condition) => conditionOperands(condition)
     .some((operand) => operandSource(operand) === 'alias-property'
@@ -6737,24 +6733,6 @@ function bindingEditor(model, slice, binding, index) {
           apply((b) => { b.tags = { [groupTag.name]: resolved && resolved.isList ? { each: operand } : operand }; });
         },
       }, 'Set')),
-
-    // Whether an unset identifier is expected. Off, it is the loud
-    // error it always was; on, the binding binds nothing, rules over
-    // it hold vacuously, and reading a property of it yields null. A
-    // fanned binding is not offered the choice – an empty list already
-    // binds nothing.
-    !experimental() || binding.projection || fanned ? null : h('div', { class: 'adder' },
-      h('label', { class: 'muted tiny', style: 'display:flex;align-items:center;gap:4px' },
-        h('input', {
-          type: 'checkbox', checked: !!binding.isOptional,
-          onchange: (e) => {
-            const on = e.target.checked;
-            apply((b) => { if (on) b.isOptional = true; else delete b.isOptional; });
-          },
-        }),
-        'may be absent'),
-      h('span', { class: 'muted tiny' },
-        'a null identifier binds nothing instead of erroring; conditions over the alias hold vacuously')),
 
     h('div', { class: 'adder' },
       h('button', { class: 'btn ghost tiny', onclick: () => { state.bindingDraft = null; close(); } }, 'Done')));
@@ -6902,13 +6880,6 @@ function ruleRow(model, slice, condition, i, draggable) {
   if (state.editRule === i) return h('div', { class: 'rule-row' }, ruleEditor(model, slice, i));
   const p = conditionParts(condition, model, slice.body);
   const quantifier = quantifierWords(model, slice.body, condition);
-  // A rule over an alias declared "may be absent" does not decide on
-  // the unset case – it steps aside. Said here, on the rule, so the
-  // skip the boundary's flag implies is visible where it applies.
-  const optionalAliases = uniq(conditionOperands(condition)
-    .filter((operand) => operandSource(operand) === 'alias-property')
-    .map((operand) => operand.alias))
-    .filter((alias) => (slice.body.boundary || []).some((b) => b && b.alias === alias && b.isOptional));
   return h('div', {
       class: 'rule-row',
       'data-rule': draggable ? i : null,
@@ -6918,11 +6889,7 @@ function ruleRow(model, slice, condition, i, draggable) {
       h('span', { class: 'sentence' },
         quantifier ? h('span', { class: 'verb' }, quantifier + ', ') : null,
         ruleOperandRef(slice, 'rule:' + i, condition.leftHandSide, p.left), ' ', h('span', { class: 'verb' }, p.verb),
-        p.right ? h('span', {}, ' ', ruleOperandRef(slice, 'rule:' + i, condition.rightHandSide, p.right)) : null,
-        optionalAliases.length
-          ? h('span', { class: 'muted tiny' },
-              ' – skipped when ' + optionalAliases.map(propertyWords).join(' or ') + ' is absent')
-          : null),
+        p.right ? h('span', {}, ' ', ruleOperandRef(slice, 'rule:' + i, condition.rightHandSide, p.right)) : null),
       rejectionMark(condition),
       h('span', { class: 'grow' }),
       reveal(
@@ -14486,12 +14453,6 @@ function sandboxDecision(model) {
               h('i', { class: 'ic' }, groupIcon(model, read.group)),
               h('span', { class: 't' }, readable(read.group)),
               read.fanned ? h('span', { class: 'k' }, `  (${read.instances.length})`) : null),
-            // The declared absence, seen happening: the read bound
-            // nothing, and every rule over it stepped aside.
-            read.absent
-              ? h('div', { class: 'sc-line' },
-                  h('span', { class: 'k' }, '  bound nothing – its identifier is unset (null)'))
-              : null,
             read.instances.map((instance) => h('div', { class: 'sc-line' },
               pinButton(groupWatch(read.group + ':' + instance.id)),
               h('span', { class: 't' }, instance.id),
@@ -14887,8 +14848,7 @@ function sandboxNow(model) {
         return h('div', {},
           h('div', { class: 'muted tiny' },
             alias + ' – ' + readable(read.group)
-              + (read.fanned ? ` (${read.instances.length})` : '')
-              + (read.absent ? ' – bound nothing (identifier unset)' : '')),
+              + (read.fanned ? ` (${read.instances.length})` : '')),
           read.instances.map((instance) =>
             instanceStateCard(model, read.group + ':' + instance.id)));
       }

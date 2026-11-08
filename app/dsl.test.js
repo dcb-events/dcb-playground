@@ -1231,6 +1231,8 @@ check('what 11.0 removed is an error where it is written, saying so', () => {
   eq(errors('command C(courseId: CourseId) {\n  emit E { courseId }\n    when courseId == "c1"\n}\n'),
     ['"when" on an emission is gone – 11.0 has no guarded emissions: an emission is published whenever its command is.'],
     'a guarded emission');
+  eq(errors('projection P (tag courseId: CourseId): integer = 0 {}\ncommand C(courseId: CourseId) {\n  alias p? = P(courseId)\n  emit E { courseId }\n}\n'),
+    ['"p?" is gone – 11.0 has no optional reads: a read needs a value for each of its tags.'], 'an optional read');
 });
 
 check('an edit inside a group is one update of the group', () => {

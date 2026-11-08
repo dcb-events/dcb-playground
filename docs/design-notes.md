@@ -34,7 +34,7 @@ and prune what no longer holds.
   What DCB is made of — types, events, projections, commands, the
   derived boundary — is always on screen; what the examples on
   dcb.events do not need is behind the flag: scripted projections,
-  optional reads, and the Coupling /
+  and the Coupling /
   Rule map / Event model / Metro map views. Groups are not on the list: a naming
   device with no consistency meaning has nothing to hide. Entities,
   lifecycles and `excluding` were on it until 11.0 removed them. A model that uses any of
@@ -413,10 +413,8 @@ and prune what no longer holds.
   becomes `course.exists` beside `alias course = Course(courseId)`,
   not `Course(courseId).exists` repeated in every rule. An alias bound
   to the projection itself folds into the group's. An alias of the group
-  with the same tags and optionality is reused, so moving several in
-  gathers them under one; an optional read never merges with a
-  required one, since that would change when the command refuses. A
-  new alias is named off its value (`aliasBaseFor`: `courseId` →
+  with the same tags is reused, so moving several in gathers them under
+  one. A new alias is named off its value (`aliasBaseFor`: `courseId` →
   `course`, `each subscribedCourseIds` → `subscribedCourses`) and
   numbered past the command's names. Derived projections and scenarios
   have no aliases and keep the read in place. Moving out goes back to a

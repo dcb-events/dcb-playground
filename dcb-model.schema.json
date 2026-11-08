@@ -685,11 +685,6 @@
           "additionalProperties": {
             "$ref": "#/$defs/TagOperand"
           }
-        },
-        "isOptional": {
-          "description": "The binding may be absent: when its tag's value resolves to null –\na value nothing has set yet, an optional parameter left unset – it\nbinds zero instances instead of being an evaluation error. Conditions\nreading the alias then hold vacuously (the rule steps aside rather than\ndeciding on a phantom), and reading a projection of it yields null.\n\nDeliberately opt-in: an unset value nobody declared possible stays the\nloud error it always was, because it is usually an accident. Only\nmeaningful on a singular binding – a fanned-out one already binds\nnothing over an empty list.\n",
-          "type": "boolean",
-          "default": false
         }
       },
       "required": [

@@ -2398,11 +2398,9 @@ check('every predefined model ships advisory-clean', () => {
 });
 
 // ---------------------------------------------------------------
-// Optional bindings, and one fact per event.
+// One fact per event.
 //
-// A binding derived from a value nothing has set yet may declare the
-// absence expected and bind nothing instead of erroring. And the
-// reassignment shape – one command moving two instructors' partitions
+// The reassignment shape – one command moving two instructors' partitions
 // in opposite directions – is expressed by *splitting the event*: an
 // Assigned and an Unassigned each carry one instructor tag, so one
 // plain handler per event type is enough; an event that names two
@@ -2452,7 +2450,7 @@ check('every predefined model ships advisory-clean', () => {
       boundary: [
         { alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } },
         { alias: 'previousInstructor', group: 'Instructor',
-          tags: { instructorId: { alias: 'course', property: 'instructorId' } }, isOptional: true },
+          tags: { instructorId: { alias: 'course', property: 'instructorId' } } },
       ],
       conditions: [
         { leftHandSide: { alias: 'previousInstructor', property: 'instructedCourses' },
@@ -2494,39 +2492,6 @@ check('every predefined model ships advisory-clean', () => {
       'a first assignment removes nothing from anyone');
   });
 
-  check('an optional binding with an unset identifier binds nothing', () => {
-    const { model } = openAssignment();
-    const result = evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' });
-    eq(result.outcome, 'published', 'no error, and the condition over the absent alias held vacuously');
-    eq(result.events.map((e) => e.type), ['Assigned', 'Unassigned'], 'both facts recorded');
-    eq(result.events[1].data.instructorId, null, 'the no-predecessor case publishes the explicit null');
-    eq(result.reads.previousInstructor.absent, true, 'the reads say the alias bound nothing');
-    eq(result.reads.previousInstructor.instances, [], 'zero instances, not a phantom');
-  });
-
-  check('an inline read tagged by an optional binding is advised: absent, it is an error', () => {
-    const { id, model } = openAssignment();
-    // An instructor's mentor, another instructor – a value read off the
-    // optional binding, and the tag of a read.
-    addDefinition('projection-definition', id, 'Instructor.mentorId', {
-      valueType: 'InstructorId', isList: false, initialValue: null, handlers: [],
-    });
-    const body = deepClone(model()['command-definitions'].Assign);
-    body.conditions.push({
-      leftHandSide: { projection: 'Instructor.instructedCourses',
-        tags: { instructorId: { alias: 'previousInstructor', property: 'mentorId' } } },
-      predicate: 'isNotEmpty', rejection: 'The previous instructor teaches nothing',
-    });
-    updateDefinition('command-definition', id, 'Assign', body);
-    const advisories = sandbox.modelAdvisories(model()).filter((a) => a.name === 'Assign');
-    const advisory = advisories.find((a) => /may be absent/.test(a.message));
-    eq(!!advisory, true, 'advised ahead of time: ' + JSON.stringify(advisories));
-    eq(/previousInstructor/.test(advisory.message) && /instructedCourses/.test(advisory.message), true, advisory.message);
-    let message = '';
-    try { evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' }); } catch (error) { message = error.message; }
-    eq(message !== '', true, 'and, absent, the evaluation error it said would come');
-  });
-
   check('the condition over the bound previous instructor still decides', () => {
     const { model } = openAssignment();
     const log = [assigned('c1', 'i1')];
@@ -2535,36 +2500,18 @@ check('every predefined model ships advisory-clean', () => {
     eq(result.events[1].data.instructorId, 'i1', 'and the Unassigned names the predecessor');
   });
 
-  check('without the flag, an unset identifier stays the loud error', () => {
-    const { id, model } = openAssignment();
-    const body = deepClone(model()['command-definitions'].Assign);
-    delete body.boundary[1].isOptional;
-    updateDefinition('command-definition', id, 'Assign', body);
+  check('an unset identifier is the loud error', () => {
+    const { model } = openAssignment();
     let message = '';
     try { evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' }); }
     catch (error) { message = error.message; }
     eq(/unset \(null\)/.test(message), true, 'errored: ' + message);
   });
 
-  check('reading a property of an absent alias yields null', () => {
-    const { id, model } = openAssignment();
-    const body = deepClone(model()['command-definitions'].Assign);
-    body.conditions = [];
-    // Route the read through the absent alias itself rather than
-    // through `course` – nothing was read at all, so the value is
-    // null, the one spelling of no value.
-    body.publishes[1].parameters.instructorId = {
-      alias: 'previousInstructor', property: 'instructedCourses',
-    };
-    updateDefinition('command-definition', id, 'Assign', body);
-    const result = evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' });
-    eq(result.outcome, 'published', 'published');
-    eq(result.events[1].data.instructorId, null, 'null, not an empty list and not an error');
-  });
-
   check('an event naming two instances of one type is flagged as ambiguous', () => {
     const { id, model } = openAssignment();
-    eq(sandbox.modelAdvisories(model()).length, 0, 'the split-event shape is clean');
+    const ambiguous = () => sandbox.modelAdvisories(model()).some((a) => /Tag it by one, split the event/.test(a.message));
+    eq(ambiguous(), false, 'the split-event shape is not ambiguous');
     // The unsplit shape: one event carrying both the new holder and
     // the one replaced – a handler on it fires for both partitions.
     addTaggedEvent(id, 'Reassigned', {
@@ -2581,13 +2528,10 @@ check('every predefined model ships advisory-clean', () => {
     eq(/Tag it by one, split the event/.test(found), true, 'the advisory names the fixes: ' + found);
   });
 
-  check('an unflagged binding off a null-starting projection is advised ahead of time', () => {
-    const { id, model } = openAssignment();
-    const body = deepClone(model()['command-definitions'].Assign);
-    delete body.boundary[1].isOptional;
-    updateDefinition('command-definition', id, 'Assign', body);
+  check('a binding off a null-starting projection is advised ahead of time', () => {
+    const { model } = openAssignment();
     const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
-    eq(/may be absent/.test(found), true, 'the advisory names the fix: ' + found);
+    eq(/starts at null – evaluation errors until something sets it/.test(found), true, found);
   });
 }
 
@@ -4246,11 +4190,11 @@ function modelsWithScenarios() {
       ],
       boundary: [
         { alias: 'cap', projection: 'CourseCapacity', tags: byCourse() },
-        { alias: 'maybe', projection: 'CourseStatus', tags: byCourse(), isOptional: true },
+        { alias: 'status', projection: 'CourseStatus', tags: byCourse() },
       ],
       conditions: [
         { leftHandSide: { alias: 'cap' }, predicate: 'lessThan', rightHandSide: 100, rejection: 'a' },
-        { leftHandSide: { alias: 'maybe' }, predicate: 'equals', rightHandSide: { enumMember: 'Existent' }, rejection: 'b' },
+        { leftHandSide: { alias: 'status' }, predicate: 'equals', rightHandSide: { enumMember: 'Existent' }, rejection: 'b' },
         { leftHandSide: { projection: 'CourseSubscriptionCount', tags: byCourse() }, predicate: 'lessThan',
           rightHandSide: 10, rejection: 'c' },
         { leftHandSide: { projection: 'CourseSubscriptionCount', tags: { courseId: { each: { parameterName: 'courseIds' } } } },
@@ -4264,12 +4208,11 @@ function modelsWithScenarios() {
     // `course` is a payload property, so the alias is numbered past it.
     eq(probe.boundary, [
       { alias: 'course2', group: 'Course', tags: byCourse() },
-      { alias: 'course3', group: 'Course', tags: byCourse(), isOptional: true },
       { alias: 'courses', group: 'Course', tags: { courseId: { each: { parameterName: 'courseIds' } } } },
-    ], 'an alias of the projection folds into one of the group, an optional one kept apart, a fan-out named off its list');
+    ], 'aliases of projections with the same tags fold into one of the group, a fan-out named off its list');
     eq(probe.conditions.map((c) => c.leftHandSide), [
       { alias: 'course2', property: 'capacity' },
-      { alias: 'course3', property: 'status' },
+      { alias: 'course2', property: 'status' },
       { alias: 'course2', property: 'subscriptionCount' },
       { alias: 'courses', property: 'subscriptionCount' },
     ], 'every use a member read; a read in place reuses the alias with the same tags');
@@ -4424,6 +4367,39 @@ function modelsWithScenarios() {
     try { updateDefinition('command-definition', id, 'SubscribeStudentToCourse', subscribe); } catch (error) { refused = error.message; }
     eq(refused, 'Command "SubscribeStudentToCourse" guards its emission of "StudentSubscribedToCourse" (when …) – '
       + '11.0 has no guarded emissions.', 'named');
+  });
+
+  check('an optional read keeps its command out of the import, and says so – a 10.x entity\'s too', () => {
+    const envelope = grouped();
+    const subscribe = envelope.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse');
+    subscribe.boundary.find((b) => b.group === 'Course').isOptional = true;
+    const alias = subscribe.boundary.find((b) => b.group === 'Course').alias;
+    resetStore();
+    const { modelId, converted } = importModelFromEnvelope(envelope);
+    const model = sandbox.projectState()[modelId];
+    eq(converted.filter((c) => c.name === 'SubscribeStudentToCourse').map((c) => c.note),
+      [`"${alias}" was an optional read (${alias}?), which nothing can say any more – the command was not imported, `
+        + 'since an unset identifier would now be an error where it used to read nothing.'],
+      'the note says what was refused, and why');
+    eq(model['command-definitions'].SubscribeStudentToCourse, undefined, 'the command stays out');
+    eq(!!model['group-definitions'].Course && !!model['command-definitions'].DefineCourse, true, 'the rest loads');
+
+    const legacy = legacyEnvelope();
+    legacy.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse').boundary
+      .find((b) => b.entity === 'Course').isOptional = true;
+    resetStore();
+    const lifted = importModelFromEnvelope(legacy);
+    eq(sandbox.projectState()[lifted.modelId]['command-definitions'].SubscribeStudentToCourse, undefined, 'a 10.x one too');
+    eq(lifted.converted.some((c) => c.name === 'SubscribeStudentToCourse' && /optional read/.test(c.note)), true, 'and said');
+  });
+
+  check('the write path refuses an optional read', () => {
+    const { id, model } = open_(GROUPED);
+    const read = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    read.boundary.find((b) => b.alias === 'course').isOptional = true;
+    let refused = null;
+    try { updateDefinition('command-definition', id, 'SubscribeStudentToCourse', read); } catch (error) { refused = error.message; }
+    eq(refused, 'Command "SubscribeStudentToCourse" reads "course" optionally (course?) – 11.0 has no optional reads.', 'named');
   });
 
   check('the write path refuses currentValue', () => {

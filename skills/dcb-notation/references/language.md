@@ -358,4 +358,4 @@ command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
 }
 ~~~
 
-Not offered to agents: scripted projections, optional reads (alias x? = …), arguments on a group's projection read through an alias (x.p(a: …)). A text or definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.
+Not offered to agents: scripted projections, arguments on a group's projection read through an alias (x.p(a: …)). A text or definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.

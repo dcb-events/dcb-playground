@@ -1589,7 +1589,6 @@ function derivedResultBase(model, derived, owner = null) {
 // projection that is scripted is found under its qualified name.
 const EXPERIMENTAL_FEATURES = {
   scripted: 'scripted projections',
-  optional: 'optional reads',
 };
 
 function experimentalFeatures(model) {
@@ -1603,13 +1602,6 @@ function experimentalFeatures(model) {
   };
   for (const [name, body] of Object.entries(projectionsOf(model))) {
     if (scriptOf(body)) note('scripted', name);
-  }
-  for (const [name, body] of Object.entries(model['command-definitions'] || {})) {
-    if (!body) continue;
-    for (const binding of body.boundary || []) {
-      if (!binding) continue;
-      if (binding.isOptional) note('optional', name);
-    }
   }
   const order = Object.keys(EXPERIMENTAL_FEATURES);
   return found.sort((a, b) => order.indexOf(a.feature) - order.indexOf(b.feature));
@@ -4000,12 +3992,6 @@ function validateCommandBody(model, body) {
       // argument reaches the code or the derivation.
       const problem = readProblem(model, body, binding, `Boundary binding "${binding.alias}"`, chained);
       if (problem) throw new DomainError(problem);
-      if (binding.isOptional !== undefined) {
-        throw new DomainError(
-          `Boundary binding "${binding.alias}" reads a projection and is marked "may be absent" – ` +
-          `a projection always folds to a value, so there is no absent case to declare.`
-        );
-      }
       declaredAbove.push(binding.alias);
       continue;
     }
@@ -4026,12 +4012,6 @@ function validateCommandBody(model, body) {
         throw new DomainError(
           `Boundary binding "${binding.alias}" gives ${binding.group} arguments – a group takes none; ` +
           `the projection read takes its own, ${binding.alias}.member(…).`
-        );
-      }
-      if (binding.isOptional && isFannedOut(model, body, binding)) {
-        throw new DomainError(
-          `Boundary binding "${binding.alias}" is marked "may be absent", but it fans out over a ` +
-          `list – an empty list already binds nothing, so the flag means nothing there.`
         );
       }
       declaredAbove.push(binding.alias);
@@ -4343,59 +4323,25 @@ function validateCommandBody(model, body) {
   // a tag, and null has no tag – evaluation errors when it is unset, and
   // this says so first.
   for (const binding of boundary) {
-    const feeds = [];
-    // An identifier already declared "may be absent" is the covered
-    // case – the flag is the fix this advisory would otherwise ask for.
-    // A group binding already declared "may be absent" is the covered
-    // case – the flag is the fix this advisory would otherwise ask for.
-    const flaggable = binding.group !== undefined && !isFannedOut(model, body, binding);
-    if (!(flaggable && binding.isOptional)) {
-      for (const [name, operand] of readTagEntries(binding)) {
-        if (readsOptionalParameter(operand)) feeds.push([`its "${name}" tag`, operand, flaggable]);
-      }
-    }
-    if (feeds.length) {
-      const [what, operand, flaggable] = feeds[0];
+    const feed = readTagEntries(binding).find(([, operand]) => readsOptionalParameter(operand));
+    if (feed) {
+      const [name, operand] = feed;
       throw new DomainError(
-        `Boundary binding "${binding.alias}" takes ${what} from optional parameter ` +
+        `Boundary binding "${binding.alias}" takes its "${name}" tag from optional parameter ` +
         `"${operand.parameterName}" – evaluation errors when it is unset. ` +
-        (flaggable
-          ? `Make the parameter required, mark the binding "may be absent", or take the boundary off it.`
-          : `Make the parameter required, or take the boundary off it.`)
-      );
-    }
-  }
-
-  // The same hazard through a binding marked "may be absent". Absent,
-  // it binds nothing, and a rule over it holds vacuously – but a value
-  // read off it is null, and a read tagged by that null has no tag to
-  // read by: an evaluation error, not a vacuous truth (AGENTS.md, on
-  // null). The flag reads as "this is handled", so it is said here.
-  const mayBeAbsent = new Set(boundary.filter((b) => b && b.isOptional && b.alias).map((b) => b.alias));
-  if (mayBeAbsent.size) {
-    let found = null;
-    forEachCommandOperand(body, (operand, meta) => {
-      if (found || !meta.tag) return;
-      const alias = operandAliases(operand).find((a) => mayBeAbsent.has(a));
-      if (alias) found = { alias, where: meta.where };
-    });
-    if (found) {
-      throw new DomainError(
-        `The read at ${found.where} is tagged by "${found.alias}", a binding that may be absent – `
-        + `when it binds nothing, that tag is null and evaluation errors. Make the binding required, `
-        + `or tag the read by a value that is always set.`
+        `Make the parameter required, or take the boundary off it.`
       );
     }
   }
 
   // The derived cousin of the same hazard: a group's tag read off
   // another binding's value can be unset too – a projection that starts
-  // at null reads null until something sets it, and an unflagged binding
-  // then errors on exactly the first interesting case (nothing assigned
+  // at null reads null until something sets it, and the binding then
+  // errors on exactly the first interesting case (nothing assigned
   // yet). Statically knowable only from the initial value; a scripted
   // projection keeps its own counsel and is left alone.
   for (const binding of boundary) {
-    if (binding.group === undefined || binding.isOptional) continue;
+    if (binding.group === undefined) continue;
     if (isFannedOut(model, body, binding)) continue;
     const [entry] = readTagEntries(binding);
     const tagged = entry && entry[1];
@@ -4411,9 +4357,7 @@ function validateCommandBody(model, body) {
     if (projection.initialValue === null) {
       throw new DomainError(
         `Boundary binding "${binding.alias}" takes its tag from ${operandText(tagged)}, ` +
-        `which starts at null – evaluation errors until something sets it. ` +
-        `Mark the binding "may be absent" to bind nothing instead, and conditions over it will ` +
-        `hold vacuously.`
+        `which starts at null – evaluation errors until something sets it.`
       );
     }
   }
@@ -4618,6 +4562,7 @@ const STORABLE_LIST_FIELDS = [
 const REMOVED_CONSTRUCTS = {
   currentValue: '11.0 has no currentValue',
   guard: '11.0 has no guarded emissions',
+  optional: '11.0 has no optional reads',
 };
 
 function removedConstructIn(kind, body) {
@@ -4641,6 +4586,8 @@ function removedConstructIn(kind, body) {
     const guarded = list(body.publishes).find((e) => e && e.when !== undefined
       && !(Array.isArray(e.when) && !e.when.length));
     if (guarded) return { construct: 'guard', what: `guards its emission of "${guarded.name}" (when …)`, emission: guarded.name };
+    const optional = list(body.boundary).find((b) => b && b.isOptional === true);
+    if (optional) return { construct: 'optional', what: `reads "${optional.alias}" optionally (${optional.alias}?)`, alias: optional.alias };
   }
   return null;
 }
@@ -4955,9 +4902,7 @@ function siblingReadsInside(derived, groupName, tag) {
 // every member a rule reads is the repetition an alias exists to save.
 //
 // An alias of the group with the same tags is reused – moving several
-// projections in one after another gathers them under one – but only
-// one with the same optionality: merging an optional read into a
-// required one would change when the command refuses. A new alias is
+// projections in one after another gathers them under one. A new alias is
 // named off the value it is read by (`aliasBaseFor`) and appended;
 // where it sits does not matter, the boundary is resolved in rounds.
 // An alias whose value is used by a field (`exists.x`) stays as it is:
@@ -4970,12 +4915,12 @@ function aliasGroupReads(body, moved) {
     ...(Array.isArray(body.properties) ? body.properties : []).map((p) => p && p.name),
   ].filter(Boolean));
   const sameTags = (a, b) => JSON.stringify(a || {}) === JSON.stringify(b || {});
-  const groupAlias = (group, tags, optional, at) => {
-    const found = body.boundary.find((b) => b && b.group === group && !!b.isOptional === optional && sameTags(b.tags, tags));
+  const groupAlias = (group, tags, at) => {
+    const found = body.boundary.find((b) => b && b.group === group && sameTags(b.tags, tags));
     if (found) return found.alias;
     const alias = uniqueAlias(aliasBaseFor(group, tags), [...taken]);
     taken.add(alias);
-    const binding = { alias, group, tags, ...(optional ? { isOptional: true } : {}) };
+    const binding = { alias, group, tags };
     if (at === undefined) body.boundary.push(binding);
     else body.boundary.splice(at, 0, binding);
     return alias;
@@ -4995,7 +4940,7 @@ function aliasGroupReads(body, moved) {
     const at = body.boundary.indexOf(binding);
     body.boundary.splice(at, 1);
     taken.delete(binding.alias);
-    const alias = groupAlias(split.group, binding.tags || {}, !!binding.isOptional, at);
+    const alias = groupAlias(split.group, binding.tags || {}, at);
     const args = binding.arguments && Object.keys(binding.arguments).length ? binding.arguments : null;
     for (const use of uses) {
       use.alias = alias;
@@ -5008,7 +4953,7 @@ function aliasGroupReads(body, moved) {
     const split = splitQualifiedName(read.projection);
     if (!split) continue;
     const { tags, arguments: args } = read;
-    const alias = groupAlias(split.group, tags || {}, false);
+    const alias = groupAlias(split.group, tags || {});
     for (const key of Object.keys(read)) delete read[key];
     read.alias = alias;
     read.property = split.local;
@@ -6684,7 +6629,6 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
         alias: binding.alias,
         group: binding.entity,
         tags: { [shape.tag.name]: convert(binding.id) },
-        ...(binding.isOptional ? { isOptional: true } : {}),
       };
     }).filter((binding) => binding !== null);
     if (Array.isArray(command.conditions)) command.conditions = convert(command.conditions);
@@ -6726,6 +6670,8 @@ function refuseRemovedConstructs({ groups, projections, commands }) {
 const REMOVED_COMMAND_NOTES = {
   guard: ({ emission }) => `Its emission of "${emission}" was guarded (when …), which nothing can say any more – `
     + 'the command was not imported, since publishing it every time would change what the command decides.',
+  optional: ({ alias }) => `"${alias}" was an optional read (${alias}?), which nothing can say any more – the command `
+    + 'was not imported, since an unset identifier would now be an error where it used to read nothing.',
 };
 
 // The synthesizer: rebuilds a shared model into a brand-new one by
@@ -8735,12 +8681,7 @@ function evReadOperand(operand, scope) {
       if (!operand.property) {
         fail(`"${operand.alias}" reads the group ${binding.group}, so reading it needs one of its projections.`);
       }
-      if (!binding.fanned) {
-        // An absent optional binding bound nothing; reading it yields
-        // null – the one spelling of "no value" – rather than erroring.
-        if (!binding.instances.length) return null;
-        return binding.instances[0].read(operand, scope);
-      }
+      if (!binding.fanned) return binding.instances[0].read(operand, scope);
       const each = binding.instances.map((instance) => instance.read(operand, scope));
       return each.some(Array.isArray) ? each.flat() : each;
     }
@@ -8890,19 +8831,9 @@ function evResolveBinding(model, events, body, binding, scope) {
       `many – ${binding.group}(each ${operandText(operand)}) reads one instance per element.`);
   }
   // A null tag binds nothing. Folding at "Type:null" would invent one
-  // phantom instance every unset value shares. A binding flagged
-  // `isOptional` declares the absence expected and binds zero instances
-  // instead: conditions over it hold vacuously and reading a member of
-  // it yields null. Without the flag the error stays – an unset value
-  // nobody declared possible is an accident, and this is the error the
-  // optional-parameter advisory promises.
+  // phantom instance every unset value shares, so it is an error – the
+  // one the optional-parameter advisory promises.
   if (!fanned && evNormalize(held) === null) {
-    if (binding.isOptional) {
-      scope.bound[binding.alias] = {
-        kind: 'group', group: binding.group, fanned: false, absent: true, sourceIndexes: [], instances: [],
-      };
-      return;
-    }
     fail(`${label} has no instance to read: ${operandText(operand)} is unset (null).`);
   }
   // Order is preserved and duplicates are kept: a binding fanned from a
@@ -9005,18 +8936,6 @@ function evFannedAliasesOf(condition, scope) {
 }
 
 function evCheckCondition(model, body, condition, scope) {
-  // A condition reading an alias the boundary flagged optional and
-  // could not bind holds vacuously – the same reading a fanned alias
-  // with zero instances already gets. `skippedFor` names the alias, so
-  // an interface can say the rule stepped aside rather than passed.
-  for (const operand of conditionOperands(condition)) {
-    if (operandSource(operand) !== 'alias-property') continue;
-    const binding = scope.bound[operand.alias];
-    if (binding && binding.kind === 'group' && binding.absent) {
-      return { held: true, index: null, skippedFor: operand.alias };
-    }
-  }
-
   const fannedAliases = evFannedAliasesOf(condition, scope);
   // A read in place that fans out quantifies the same way an alias
   // does: folded once (`scope.inline`), then read at the index.
@@ -9299,10 +9218,6 @@ function evDescribeReads(scope) {
       group: binding.group,
       ...(binding.tag ? { tag: { name: binding.tag.name, type: binding.tag.tagType } } : {}),
       fanned: binding.fanned,
-      // An optional binding whose tag was unset – it bound nothing, and
-      // the reader deserves to see that said, not an empty list that
-      // looks like a fan-out over nothing.
-      ...(binding.absent ? { absent: true } : {}),
       instances: binding.instances.map((instance) => {
         const properties = {};
         for (const [name, value] of instance.cache || []) properties[name] = value;
@@ -11096,7 +11011,7 @@ function parseModelSourceText(text, options) {
       if (readToken) {
         const aliasToken = ident('the name of the alias');
         const alias = aliasToken.v;
-        const isOptional = !!accept('?');
+        if (is('?')) fail(`"${alias}?" is gone – 11.0 has no optional reads: a read needs a value for each of its tags.`);
         expect('=');
         const target = ident('a group or a projection');
         // Which of the two it is, is settled once every declaration is
@@ -11118,7 +11033,6 @@ function parseModelSourceText(text, options) {
         // resolves or renames them.
         mark(binding, 'statement', readToken);
         mark(binding, 'statementEnd', last());
-        if (isOptional) binding.isOptional = true;
         body.boundary.push(binding);
       } else if (accept('require')) {
         // The message is required, as in Weltenwanderer: it is what the
@@ -11765,7 +11679,6 @@ function parseModelSourceText(text, options) {
         if (read.arguments) out.arguments = read.arguments;
         if (named) report(token, `A read gives its values in order, as ${target} declares them – no names.`);
       }
-      if (binding.isOptional) out.isOptional = true;
       copyMarks(binding, out);
       mark(out, out.group !== undefined ? 'group' : 'projection', token);
       return out;
@@ -12292,15 +12205,15 @@ function printCommand(name, body, names) {
 
   const reads = boundary.map((binding) => {
     if (!binding || typeof binding !== 'object') unprintable('an alias is not an object');
-    const alias = sourceRef(binding.alias, 'alias') + (binding.isOptional === true ? '?' : '');
+    const alias = sourceRef(binding.alias, 'alias');
     if (binding.group !== undefined && binding.projection === undefined) {
-      if (Object.keys(binding).some((k) => !['alias', 'group', 'tags', 'isOptional'].includes(k))) {
+      if (Object.keys(binding).some((k) => !['alias', 'group', 'tags'].includes(k))) {
         unprintable(`the alias "${binding.alias}" carries fields a group read does not have`);
       }
       return `alias ${alias} = ${sourceGroupCall(binding.group, binding.tags, names, operand)}`;
     }
     if (binding.projection !== undefined && binding.group === undefined) {
-      if (Object.keys(binding).some((k) => !['alias', 'projection', 'tags', 'arguments', 'isOptional'].includes(k))) {
+      if (Object.keys(binding).some((k) => !['alias', 'projection', 'tags', 'arguments'].includes(k))) {
         unprintable(`the alias "${binding.alias}" carries fields a projection read does not have`);
       }
       return `alias ${alias} = ${sourceRead(binding, names, operand)}`;
@@ -14177,7 +14090,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         if (v(d[i]) === 'emit' && d[i + 1] && d[i + 1].t === 'ident') emits.push(d[i + 1].v);
         // The read being written is not in scope of itself.
         if (v(d[i]) !== 'alias' || (tokens.includes(d[i]) && d[i].line === line) || !d[i + 1] || d[i + 1].t !== 'ident') continue;
-        const eq = v(d[i + 2]) === '?' ? i + 3 : i + 2;
+        const eq = i + 2;
         if (v(d[eq]) !== '=' || !d[eq + 1]) continue;
         const target = d[eq + 1].v;
         // `Course(…)` is the group; `Course(…).capacity`, its projection.
@@ -14796,7 +14709,6 @@ function sourceExperimentalMarks(text) {
   tokens.forEach((token, i) => {
     const v = token.v;
     const next = tokens[i + 1];
-    if (token.t === 'punct' && v === '?' && tokens[i - 2] && tokens[i - 2].v === 'alias') { said(token, 'An optional read'); return; }
     if (token.t !== 'ident') return;
     // A group is not marked: a name is nothing to hide. A scripted
     // projection is, in a group as anywhere.
@@ -15169,7 +15081,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 `;
 
 const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
-  + 'optional reads (alias x? = …), arguments on a group\'s projection '
+  + 'arguments on a group\'s projection '
   + 'read through an alias (x.p(a: …)). A text or '
   + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 

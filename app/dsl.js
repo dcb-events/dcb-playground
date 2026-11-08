@@ -1372,7 +1372,7 @@ function parseModelSourceText(text, options) {
       if (readToken) {
         const aliasToken = ident('the name of the alias');
         const alias = aliasToken.v;
-        const isOptional = !!accept('?');
+        if (is('?')) fail(`"${alias}?" is gone – 11.0 has no optional reads: a read needs a value for each of its tags.`);
         expect('=');
         const target = ident('a group or a projection');
         // Which of the two it is, is settled once every declaration is
@@ -1394,7 +1394,6 @@ function parseModelSourceText(text, options) {
         // resolves or renames them.
         mark(binding, 'statement', readToken);
         mark(binding, 'statementEnd', last());
-        if (isOptional) binding.isOptional = true;
         body.boundary.push(binding);
       } else if (accept('require')) {
         // The message is required, as in Weltenwanderer: it is what the
@@ -2041,7 +2040,6 @@ function parseModelSourceText(text, options) {
         if (read.arguments) out.arguments = read.arguments;
         if (named) report(token, `A read gives its values in order, as ${target} declares them – no names.`);
       }
-      if (binding.isOptional) out.isOptional = true;
       copyMarks(binding, out);
       mark(out, out.group !== undefined ? 'group' : 'projection', token);
       return out;
@@ -2568,15 +2566,15 @@ function printCommand(name, body, names) {
 
   const reads = boundary.map((binding) => {
     if (!binding || typeof binding !== 'object') unprintable('an alias is not an object');
-    const alias = sourceRef(binding.alias, 'alias') + (binding.isOptional === true ? '?' : '');
+    const alias = sourceRef(binding.alias, 'alias');
     if (binding.group !== undefined && binding.projection === undefined) {
-      if (Object.keys(binding).some((k) => !['alias', 'group', 'tags', 'isOptional'].includes(k))) {
+      if (Object.keys(binding).some((k) => !['alias', 'group', 'tags'].includes(k))) {
         unprintable(`the alias "${binding.alias}" carries fields a group read does not have`);
       }
       return `alias ${alias} = ${sourceGroupCall(binding.group, binding.tags, names, operand)}`;
     }
     if (binding.projection !== undefined && binding.group === undefined) {
-      if (Object.keys(binding).some((k) => !['alias', 'projection', 'tags', 'arguments', 'isOptional'].includes(k))) {
+      if (Object.keys(binding).some((k) => !['alias', 'projection', 'tags', 'arguments'].includes(k))) {
         unprintable(`the alias "${binding.alias}" carries fields a projection read does not have`);
       }
       return `alias ${alias} = ${sourceRead(binding, names, operand)}`;
@@ -4453,7 +4451,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         if (v(d[i]) === 'emit' && d[i + 1] && d[i + 1].t === 'ident') emits.push(d[i + 1].v);
         // The read being written is not in scope of itself.
         if (v(d[i]) !== 'alias' || (tokens.includes(d[i]) && d[i].line === line) || !d[i + 1] || d[i + 1].t !== 'ident') continue;
-        const eq = v(d[i + 2]) === '?' ? i + 3 : i + 2;
+        const eq = i + 2;
         if (v(d[eq]) !== '=' || !d[eq + 1]) continue;
         const target = d[eq + 1].v;
         // `Course(…)` is the group; `Course(…).capacity`, its projection.
@@ -5072,7 +5070,6 @@ function sourceExperimentalMarks(text) {
   tokens.forEach((token, i) => {
     const v = token.v;
     const next = tokens[i + 1];
-    if (token.t === 'punct' && v === '?' && tokens[i - 2] && tokens[i - 2].v === 'alias') { said(token, 'An optional read'); return; }
     if (token.t !== 'ident') return;
     // A group is not marked: a name is nothing to hide. A scripted
     // projection is, in a group as anywhere.
@@ -5445,7 +5442,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 `;
 
 const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
-  + 'optional reads (alias x? = …), arguments on a group\'s projection '
+  + 'arguments on a group\'s projection '
   + 'read through an alias (x.p(a: …)). A text or '
   + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
 
