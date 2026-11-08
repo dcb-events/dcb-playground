@@ -11321,6 +11321,19 @@ if (typeof module !== 'undefined' && module.exports) {
 // comparison's, never a group's. The aliases sit at the top: a read is
 // made where a step first needs it, wherever it is declared.
 //
+// **A fan-out emit is a step too** (11.0): `for each x in source =>
+// emit E { … }`, or a block `{ … }` of `emit`s and `if`s whose arms
+// are each one `emit` or `reject` (`loop`) – `for each (a, b) in
+// P(c, *, *)` for two open tags. The source is a read leaving a tag
+// open (the one other place `*` may stand), a list projection or a
+// list parameter. The names are read as payload properties are – the
+// wire format stores them as `{parameterName}` – and over an open read
+// `value` is the instance's value, `value.field` a record's field: a
+// word only inside such a loop. A loop inside a loop, a `require`
+// inside one and a block arm are errors where they are written; a
+// stored loop holding one prints as JSON. A loop's names are the
+// language service's `loopVariable`s, renamed like a payload property.
+//
 // **A handler may branch the same way** (11.0): `on E { if c => op
 // else if c => op  else => op }`, each `if` a chain of its own, so
 // separate `if`s all apply and an `else` continues the chain above it
@@ -11727,6 +11740,11 @@ function parseModelSourceText(text, options) {
   // 11.0): only the one a collection function collects, never one
   // nested inside it.
   let openAllowed = false;
+  // The loop being read (11.0): null outside one; inside, whether its
+  // source is an open read – where `value` is the instance's value.
+  let loopRead = null;
+  // The command being read: what a loop's names may not shadow.
+  let commandRead = null;
   const ident = (what) => (peek().t === 'ident' ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
   const declName = (what) => (peek().t === 'ident' || peek().t === 'string'
     ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
@@ -11884,6 +11902,19 @@ function parseModelSourceText(text, options) {
   const commandOperand = () => {
     const token = peek();
     if (startsCollection()) return collection(commandOperand);
+    // `value` inside a loop over an open read (11.0): the instance's.
+    if (loopRead && loopRead.value && token.t === 'ident' && token.v === 'value' && !is('(', 1)) {
+      next();
+      const out = { instanceValue: true };
+      mark(out, 'value', token);
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        out.field = field.v;
+        mark(out, 'field', field);
+      }
+      return out;
+    }
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)
         && !['true', 'false', 'null', 'enum'].includes(token.v)) {
       if (is('(', 1)) return call(commandOperand);
@@ -12791,6 +12822,7 @@ function parseModelSourceText(text, options) {
     mark(body, 'open', expect('{'));
     body.boundary = [];
     body.steps = [];
+    commandRead = body;
     const owner = { kind: 'command-definition', name: nameToken.v };
     let group = null;
     const bare = [];
@@ -12831,7 +12863,7 @@ function parseModelSourceText(text, options) {
       } else if (is('scenario')) {
         bare.push(scenarioDecl(peek(), owner));
       } else {
-        fail(`Expected alias, require, emit, if or scenarios, found ${describeToken(peek())}.`);
+        fail(`Expected alias, require, emit, if, for each or scenarios, found ${describeToken(peek())}.`);
       }
     }
     const endAt = at;
@@ -12848,10 +12880,11 @@ function parseModelSourceText(text, options) {
   // inside an arm – `reject "…"`. An arm is one emission or one
   // `reject`, or a block `{ … }` of steps. A top-level `reject` parses,
   // to be advised: it would refuse every time.
-  const STEP_STARTS = ['require', 'emit', 'if', 'reject'];
-  const startsStep = () => STEP_STARTS.some((word) => is(word));
+  const STEP_STARTS = ['require', 'emit', 'if', 'reject', 'for'];
+  const startsStep = () => STEP_STARTS.some((word) => is(word) && (word !== 'for' || is('each', 1)));
   const step = () => {
     const start = peek();
+    if (is('for') && is('each', 1)) return loop();
     if (accept('require')) {
       // The message is required, as in Weltenwanderer: it is what the
       // command is refused with, and what a scenario names the refusal by.
@@ -12896,8 +12929,10 @@ function parseModelSourceText(text, options) {
     }
     return leave(branch);
   };
-  // What an arm does: one emission or `reject`, or a block of steps.
+  // What an arm does: one emission or `reject`, or a block of steps –
+  // inside a loop, one emission or `reject`.
   const armBody = () => {
+    if (loopRead && is('{')) fail('A branch inside a for each holds one emit or one reject.');
     if (accept('{')) {
       const steps = [];
       while (!is('}')) {
@@ -12913,9 +12948,76 @@ function parseModelSourceText(text, options) {
     return fail(`Expected emit, reject or a block "{ … }" after "=>", found ${describeToken(peek())}.`);
   };
 
+  // ---------- a fan-out emit (11.0) ----------
+  //
+  // `for each x in source => emit …`, or a block of `emit`s and `if`
+  // branches whose arms each hold one emission or one `reject`. Two
+  // names in parentheses for an open read leaving two tags open. The
+  // names are in scope inside, as parameters are; over an open read,
+  // so is `value`. A loop never nests.
+  const loop = () => {
+    const start = next();
+    if (loopRead) fail('A for each inside another is refused – a loop does not nest.', start);
+    next();
+    const nameTokens = [];
+    if (accept('(')) {
+      do nameTokens.push(ident('the name of an open tag\'s value')); while (accept(','));
+      expect(')', '")" or ","');
+    } else nameTokens.push(ident('the name of the element'));
+    const out = { forEach: nameTokens.map((token) => token.v) };
+    nameTokens.forEach((token, i) => mark(out, `name:${i}`, token));
+    mark(out, 'statement', start);
+    for (const token of nameTokens) {
+      const clash = commandRead && (commandRead.properties || []).some((p) => p.name === token.v) ? 'a payload property'
+        : commandRead && (commandRead.boundary || []).some((b) => b.alias === token.v) ? 'an alias' : null;
+      if (clash) {
+        diagnostics.push({
+          severity: 'error', message: `${token.v} already names ${clash} – a loop's name is its own.`,
+          line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
+        });
+      }
+    }
+    expect('in', '"in" and what the loop runs over – an open read P(x, *), a list projection or a list parameter');
+    const sourceStart = peek();
+    openAllowed = SOURCE_MEMBER_RE.test(sourceStart.v) && is('(', 1);
+    let source;
+    try { source = commandOperand(); } finally { openAllowed = false; }
+    out.in = source;
+    const opens = (source && Array.isArray(source.values) ? source.values : []).some((v) => v && v.open === true);
+    enter();
+    loopRead = { value: opens };
+    try {
+      if (accept('=>')) {
+        if (!is('emit')) fail('Expected emit after "=>" – a for each emits once per element, or runs a block "{ … }" of if branches.');
+        out.steps = [step()];
+      } else {
+        expect('{', '"=>" and what to emit per element, or "{" and its branches');
+        out.steps = [];
+        while (!is('}')) {
+          guardBlock('}');
+          if (is('for') && is('each', 1)) step();
+          if (!is('if') && !is('emit')) {
+            fail(`A for each holds emit and if … => emit – a loop emits; "if not … => reject" refuses from inside one.`);
+          }
+          out.steps.push(step());
+        }
+        expect('}');
+      }
+    } finally {
+      loopRead = null;
+    }
+    return leave(out);
+  };
+
   const resolveCommandNames = (body) => {
     const aliases = new Set(body.boundary.map((b) => b.alias));
-    const parameters = new Set(body.properties.map((p) => p.name));
+    // A loop's names (11.0) are read as parameters are.
+    const loopNamesIn = (steps) => (Array.isArray(steps) ? steps : []).flatMap((one) => {
+      if (!one || typeof one !== 'object') return [];
+      if (Array.isArray(one.forEach)) return one.forEach;
+      return [...(one.branches || []).flatMap((arm) => loopNamesIn(arm && arm.steps)), ...loopNamesIn(one.otherwise)];
+    });
+    const parameters = new Set([...body.properties.map((p) => p.name), ...loopNamesIn(body.steps)]);
     const resolve = (value) => {
       if (Array.isArray(value)) return value.map(resolve);
       if (value === null || typeof value !== 'object') return value;
@@ -13314,6 +13416,8 @@ function parseModelSourceText(text, options) {
   while (peek().t !== 'eof') {
     const from = at;
     depth = 0;
+    loopRead = null;
+    commandRead = null;
     try {
       declaration();
     } catch (caught) {
@@ -14163,9 +14267,16 @@ function printProjection(name, body, names, inGroup = null) {
 // refusing whatever it would resolve differently.
 function sourceCommandOperand(body, names) {
   const aliases = new Set((body.boundary || []).map((b) => b && b.alias));
-  const parameters = new Set((body.properties || []).map((p) => p && p.name));
+  const parameters = new Set([...(body.properties || []).map((p) => p && p.name),
+    ...commandLoops(body).flatMap(loopNames)]);
   return (value) => {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
+      // `value` inside a loop over an open read (11.0); anywhere else
+      // it does not read back, and the definition prints as JSON.
+      if (value.instanceValue !== undefined) {
+        if (value.instanceValue !== true || Object.keys(value).some((k) => !['instanceValue', 'field'].includes(k))) unprintable('a value carries extra fields');
+        return `value${value.field !== undefined ? '.' + sourceRef(value.field, 'field') : ''}`;
+      }
       if (value.parameterName !== undefined) {
         const head = sourceRef(value.parameterName, 'parameter');
         if (aliases.has(head)) unprintable(`"${head}" names both a payload property and an alias`);
@@ -14270,21 +14381,42 @@ function sourceStep(step, operand) {
       if (step.otherwise !== undefined) lines.push(`else => ${arm(step.otherwise)}`);
       return lines.join('\n');
     }
+    // `for each x in source => emit …`, or a block (11.0).
+    case 'loop': {
+      if (Object.keys(step).some((k) => !['forEach', 'in', 'steps'].includes(k))) unprintable('a loop carries fields a loop does not have');
+      const names = loopNames(step);
+      if (!names.length || names.length !== step.forEach.length) unprintable('a loop names nothing');
+      const steps = step.steps === undefined ? [] : step.steps;
+      if (!Array.isArray(steps)) unprintable('a loop\'s steps are not a list');
+      for (const inner of steps) {
+        const kind = stepKind(inner);
+        const oneEach = kind === 'branch' && stepArms(inner).every((arm) => arm.steps.length === 1 && ['emit', 'reject'].includes(stepKind(arm.steps[0])));
+        if (kind !== 'emit' && !oneEach) unprintable('a loop holds a step other than an emission or a branch of one emission or reject each');
+      }
+      const said = names.map((name) => sourceRef(name, 'name'));
+      const head = `for each ${said.length === 1 ? said[0] : `(${said.join(', ')})`} in ${operand(step.in)}`;
+      if (steps.length === 1 && stepKind(steps[0]) === 'emit') return `${head} => ${sourceStep(steps[0], operand)}`;
+      if (!steps.length) return `${head} {}`;
+      const inner = sourceSteps(steps, operand).map((group) => group.join('\n')).join('\n');
+      return `${head} {\n${inner.split('\n').map((line) => '  ' + line).join('\n')}\n}`;
+    }
     default:
-      return unprintable('a step is neither a rule, an emission, a branch nor a reject');
+      return unprintable('a step is neither a rule, an emission, a branch, a loop nor a reject');
   }
 }
 
 // Steps as groups of lines: a run of rules, then of emissions, then of
-// branches, each a group of its own – one blank line between groups, as
-// the rules and the emissions have always been printed.
+// branches, each a group of its own – and each loop alone – one blank
+// line between groups, as the rules and the emissions have always been
+// printed.
 function sourceSteps(steps, operand) {
   const groups = [];
   let last = null;
   for (const step of steps) {
     const kind = stepKind(step);
     const category = kind === 'reject' ? 'emit' : kind;
-    if (!groups.length || category !== last) groups.push([]);
+    // A loop is a block of its own, apart from the next.
+    if (!groups.length || category !== last || kind === 'loop') groups.push([]);
     groups[groups.length - 1].push(sourceStep(step, operand));
     last = category;
   }
@@ -15116,6 +15248,7 @@ const SOURCE_SYMBOL_WORDS = {
   member: 'enum member', field: 'record field', eventProperty: 'event property',
   groupProjection: 'projection', commandProperty: 'command property', alias: 'alias',
   projectionParameter: 'projection parameter', projectionTag: 'projection tag', groupTag: 'group tag',
+  loopVariable: 'loop name',
 };
 
 const SOURCE_KIND_SYMBOL = {
@@ -15443,16 +15576,28 @@ function sourceSymbols(parsed) {
   // ---------- commands ----------
   // A name in a scenario's rule is still `%ref` – resolved here against
   // the command it is about, by the rule `resolveCommandNames` uses.
+  // The loop the operands being walked sit in (11.0), or null.
+  let inLoop = null;
+  const loopNamed = (body, name) => !list(body.properties).some((p) => p.name === name)
+    && commandLoops(body).some((one) => loopNames(one).includes(name));
   const commandOperand = (commandName, body, value, expected) => {
     if (Array.isArray(value)) return value.forEach((v) => commandOperand(commandName, body, v, expected));
     const marked = slotsOf(value);
     let alias;
     let parameter;
     let property;
+    // `value.field` inside a loop over an open read (11.0).
+    if (has(value, 'instanceValue')) {
+      const held = loopValueType(model, inLoop);
+      if (held && value.field !== undefined && recordFields(held.propertyType)) {
+        add(sourceSymbol('field', held.propertyType, value.field), marked.field);
+      }
+      return;
+    }
     if (has(value, '%ref')) {
       const [head, prop] = value['%ref'];
       const asRead = list(body.boundary).some((b) => b.alias === head)
-        || (!list(body.properties).some((p) => p.name === head) && prop !== undefined);
+        || (!list(body.properties).some((p) => p.name === head) && !loopNamed(body, head) && prop !== undefined);
       if (asRead) alias = head; else parameter = head;
       property = prop;
     } else if (has(value, 'alias')) {
@@ -15488,6 +15633,14 @@ function sourceSymbols(parsed) {
       } else if (binding && binding.projection !== undefined) fieldOf(binding.projection, value);
       return;
     }
+    if (loopNamed(body, parameter)) {
+      add(sourceSymbol('loopVariable', commandName, parameter), marked.head);
+      const element = commandScopeProperties(model, body).find((p) => p.name === parameter);
+      if (element && property !== undefined && recordFields(element.propertyType)) {
+        add(sourceSymbol('field', element.propertyType, property), marked.property);
+      }
+      return;
+    }
     add(sourceSymbol('commandProperty', commandName, parameter), marked.head);
     const declared = list(body.properties).find((p) => p.name === parameter);
     if (declared && property !== undefined && recordFields(declared.propertyType)) {
@@ -15499,7 +15652,8 @@ function sourceSymbols(parsed) {
     try {
       const plain = has(operand, '%ref') ? null : operand;
       resolved = plain && resolveOperandType(plain, {
-        boundary: list(body.boundary), commandProperties: list(body.properties), model,
+        boundary: list(body.boundary), commandProperties: commandScopeProperties(model, body, inLoop), model,
+        instanceValue: loopValueType(model, inLoop),
       });
     } catch { /* a defective body types nothing */ }
     return resolved ? resolved.propertyType : null;
@@ -15536,16 +15690,28 @@ function sourceSymbols(parsed) {
       const tag = groupTagOf(own(groups, binding.group));
       tagOperands(binding.tags, (value) => commandOperand(name, body, value, tag ? tag.tagType : null));
     }
-    // Every step, into every branch: a condition's comparisons, an
-    // emission's event and fields.
-    forEachCommandCondition(body, (stated) => {
-      for (const leaf of conditionLeaves(stated)) condition(name, body, leaf);
+    // Every step, into every branch and loop: a condition's
+    // comparisons, an emission's event and fields, a loop's names and
+    // what it runs over – each in the scope of the loop it sits in.
+    forEachStep(commandSteps(body), (step, { loop }) => {
+      inLoop = loop;
+      const stated = stepKind(step) === 'rule' ? [step.condition]
+        : stepKind(step) === 'branch' ? list(step.branches).map((arm) => arm && arm.condition) : [];
+      for (const one of stated) for (const leaf of conditionLeaves(one)) condition(name, body, leaf);
     });
-    for (const emission of commandEmissions(body)) {
-      add(sourceSymbol('event', emission.name), slotsOf(emission).name);
-      keyed(emission.parameters, (key) => sourceSymbol('eventProperty', emission.name, key),
-        (arg, key) => commandOperand(name, body, arg, eventPropertyType(emission.name, key)));
+    forEachStep(commandSteps(body), (step, { loop }) => {
+      if (stepKind(step) !== 'emit') return;
+      inLoop = loop;
+      add(sourceSymbol('event', step.name), slotsOf(step).name);
+      keyed(step.parameters, (key) => sourceSymbol('eventProperty', step.name, key),
+        (arg, key) => commandOperand(name, body, arg, eventPropertyType(step.name, key)));
+    });
+    for (const one of commandLoops(body)) {
+      inLoop = null;
+      loopNames(one).forEach((loopName, i) => add(sourceSymbol('loopVariable', name, loopName), slotsOf(one)[`name:${i}`], { decl: true }));
+      commandOperand(name, body, one.in, null);
     }
+    inLoop = null;
   }
 
   // ---------- scenarios ----------
@@ -15706,8 +15872,8 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
     // A read and a command property are one namespace in the text,
     // which resolves a name to whichever the command declares.
     // So are a group and a top-level projection, read by their names alike.
-    const clashes = kind === 'alias' || kind === 'commandProperty'
-      ? [sourceSymbol('alias', names[0], to), sourceSymbol('commandProperty', names[0], to)]
+    const clashes = kind === 'alias' || kind === 'commandProperty' || kind === 'loopVariable'
+      ? ['alias', 'commandProperty', 'loopVariable'].map((one) => sourceSymbol(one, names[0], to))
       : kind === 'group' || kind === 'projection' ? [sourceSymbol('group', to), sourceSymbol('projection', to)]
         : [target];
     const clash = occurrences.find((o) => clashes.includes(o.symbol));
@@ -16026,6 +16192,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       // A branch: an emission after its arrow, or a block of steps.
       if (opener === '{' && v(s[s.length - 2]) === 'emit') return own('emitArgs', { event: prev });
       if (opener === '{' && prev === '=>') return own('command');
+      // A loop's block (11.0): its emissions and branches.
+      if (opener === '{' && v(s[0]) === 'for') return own('command');
       if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'command', name: frame.command } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'command', name: frame.command } });
       if (opener === '(' && prev === 'count') return own('count');
@@ -16237,6 +16405,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       }
       for (; i < d.length; i += 1) {
         if (v(d[i]) === 'emit' && d[i + 1] && d[i + 1].t === 'ident') emits.push(d[i + 1].v);
+        // A loop's names (11.0), in scope as its payload is.
+        if (v(d[i]) === 'for' && v(d[i + 1]) === 'each') {
+          for (let n = i + 2; n < d.length && v(d[n]) !== 'in'; n += 1) {
+            if (d[n].t === 'ident' && !properties.some((p) => p.name === d[n].v)) properties.push({ name: d[n].v, propertyType: '', isList: false });
+          }
+        }
         // The read being written is not in scope of itself.
         if (v(d[i]) !== 'alias' || (tokens.includes(d[i]) && d[i].line === line) || !d[i + 1] || d[i + 1].t !== 'ident') continue;
         const eq = i + 2;
@@ -16649,10 +16823,26 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const scope = commandScope(commandName);
     if (!s.length) {
       keywords([['alias', 'alias ${1:name} = ', true], ['require', 'require '], ['emit', 'emit '],
-        ['if', 'if '], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
+        ['if', 'if '], ['for each', 'for each ${1:name} in ', true], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
       return done(false);
     }
     const first = v(s[0]);
+    // A loop (11.0): what it runs over after `in` – a list in scope, or
+    // a projection – then after "=>" an emission.
+    if (first === 'for') {
+      const words = s.map(v);
+      if (prev === 'in') {
+        operandItems(scope, { sort: 0, prefer: (x) => !!x.isList });
+        definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
+        return done();
+      }
+      if (prev === '=>') { keywords([['emit', 'emit ']]); return done(); }
+      if (prev === 'emit' && words[words.length - 2] === '=>') {
+        definitionItems('event-definition', { sort: 0, detail: (n, b) => list(b.properties).map((p) => p.name).join(', ') });
+        return done();
+      }
+      return done(false);
+    }
     // A branch: its condition, then after "=>" one emission or reject.
     if (first === 'if') {
       const words = s.map(v);
@@ -16941,6 +17131,19 @@ Separate ifs all run; an else chain runs its first arm that holds. Any rejection
 the command with no events; the emits reached form one append, and none is then nothing.
 A read is made when a step reached first needs it, never before.
 
+A for each emits zero or more events per element, inside the one append:
+  for each shareId in ShareActive(customerId, *) => emit ShareEnded { shareId, customerId }
+  for each (shareId, contractId) in Share(customerId, *, *) => emit …   (one name per open tag)
+  for each id in ids {
+    if Unread(customerId) contains id => emit Read { id, customerId }
+    else if … => reject "<message>"
+  }
+It runs over an open read (value, value.field: the instance's value), a list projection or a
+list parameter, in that order – an open read in the order of each instance's first event. The
+names are in scope inside; a read by one is made once per element and joins the boundary.
+Its body is => emit, or a block of emit and if steps whose arms are one emit or one reject.
+A reject inside refuses the whole command. No element emits nothing. A loop does not nest.
+
 A projection's handler is on E => <operation>, or branches on the event:
   on E {
     if event.data.from == accountId => decrement event.data.amount
@@ -17218,6 +17421,26 @@ command ReturnBook(bookId: BookId, memberId: MemberId, damage?: string) {
   else => reject "Book is not with this member"
 }
 
+// "for each" emits once per element, in the command's one append: of
+// an open read – every present instance, by its open tag's value, its
+// own as "value" – a list projection or a list parameter. A read by the
+// element is made per element. Its body is "=> emit …", or a block of
+// emits and ifs whose arms each emit or reject; no element emits
+// nothing, and a reject inside refuses the whole command.
+command LeaveLibrary(memberId: MemberId) {
+  require Member(memberId).exists is true
+    else reject "Not a member"
+
+  for each bookId in MemberHasBook(memberId, *) => emit BookReturned { bookId, memberId }
+}
+
+command WithdrawBooks(bookIds: BookId[]) {
+  for each bookId in bookIds {
+    if BookStatus(bookId) == Available => emit BookWithdrawn { bookId }
+    else if BookStatus(bookId) == Lent => reject "A book is still lent"
+  }
+}
+
 command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId) {
   require MemberHasBook(fromMemberId, bookId) is true
     else reject "Book is not with this member"
@@ -17350,6 +17573,7 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 - An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
 - A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
+- A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 `;
 
 const SOURCE_REFERENCE_UNOFFERED = 'Not in the definition tools\' schemas: the arguments a read passes, '
@@ -17380,13 +17604,13 @@ const SOURCE_KEYWORDS = [
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'sum', 'average', 'any', 'all', 'where',
   'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
-  'else', 'reject',
+  'else', 'reject', 'for',
 ];
 
 // The words a block's statements start with, coloured apart so the
 // shape of a command – what it reads, requires, emits – shows at a
 // glance.
-const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'if', 'when', 'on', 'scenarios', 'scenario', 'given', 'then'];
+const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'if', 'for', 'when', 'on', 'scenarios', 'scenario', 'given', 'then'];
 
 const SOURCE_MONARCH = {
   // Names may be written in any script: `\p{…}` above needs the `u` flag.

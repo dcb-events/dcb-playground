@@ -1962,7 +1962,7 @@ check('completion knows a command\'s reads and payload', () => {
   eq(rule('emit CourseCapacityChanged { courseId, |}').labels, ['newCapacity'], 'an event\'s remaining properties');
   eq(rule('emit CourseCapacityChanged { |}').items.map((i) => i.insert), ['courseId', 'newCapacity'], 'as shorthands');
   const start = rule('|');
-  eq([start.labels, start.slot], [['alias', 'require', 'emit', 'if', 'scenarios'], false], 'a statement, not on a space');
+  eq([start.labels, start.slot], [['alias', 'require', 'emit', 'if', 'for each', 'scenarios'], false], 'a statement, not on a space');
 });
 
 check('completion knows scenarios, declarations, and when to stay quiet', () => {
@@ -2849,6 +2849,163 @@ command SendParcel(customerId: CustomerId, courseId: CourseId, city: string, lea
     const renamed = renameAt(SEATS, 'record Address { street: string, city', 'record Address { street: string, '.length, 'town');
     eq(parseModelSource(renamed.text).diagnostics, [], `a field rename reads back: ${renamed.error || ''}`);
     eq(renamed.text.includes('address.town == city') && renamed.text.includes('town: event.data.city'), true, 'and follows every use');
+  });
+}
+
+
+// ---------------------------------------------------------------
+// Fan-out emits (11.0): `for each x in source => emit …`, or a block of
+// branches, run once per element.
+// ---------------------------------------------------------------
+{
+  const PORTAL = `model "Portal"
+
+// Types
+tag type CustomerId = string
+tag type ShareId = string
+tag type ContractId = string
+tag type NotificationId = string
+record ShareInfo { contractId: ContractId, note: string }
+
+// Events
+event CustomerRegistered { tag customerId: CustomerId }
+event CustomerWasDeleted { tag customerId: CustomerId }
+event ContractShareStarted { tag ownerId: CustomerId, tag shareId: ShareId, tag contractId: ContractId, note: string }
+event ContractShareEnded { tag ownerId: CustomerId, tag shareId: ShareId, tag contractId: ContractId, reason: string }
+event NotificationSent { tag customerId: CustomerId, tag notificationId: NotificationId }
+event NotificationWasMarkedAsRead { tag notificationId: NotificationId, tag customerId: CustomerId }
+
+// Projections
+projection CustomerExists (tag customerId: CustomerId): boolean = false {
+  on CustomerRegistered => set true
+  on CustomerWasDeleted => set false
+}
+
+projection ShareActiveAsOwner (tag ownerId: CustomerId, tag shareId: ShareId): boolean = false {
+  on ContractShareStarted => set true
+  on ContractShareEnded => set false
+}
+
+projection ShareContract (tag shareId: ShareId): ContractId = null {
+  on ContractShareStarted => set event.data.contractId
+}
+
+projection ShareDetails (tag ownerId: CustomerId, tag shareId: ShareId): ShareInfo = null {
+  on ContractShareStarted => set { contractId: event.data.contractId, note: event.data.note }
+  on ContractShareEnded => set null
+}
+
+projection ShareContractOf (tag ownerId: CustomerId, tag shareId: ShareId, tag contractId: ContractId): boolean = false {
+  on ContractShareStarted => set true
+  on ContractShareEnded => set false
+}
+
+projection UnreadNotificationIds (tag customerId: CustomerId): NotificationId[] = [] {
+  on NotificationSent => append event.data.notificationId
+  on NotificationWasMarkedAsRead => remove event.data.notificationId
+}
+
+// Commands
+command DeleteCustomer(customerId: CustomerId) {
+  require CustomerExists(customerId) is true
+    else reject "Customer not found"
+
+  emit CustomerWasDeleted { customerId }
+
+  for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded {
+    ownerId: customerId,
+    shareId,
+    contractId: ShareContract(shareId),
+    reason: "ownerAccountDeleted",
+  }
+}
+
+command MarkNotificationsAsRead(customerId: CustomerId, notificationIds: NotificationId[]) {
+  for each notificationId in notificationIds {
+    if UnreadNotificationIds(customerId) contains notificationId => emit NotificationWasMarkedAsRead { notificationId, customerId }
+  }
+}
+
+command EndShares(customerId: CustomerId, note: string, locked: ContractId) {
+  for each (shareId, contractId) in ShareContractOf(customerId, *, *) {
+    if contractId == locked => reject "A share is locked"
+  }
+
+  for each shareId in ShareDetails(customerId, *) {
+    if value.note == note => emit ContractShareEnded {
+      ownerId: customerId,
+      shareId,
+      contractId: value.contractId,
+      reason: "byNote",
+    }
+    else if value is not empty => emit ContractShareEnded {
+      ownerId: customerId,
+      shareId,
+      contractId: value.contractId,
+      reason: "other",
+    }
+    else => reject "Unreachable"
+  }
+}
+`;
+
+  check('a for each prints as written and parses back equal', () => {
+    const { model } = buildText(PORTAL);
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const text = modelToSource(model());
+    eq(text.slice(text.indexOf('// Commands')), PORTAL.slice(PORTAL.indexOf('// Commands')), 'printed as written');
+    const parsed = parseModelSource(text);
+    eq(parsed.diagnostics, [], 'it reads');
+    assertSameModel(model(), parsed, 'package 6');
+    const steps = model()['command-definitions'].DeleteCustomer.steps;
+    eq(steps[2].forEach, ['shareId'], 'the name');
+    eq(steps[2].in, { projection: 'ShareActiveAsOwner', tags: { ownerId: { parameterName: 'customerId' }, shareId: { open: true } } }, 'an open read');
+    eq(steps[2].steps[0].parameters.shareId, { parameterName: 'shareId' }, 'the element, read as a name in scope');
+    eq(model()['command-definitions'].MarkNotificationsAsRead.steps[0].in, { parameterName: 'notificationIds' }, 'a list parameter');
+    const ends = model()['command-definitions'].EndShares.steps;
+    eq(ends[0].forEach, ['shareId', 'contractId'], 'two names');
+    eq(ends[1].steps[0].branches[0].steps[0].parameters.contractId, { instanceValue: true, field: 'contractId' }, 'value.field');
+  });
+
+  const errorOf = (from, to) => {
+    const { diagnostics } = parseModelSource(swap(PORTAL, from, to));
+    return diagnostics.map((d) => `${d.line}:${d.col} ${d.message}`);
+  };
+  const lineOf = (needle) => PORTAL.split('\n').findIndex((line) => line.includes(needle)) + 1;
+
+  check('a nested for each, a rule inside one and a block arm are positioned errors', () => {
+    const at = lineOf('for each notificationId in');
+    eq(errorOf('    if UnreadNotificationIds(customerId) contains', '    for each x in notificationIds => emit CustomerWasDeleted { customerId }\n    if UnreadNotificationIds(customerId) contains'),
+      [`${at + 1}:5 A for each inside another is refused – a loop does not nest.`], 'nested');
+    eq(errorOf('    if UnreadNotificationIds(customerId) contains', '    require notificationIds is not empty else reject "x"\n    if UnreadNotificationIds(customerId) contains'),
+      [`${at + 1}:5 A for each holds emit and if … => emit – a loop emits; "if not … => reject" refuses from inside one.`], 'a rule');
+    eq(errorOf('contains notificationId => emit', 'contains notificationId => { emit'),
+      [`${at + 1}:69 A branch inside a for each holds one emit or one reject.`], 'a block arm');
+    eq(errorOf('for each shareId in ShareActiveAsOwner(customerId, *) => emit', 'for each shareId in ShareActiveAsOwner(customerId, *) => reject "x" emit'),
+      [`${lineOf('for each shareId in ShareActive')}:60 Expected emit after "=>" – a for each emits once per element, or runs a block "{ … }" of if branches.`], 'a bare reject');
+    eq(errorOf('for each shareId in ShareActive', 'for each customerId in ShareActive').slice(0, 1),
+      [`${lineOf('for each shareId in ShareActive')}:12 customerId already names a payload property – a loop's name is its own.`], 'a shadowing name');
+  });
+
+  check('the code view names a loop\'s names, its source and value', () => {
+    const parsed = parseModelSource(PORTAL);
+    const symbols = sandbox.sourceSymbols(parsed).occurrences;
+    const at = (symbol, decl = false) => symbols.filter((o) => o.symbol === symbol && !!o.decl === decl).map((o) => o.token.line);
+    eq(at('loopVariable DeleteCustomer shareId', true), [lineOf('for each shareId in ShareActive')], 'the name, declared');
+    eq(at('loopVariable DeleteCustomer shareId'), [lineOf('    shareId,'), lineOf('contractId: ShareContract(shareId)')], 'and read');
+    eq(at('projection ShareActiveAsOwner').includes(lineOf('for each shareId in ShareActive')), true, 'the source');
+    eq(at('field ShareInfo contractId').filter((l) => l > lineOf('command EndShares')).length, 2, 'value.field');
+    const renamed = renameAt(PORTAL, 'for each shareId in ShareActive', 'for each '.length, 'share');
+    eq(parseModelSource(renamed.text).diagnostics, [], `a loop name renames: ${renamed.error || ''}`);
+    eq(renamed.text.includes('contractId: ShareContract(share)') && renamed.text.includes('    shareId: share,'), true, 'and follows its uses');
+  });
+
+  check('completion offers for each and in', () => {
+    const head = PORTAL.slice(0, PORTAL.indexOf('// Commands')) + 'command X(customerId: CustomerId, ids: NotificationId[]) {\n  ';
+    const labels = (text) => completeAt(text + '|\n}').labels;
+    eq(labels(head).includes('for each'), true, 'a for each to start a step');
+    eq(labels(head + 'for each id in ').includes('ids'), true, 'a list to run over');
+    eq(labels(head + 'for each id in ids => ').includes('emit'), true, 'emit after the arrow');
   });
 }
 

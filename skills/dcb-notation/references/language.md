@@ -43,6 +43,19 @@ Separate ifs all run; an else chain runs its first arm that holds. Any rejection
 the command with no events; the emits reached form one append, and none is then nothing.
 A read is made when a step reached first needs it, never before.
 
+A for each emits zero or more events per element, inside the one append:
+  for each shareId in ShareActive(customerId, *) => emit ShareEnded { shareId, customerId }
+  for each (shareId, contractId) in Share(customerId, *, *) => emit …   (one name per open tag)
+  for each id in ids {
+    if Unread(customerId) contains id => emit Read { id, customerId }
+    else if … => reject "<message>"
+  }
+It runs over an open read (value, value.field: the instance's value), a list projection or a
+list parameter, in that order – an open read in the order of each instance's first event. The
+names are in scope inside; a read by one is made once per element and joins the boundary.
+Its body is => emit, or a block of emit and if steps whose arms are one emit or one reject.
+A reject inside refuses the whole command. No element emits nothing. A loop does not nest.
+
 A projection's handler is on E => <operation>, or branches on the event:
   on E {
     if event.data.from == accountId => decrement event.data.amount
@@ -93,6 +106,7 @@ Leave it as it is, or rewrite it in the language.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 - An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
 - A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
+- A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 
 
 ## Tour – a complete model using every construct
@@ -333,6 +347,26 @@ command ReturnBook(bookId: BookId, memberId: MemberId, damage?: string) {
   else if MemberHasBook(memberId, bookId) is true => emit BookReturned { bookId, memberId }
   else if BookStatus(bookId) == Withdrawn or (BookStatus(bookId) == Unknown and damage is empty) => reject "Book is not in the catalogue"
   else => reject "Book is not with this member"
+}
+
+// "for each" emits once per element, in the command's one append: of
+// an open read – every present instance, by its open tag's value, its
+// own as "value" – a list projection or a list parameter. A read by the
+// element is made per element. Its body is "=> emit …", or a block of
+// emits and ifs whose arms each emit or reject; no element emits
+// nothing, and a reject inside refuses the whole command.
+command LeaveLibrary(memberId: MemberId) {
+  require Member(memberId).exists is true
+    else reject "Not a member"
+
+  for each bookId in MemberHasBook(memberId, *) => emit BookReturned { bookId, memberId }
+}
+
+command WithdrawBooks(bookIds: BookId[]) {
+  for each bookId in bookIds {
+    if BookStatus(bookId) == Available => emit BookWithdrawn { bookId }
+    else if BookStatus(bookId) == Lent => reject "A book is still lent"
+  }
 }
 
 command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId) {
