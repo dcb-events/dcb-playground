@@ -36,6 +36,47 @@ _Avoid_: status, state machine (as a declared thing)
 **Fan-out emit**:
 A command step, `for each x in source`, that runs once per element of an
 open read, a list projection or a list parameter, emitting zero or more
-events into the command's one append. Stored as a loop step,
-`{forEach, in, steps}`. What a cascade or a per-recipient command is.
+events into the command's one append. What a cascade or a per-recipient
+command is.
 _Avoid_: reaction, saga, batch command
+
+**Instance**:
+One value of a projection, identified by a value for each of its tags
+(`ReservationSeats(c1, r1)`). An instance at the projection's initial value is
+absent.
+
+**Open tag**:
+A tag left unbound in a read (`ReservationSeats(courseId, *)`), so the read
+returns every present instance that matches the bound tags.
+
+**Collection function**:
+A function that computes one value from the instances an open tag reads, such
+as `sum` or `count`.
+_Avoid_: aggregate, aggregate function, reduction
+
+**Record value**:
+A projection value with fields that every handler replaces as a whole. It is
+still one fact.
+
+**Composite state**:
+A projection value whose parts different handlers update separately. It merges
+independent facts, so the notation refuses it.
+_Avoid_: record value
+
+**Branch**:
+One arm of an `if` / `else if` / `else` in a handler, a loop or a command.
+Separate `if`s each run; an `else` chain runs its first match.
+_Avoid_: guard, guarded emission
+
+**Role**:
+The field through which an event carries a tag type it carries more than once,
+such as `from` and `to` of `MoneyTransferred`.
+
+**Role tag type**:
+A tag type that exists only to name one role of an identifier (`ShareInviteeId`
+for a `CustomerId`), so that a query can select that role.
+
+**Aggregate**:
+The consistency unit of a DDD or stream-based Event Sourcing app, as found in an
+app being converted. Not a concept of the notation.
+_Avoid_: using it for computations over many values (see Collection function)
