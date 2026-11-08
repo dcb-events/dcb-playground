@@ -2575,6 +2575,9 @@ check('importing an older model with entities says what became of them', () => {
     eq(decision.includes('Branch – the first arm that holds runs'), true, decision);
     eq(decision.includes('Course is gone') && decision.includes('Edit in code'), true, 'its reject, and the way to edit it');
     eq(decision.includes(' or '), true, 'its condition joined with or');
+    const append = textOf(sandbox.stepEmits(current, slice));
+    eq(append.includes('in branches') && append.includes('Course archived'), true,
+      'the append step names what the branches record, not "–": ' + append);
     const paint = (fn) => { const main = sandbox.document.createElement('div'); fn(current, main); return textOf(main); };
     const map = paint(sandbox.renderRuleMap);
     eq(map.includes('else → emit'), true, 'the rule map says each arm');

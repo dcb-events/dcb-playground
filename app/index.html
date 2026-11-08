@@ -7688,6 +7688,19 @@ function stepEmits(model, slice) {
           }, '×'))),
       open ? eventFields(model, emission, event) : null);
   });
+  // What the branches record (11.0) is edited in the code view, but it
+  // is still what this command appends – said here, by name, rather than
+  // a "–" that reads as "records nothing".
+  const inBranches = uniq(slice.allEmits.map(({ emission }) => emission && emission.name).filter(Boolean)
+    .filter((name) => !slice.emits.some((e) => e.emission.name === name)));
+  if (inBranches.length) {
+    cards.push(h('div', { class: 'card event' },
+      h('div', { class: 'row wraps' },
+        h('span', { class: 'muted tiny' }, 'in branches:'),
+        ...inBranches.map((name) => eventRef(model, name)),
+        h('span', { class: 'grow' }),
+        codeViewButton('What a branch emits is edited in the code view'))));
+  }
   if (!cards.length) cards.push(h('div', { class: 'empty' }, '–'));
 
   const existing = Object.keys(model['event-definitions']).sort()
