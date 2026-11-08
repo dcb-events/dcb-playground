@@ -64,6 +64,13 @@
 // each element made. A `reject` reached inside refuses the whole
 // command, as anywhere.
 //
+// **Time is compared by what it names** (11.0): two datetimes as
+// instants, whatever their offsets, two durations by length
+// (`evTimeOrder`) – known by their values, since nothing here carries
+// types. Arithmetic (`evArithmetic`) moves a datetime by a duration and
+// writes the result in UTC. A time given to a command or in a Given
+// that is none – a datetime without its offset – is an error.
+//
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* – an ordinary, expected outcome
 // this returns. A scenario that cannot be run at all – an event that no

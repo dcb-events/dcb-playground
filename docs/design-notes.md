@@ -580,6 +580,17 @@ and prune what no longer holds.
   (schema revision 11.0.6). The tool schemas write a loop compactly –
   inlined, every step shape nested again under each step and grew them
   by a third.
+  11.0 also makes time data (#106): `datetime` and `duration` join
+  the built-in type names, `{duration: "PT15M"}` (`DurationValue`) is
+  a literal operand – of a command, a derived projection, a `where`
+  and a handler's condition – and `{operator, leftHandSide,
+  rightHandSide}` (`ArithmeticValue`, `add` or `subtract`) a command
+  operand. The derived computation's shape, reused: an operand that
+  computes reads as the derived value that does. A collection's read
+  may take a record's `field` to compute over. New members of closed
+  vocabularies, so part of the major; no stored shape an older
+  document says moved, so `EVENT_LOG_KEY` waits (schema revision
+  11.0.7). The tool schemas write arithmetic compactly.
   **6.1 is the contrast worth knowing**: entity `lifecycle` was additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -1274,6 +1285,16 @@ Watched, Decision, Store. Only the panel scrolls.
 
 ## The code view's language
 
+- **A duration is one token** (11.0): a number straight followed by a
+  letter is lexed as a duration, `15m`, `1h30m`, and anything else so
+  written – `15x`, `1mo`, `1.5h`, `-15m` – is an error at that token,
+  never a number and a name. It stores the ISO 8601 duration with the
+  units as written, `PT24H` for `24h`, so it prints back as typed;
+  normalising (`P1D`) would have turned `24h` into `1d` on the next
+  print. A command's rule and emission add and subtract left to right,
+  `a - b + c`, without brackets – a bracket opens a condition group
+  there, and a sum on the right has no spelling, so a stored one prints
+  as JSON. The Monarch grammar colours a duration as `number.duration`.
 - **The code view's language is a spelling of the wire format** (`dsl.js`,
   research in `docs/research/2026-10-03-code-view-language.md`): every
   construct is one schema shape, so print and parse are each other's
@@ -1639,6 +1660,11 @@ Artboards: `design/dcb-queries/` (2026-10).
   silent null. A command may leave an optional argument out or send
   null; an event payload always spells it out, as the evaluator
   publishes it.
+- **A time is a string of its format** (11.0): a `datetime` is `{type:
+  'string', format: 'date-time'}`, a `duration` `{format: 'duration'}`,
+  each with its `pattern` too, since a validator need not assert
+  formats – the pattern is what holds the offset and the units this
+  notation has. A custom type over one carries the same `format`.
 - **A record value is no new schema** (11.0). A projection holding
   a record holds one value of its composite type, whose schema is the
   composite's; nothing here describes projections.
@@ -1648,6 +1674,57 @@ Artboards: `design/dcb-queries/` (2026-10).
 - **Held by a test.** Every scenario's arguments, and every event the
   evaluator publishes for it, validate against these schemas
   (evaluate.test.js, with a validator for the keywords in use).
+
+## Time
+
+- **Time is data** (11.0, #106). No event carries a recorded time –
+  the DCB spec has none, and nothing here reads one – so time that
+  matters to the domain is an event field the command writes, and the
+  clock is an ordinary parameter, `now: datetime`, given by the layer
+  around the commands as a decider is given it. A scenario passes `now`
+  like any value and needs no clock. Expiring something at a time is a
+  job outside the model calling a command, never a construct.
+- **`datetime` has an offset and is compared as an instant.** RFC 3339
+  with `Z` or `±hh:mm`: `11:30+02:00` is before `10:00Z`, which a
+  string comparison – the portal's `DateAndTime = string` – got wrong.
+  One without an offset names no instant and is no value: an
+  evaluation error where a command or a Given gets one, an advisory
+  where a model writes one (an initial value, a literal compared with
+  a datetime), a finding of `replay`.
+- **`duration` is a length**, ISO 8601 in whole days, hours, minutes
+  and seconds; `d` is exactly 24 hours. No years, months or weeks –
+  they have no fixed length – no fractions and no sign. Stored as the
+  ISO string rather than seconds, so a payload reads (`PT15M`) and a
+  JSON Schema `format` names it. Two are equal when they are as long.
+- **Arithmetic**: `datetime ± duration` is a datetime, written in UTC
+  (`…Z`, milliseconds only when there are some) – one form, so a
+  scenario's Then names it one way; `duration ± duration` a duration in
+  its largest units; numbers as before. A duration below zero is an
+  evaluation error, and one datetime minus another is not offered: no
+  evidence needed it, and it would have needed the negative durations
+  just refused. In a command only `+` and `-`, in rules, branch
+  conditions and emissions – a derived projection keeps `*`, `min` and
+  `max`, and its `add` and `subtract` compute times the same way. A null
+  side yields null; a computed time may start at null without the
+  advisory a computed number gets, since a time has nothing else to
+  start at.
+- **Known by value, typed by name.** The evaluator carries no types, so
+  it recognises a time by its value: two values that both read as
+  datetimes are ordered as instants, two durations by length, and
+  anything else compares as before. The advisories are nominal, as
+  everywhere: an emission of `now + 15m` is a `datetime`, a datetime is
+  compared with a datetime, a duration with a duration, and a string
+  opposite a datetime must be one. `type Deadline = datetime` – a
+  string of format `date-time` – is a datetime to both.
+- **A collection may compute over a record's field** (11.0, here for
+  the decided example): `sum(Reservation(courseId, *).seats where
+  value.expiresAt > now)` sums `seats` while its `where` sees the whole
+  record. Only the numeric functions take one; `count`, `any` and
+  `all` keep whole instances.
+- **On the pages**: the type pickers list both among the built-ins; a
+  payload field takes a datetime with its offset or an ISO duration
+  and says why it refuses anything else; a duration and arithmetic read
+  as the code view writes them, read-only with the way to the code view.
 
 ## The metro map
 

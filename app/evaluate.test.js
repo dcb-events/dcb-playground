@@ -5227,6 +5227,27 @@ function modelsWithScenarios() {
       && !new RegExp(schema.properties.expiresAt.pattern).test('2026-01-01T10:00:00'), true, 'an offset required');
   });
 
+  check('durations add up, never below zero, and a where or a handler compares a time with its kind', () => {
+    const { id, model } = openTime();
+    eq(sandbox.evArithmetic('add', 'PT23H', 'PT1H', 'x'), 'P1D', 'in the largest units');
+    eq(sandbox.evArithmetic('subtract', '2026-03-01T00:00:00Z', 'P1D', 'x'), '2026-02-28T00:00:00Z', 'a datetime back a day');
+    eq(sandbox.evArithmetic('max', '2026-01-01T11:30:00+02:00', '2026-01-01T10:00:00Z', 'x'), '2026-01-01T10:00:00Z', 'max by instant');
+    let message = null;
+    try { sandbox.evArithmetic('subtract', 'PT15M', 'PT1H', '"a - b"'); } catch (error) { message = error.message; }
+    eq(/never below zero/.test(message || ''), true, 'a negative duration is an error');
+    const where = { ...activeSeats, where: { leftHandSide: { instanceValue: true, field: 'expiresAt' }, predicate: 'greaterThan', rightHandSide: '2026-01-01T10:00:00' } };
+    updateDefinition('projection-definition', id, 'OptInExpiresAt', { tags: [tag('courseId', 'CourseId')], valueType: 'integer', isList: false, derived: { leftHandSide: where } });
+    eq(/has no offset/.test(sandbox.modelAdvisories(model()).filter((a) => a.name === 'OptInExpiresAt').map((a) => a.message).join()), true, 'a where\'s literal');
+    addDefinition('projection-definition', id, 'LongWindows', {
+      tags: [tag('courseId', 'CourseId')], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'RetryWindowChanged', steps: [{ branches: [{ condition: { leftHandSide: { eventProperty: 'window' }, predicate: 'equals', rightHandSide: { duration: 'P7D' } },
+        operation: 'increment', value: 1 }] }] }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'LongWindows'), [], 'a handler compares a duration with one');
+    const log = [{ type: 'RetryWindowChanged', data: { courseId: 'c1', window: 'PT168H' } }, { type: 'RetryWindowChanged', data: { courseId: 'c1', window: 'PT1H' } }];
+    eq(foldProjection(model(), log, 'LongWindows', { tags: { courseId: 'c1' } }), 1, '168h is 7d');
+  });
+
   check('renaming now follows it into arithmetic', () => {
     const { id, model } = openTime();
     sandbox.renameMember('command-definition', id, 'ConfirmSignUp', 'property', 'now', 'at');

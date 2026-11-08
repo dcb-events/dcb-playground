@@ -1311,8 +1311,10 @@ function findReferencers(model, targetKind, targetName) {
 //
 // Command operands:  {parameterName} | {alias, property?, arguments?} | {enumMember} | literal
 //                    | {projection, tags?, arguments?} (a read in place)
+//                    | {duration} | {operator, leftHandSide, rightHandSide} (11.0)
 // Handler operands:  {eventProperty} | {successor} | {enumMember} | literal
 // Derived operands:  {projection, tags?, arguments?} | {parameterName} | {enumMember} | literal
+//                    | {duration} (11.0)
 // Tag operands:      a command operand | {tagType, tagValue} | {each: operand}
 //
 // `{alias}` with no `property` reads a bound projection's value: a
@@ -1351,6 +1353,14 @@ function findReferencers(model, targetKind, targetName) {
 // the events by the open tags' values, and an event without one belongs
 // to no instance. Every walker that sees reads sees the open one: a
 // collection's `read` is an ordinary projection read to them.
+//
+// **Time and arithmetic** (11.0): `{duration: 'PT15M'}` is a duration
+// literal, `15m`, and `{operator: 'add' | 'subtract', leftHandSide,
+// rightHandSide}` adds or subtracts two operands where a rule compares
+// or an emission writes – `CourseCapacity(courseId) - sum(…)`, `now +
+// 15m` – never in a read's tag or a where. Walkers see both sides as
+// operands in the same place (`forEachCommandOperand`); its type is
+// what `arithmeticOperandType` says. See _Time_.
 //
 // **A record value's field** (11.0): a read of a projection holding a
 // record – in place or through an alias, a group member included – may

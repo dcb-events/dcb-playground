@@ -76,6 +76,17 @@ such as `from` and `to` of `MoneyTransferred`.
 A tag type that exists only to name one role of an identifier (`ShareInviteeId`
 for a `CustomerId`), so that a query can select that role.
 
+**now**:
+The time a command acts at, an ordinary `datetime` parameter the layer around
+the commands supplies. There is no clock and no event timestamp: time the
+domain needs is event data.
+_Avoid_: recorded at, event time, clock
+
+**Duration**:
+A length of time, `15m`, `24h`, `7d`, stored as ISO 8601 (`PT15M`). A day is
+exactly 24 hours; there are no months.
+_Avoid_: interval, period
+
 **Aggregate**:
 The consistency unit of a DDD or stream-based Event Sourcing app, as found in an
 app being converted. Not a concept of the notation.

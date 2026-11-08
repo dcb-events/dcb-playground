@@ -29,7 +29,7 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js'], {
     + ' globalThis.SOURCE_KEYWORDS = SOURCE_KEYWORDS; globalThis.SOURCE_BASE_TYPES = SOURCE_BASE_TYPES;'
     + ' globalThis.SOURCE_REFERENCE_TOUR = SOURCE_REFERENCE_TOUR; globalThis.SOURCE_REFERENCE_FORMS = SOURCE_REFERENCE_FORMS;'
     + ' globalThis.SOURCE_REFERENCE_EXAMPLE = SOURCE_REFERENCE_EXAMPLE;'
-    + ' globalThis.SOURCE_REFERENCE_EXAMPLE_SLUG = SOURCE_REFERENCE_EXAMPLE_SLUG;'
+    + ' globalThis.SOURCE_REFERENCE_EXAMPLE_SLUG = SOURCE_REFERENCE_EXAMPLE_SLUG; globalThis.SOURCE_MONARCH = SOURCE_MONARCH;'
     + '',
 });
 const { check, eq, finish } = makeChecker();
@@ -3175,6 +3175,14 @@ command ConfirmSignUp(token: OptInToken, now: datetime) {
   check('completion offers datetime and duration as types', () => {
     const labels = completeAt(TIME.slice(0, TIME.indexOf('// Commands')) + 'command X(when: |) {}\n').labels;
     eq(labels.includes('datetime') && labels.includes('duration'), true, 'both built-in');
+  });
+
+  check('the editor colours a duration as one literal and the time types as types', () => {
+    const { SOURCE_MONARCH: grammar } = sandbox;
+    const rule = grammar.tokenizer.root.find((r) => Array.isArray(r) && r[1] === 'number.duration');
+    eq(!!rule && new RegExp(rule[0].source, 'u').exec('1h30m)')[0], '1h30m', 'a duration token');
+    eq(new RegExp(rule[0].source, 'u').test('15mx'), false, 'not the start of a word');
+    eq(['datetime', 'duration'].every((type) => grammar.baseTypes.includes(type)), true, 'types');
   });
 
   check('the language reference covers time', () => {

@@ -1313,8 +1313,10 @@ function findReferencers(model, targetKind, targetName) {
 //
 // Command operands:  {parameterName} | {alias, property?, arguments?} | {enumMember} | literal
 //                    | {projection, tags?, arguments?} (a read in place)
+//                    | {duration} | {operator, leftHandSide, rightHandSide} (11.0)
 // Handler operands:  {eventProperty} | {successor} | {enumMember} | literal
 // Derived operands:  {projection, tags?, arguments?} | {parameterName} | {enumMember} | literal
+//                    | {duration} (11.0)
 // Tag operands:      a command operand | {tagType, tagValue} | {each: operand}
 //
 // `{alias}` with no `property` reads a bound projection's value: a
@@ -1353,6 +1355,14 @@ function findReferencers(model, targetKind, targetName) {
 // the events by the open tags' values, and an event without one belongs
 // to no instance. Every walker that sees reads sees the open one: a
 // collection's `read` is an ordinary projection read to them.
+//
+// **Time and arithmetic** (11.0): `{duration: 'PT15M'}` is a duration
+// literal, `15m`, and `{operator: 'add' | 'subtract', leftHandSide,
+// rightHandSide}` adds or subtracts two operands where a rule compares
+// or an emission writes – `CourseCapacity(courseId) - sum(…)`, `now +
+// 15m` – never in a read's tag or a where. Walkers see both sides as
+// operands in the same place (`forEachCommandOperand`); its type is
+// what `arithmeticOperandType` says. See _Time_.
 //
 // **A record value's field** (11.0): a read of a projection holding a
 // record – in place or through an alias, a group member included – may
@@ -9567,6 +9577,13 @@ function loadPredefinedModel(index) {
 // each element made. A `reject` reached inside refuses the whole
 // command, as anywhere.
 //
+// **Time is compared by what it names** (11.0): two datetimes as
+// instants, whatever their offsets, two durations by length
+// (`evTimeOrder`) – known by their values, since nothing here carries
+// types. Arithmetic (`evArithmetic`) moves a datetime by a duration and
+// writes the result in UTC. A time given to a command or in a Given
+// that is none – a datetime without its offset – is an error.
+//
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* – an ordinary, expected outcome
 // this returns. A scenario that cannot be run at all – an event that no
@@ -11827,6 +11844,16 @@ if (typeof module !== 'undefined' && module.exports) {
 // condition picks what one event does, it never widens what a fold
 // reads, and it never narrows the query.
 //
+// **Time is data** (11.0): `datetime` and `duration` are built-in
+// types, and a number straight followed by a unit is a duration
+// literal – `30s`, `15m`, `24h`, `7d`, `1h30m` – lexed as one token and
+// stored as the ISO 8601 duration it names, units as written (`PT15M`),
+// so it prints back as typed; a month, a fraction or an unknown unit is
+// an error where it is written. A datetime literal is a string,
+// `"2026-01-01T10:00:00Z"`, checked where a datetime is expected. The
+// clock is a parameter, `now: datetime`. `type Deadline = datetime`
+// stores the string format, `{type: 'string', format: 'date-time'}`.
+//
 // **A few spellings are the schema's own tokens**, matching the
 // interface's technical register: `successor(x)`, `event.data.x`, and
 // the predicate words `contains` / `containsAny` / `startsWith` /
@@ -11849,7 +11876,10 @@ if (typeof module !== 'undefined' && module.exports) {
 // projection's (9.0): `derived projection Left (…): integer { Cap(x) -
 // Taken(x) }`, one operator – `+`, `-`, `*`, `min(a, b)`, `max(a, b)` –
 // over two projections or literals, outside any fold, so the fold arms
-// stay keywords. What neither says goes unsaid: the scripted projection
+// stay keywords. A command's rule and emission add and subtract too
+// (11.0), left to right and without brackets – `Cap(x) - sum(…) >=
+// seats`, `expiresAt: now + 15m` – which is all a rule over time and a
+// remainder needs; `*`, `min` and `max` stay a derived projection's. What neither says goes unsaid: the scripted projection
 // that once said it, behind a door where analysis stopped, went in
 // 11.0 (`"scripted" is gone` is the error). Expect the list to stay short:
 // each new operation is a major (a reader fails on one it does not

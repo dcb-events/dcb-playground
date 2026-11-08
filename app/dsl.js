@@ -188,6 +188,16 @@
 // condition picks what one event does, it never widens what a fold
 // reads, and it never narrows the query.
 //
+// **Time is data** (11.0): `datetime` and `duration` are built-in
+// types, and a number straight followed by a unit is a duration
+// literal – `30s`, `15m`, `24h`, `7d`, `1h30m` – lexed as one token and
+// stored as the ISO 8601 duration it names, units as written (`PT15M`),
+// so it prints back as typed; a month, a fraction or an unknown unit is
+// an error where it is written. A datetime literal is a string,
+// `"2026-01-01T10:00:00Z"`, checked where a datetime is expected. The
+// clock is a parameter, `now: datetime`. `type Deadline = datetime`
+// stores the string format, `{type: 'string', format: 'date-time'}`.
+//
 // **A few spellings are the schema's own tokens**, matching the
 // interface's technical register: `successor(x)`, `event.data.x`, and
 // the predicate words `contains` / `containsAny` / `startsWith` /
@@ -210,7 +220,10 @@
 // projection's (9.0): `derived projection Left (…): integer { Cap(x) -
 // Taken(x) }`, one operator – `+`, `-`, `*`, `min(a, b)`, `max(a, b)` –
 // over two projections or literals, outside any fold, so the fold arms
-// stay keywords. What neither says goes unsaid: the scripted projection
+// stay keywords. A command's rule and emission add and subtract too
+// (11.0), left to right and without brackets – `Cap(x) - sum(…) >=
+// seats`, `expiresAt: now + 15m` – which is all a rule over time and a
+// remainder needs; `*`, `min` and `max` stay a derived projection's. What neither says goes unsaid: the scripted projection
 // that once said it, behind a door where analysis stopped, went in
 // 11.0 (`"scripted" is gone` is the error). Expect the list to stay short:
 // each new operation is a major (a reader fails on one it does not
