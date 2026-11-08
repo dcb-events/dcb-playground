@@ -168,8 +168,8 @@
 // like an expression invites `state + 2 * event.data.n`, which no
 // operation stores. The vocabulary is closed because it is analysed,
 // not only run – what an editor offers per type (`operationsFor`),
-// whether a boolean only ever moves one way (`isMonotoneBoolean`),
-// which event moves an enum on – and a keyword shows that edge where
+// which event moves an enum or a boolean on (the Lifecycle tab's
+// `lifecycleMachine`) – and a keyword shows that edge where
 // an expression would hide it. Arithmetic *between* values is a derived
 // projection's (9.0): `derived projection Left (…): integer { Cap(x) -
 // Taken(x) }`, one operator – `+`, `-`, `*`, `min(a, b)`, `max(a, b)` –
