@@ -4416,7 +4416,7 @@ function modelsWithScenarios() {
       'and it decides as it did');
   });
 
-  check('a 10.x excluding is dropped on import, and said', () => {
+  check('a 10.x excluding keeps its command out of the import, and says so', () => {
     const envelope = legacyEnvelope();
     const course = envelope.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse');
     course.boundary.push({ alias: 'others', entity: 'Course', id: { each: { parameterName: 'courseIds' } },
@@ -4427,11 +4427,12 @@ function modelsWithScenarios() {
     resetStore();
     const { modelId, converted } = importModelFromEnvelope(envelope);
     const model = sandbox.projectState()[modelId];
-    eq(converted.some((c) => c.name === 'SubscribeStudentToCourse' && /"others" excluded courseId/.test(c.note)), true,
-      'the note says what was dropped');
-    eq(model['command-definitions'].SubscribeStudentToCourse.boundary.find((b) => b.alias === 'others'),
-      { alias: 'others', group: 'Course', tags: { courseId: { each: { parameterName: 'courseIds' } } } }, 'a fanned group binding');
-    eq(sandbox.modelAdvisories(model), [], 'advisory-clean');
+    eq(converted.some((c) => c.name === 'SubscribeStudentToCourse'
+      && /"others" excluded courseId/.test(c.note) && /not imported/.test(c.note)), true,
+      'the note says what was refused, and why');
+    eq(model['command-definitions'].SubscribeStudentToCourse, undefined,
+      'reading every instance would change its rules, so the command stays out');
+    eq(!!model['command-definitions'].DefineCourse, true, 'the rest of the model loads');
   });
 
   check('a 10.x derived projection bound by an entity reads its siblings bare once lifted', () => {

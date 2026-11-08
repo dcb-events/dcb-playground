@@ -6550,9 +6550,10 @@ function liftScriptArguments(body) {
 // models were in 8.0: each property read becomes the read in place of
 // the projection it bound, by the identifier the entity was read by,
 // and the binding goes. Either way a lifecycle designation goes
-// without a trace – it decided nothing – and so does `excluding`,
-// which nothing can say any more; `notes` says each time it dropped one,
-// and what became of every entity. An identifier type the document
+// without a trace – it decided nothing. A command whose binding said
+// `excluding` is left out: reading every instance instead would change
+// what its rules decide, silently. `notes` says each time it dropped
+// or left out something, and what became of every entity. An identifier type the document
 // never listed is created, a plain string marked as a tag.
 function groupsFromEntities({ customTypes = {}, entities = {}, projections = {}, commands = {}, projectionScenarios = {} }) {
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
@@ -6629,6 +6630,14 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
 
   for (const [commandName, command] of Object.entries(out.commands)) {
     if (!command || !Array.isArray(command.boundary)) continue;
+    const excluded = command.boundary.find((b) => b && b.entity !== undefined && b.excluding !== undefined);
+    if (excluded) {
+      notes.push({ kind: 'command-definition', name: commandName, note: `"${excluded.alias}" excluded `
+        + `${operandText(excluded.excluding)}, which nothing can say any more – the command was not imported, `
+        + 'since reading every instance would change what its rules decide.' });
+      delete out.commands[commandName];
+      continue;
+    }
     const entityAliases = new Map(command.boundary
       .filter((b) => b && b.entity !== undefined && own(shapes, b.entity)).map((b) => [b.alias, b]));
     const convert = (operand) => {
@@ -6665,10 +6674,6 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
     };
     command.boundary = command.boundary.map((binding) => {
       if (!binding || binding.entity === undefined) return binding ? convertRead(binding) : binding;
-      if (binding.excluding !== undefined) {
-        notes.push({ kind: 'command-definition', name: commandName, note: `"${binding.alias}" excluded `
-          + `${operandText(binding.excluding)}, which nothing can say any more – it reads every instance now.` });
-      }
       const shape = own(shapes, binding.entity) ? shapes[binding.entity] : null;
       if (!shape || !shape.clean) return null;
       return {
