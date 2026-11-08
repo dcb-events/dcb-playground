@@ -152,6 +152,18 @@
 // that is how the model stores it and how the pages show it. The
 // research note is docs/research/2026-10-03-code-view-language.md.
 //
+// **A command's body is its steps, in the order they run** (11.0):
+// `require … else reject "…"`, `emit E { … }`, and `if c => …  else
+// if c => …  else => …`, whose arm is one `emit` or `reject "…"`, or a
+// block `{ … }` of steps – the wire format's `steps`, statement for
+// statement, so the printer writes them as stored and the parser reads
+// them back in written order (`step`). A condition joins comparisons
+// with `and` and `or`, `and` binding tighter; a bracketed group stays
+// a group, so a run of one joiner is one list and the printer brackets
+// only what precedence would otherwise regroup. `not` stays a
+// comparison's, never a group's. The aliases sit at the top: a read is
+// made where a step first needs it, wherever it is declared.
+//
 // **A few spellings are the schema's own tokens**, matching the
 // interface's technical register: `successor(x)`, `event.data.x`, and
 // the predicate words `contains` / `containsAny` / `startsWith` /
@@ -916,6 +928,30 @@ function parseModelSourceText(text, options) {
   };
   const finish = (rule, negate) => (negate ? { ...rule, negate: true } : rule);
 
+  // A command's condition (11.0): comparisons joined by `and` and `or`,
+  // `and` binding tighter, brackets grouping. A run of one joiner is one
+  // list, `{all: […]}` or `{any: […]}`; a bracketed group stays a group,
+  // so what is printed is what was written.
+  const anyCondition = () => {
+    enter();
+    const parts = [allCondition()];
+    while (accept('or')) parts.push(allCondition());
+    return leave(parts.length === 1 ? parts[0] : { any: parts });
+  };
+  const allCondition = () => {
+    const parts = [conditionTerm()];
+    while (accept('and')) parts.push(conditionTerm());
+    return parts.length === 1 ? parts[0] : { all: parts };
+  };
+  const conditionTerm = () => {
+    if (is('not') && is('(', 1)) fail('"not" goes before one comparison – a bracketed group cannot be negated; say its opposite.');
+    if (!accept('(')) return condition(commandOperand);
+    const inner = anyCondition();
+    expect(')', '")" closing the group');
+    // A group of one comparison says nothing the comparison does not.
+    return inner;
+  };
+
   // ---------- declarations ----------
 
   const propertyList = (close) => {
@@ -1333,8 +1369,7 @@ function parseModelSourceText(text, options) {
     // as a whole (`sourceCommandQueries`) – not a name.
     mark(body, 'open', expect('{'));
     body.boundary = [];
-    body.conditions = [];
-    body.publishes = [];
+    body.steps = [];
     const owner = { kind: 'command-definition', name: nameToken.v };
     let group = null;
     const bare = [];
@@ -1368,30 +1403,14 @@ function parseModelSourceText(text, options) {
         mark(binding, 'statement', readToken);
         mark(binding, 'statementEnd', last());
         body.boundary.push(binding);
-      } else if (accept('require')) {
-        // The message is required, as in Weltenwanderer: it is what the
-        // command is refused with, and what a scenario names the refusal by.
-        const rule = condition(commandOperand);
-        expect('else', '"else reject" and the message the command is refused with');
-        expect('reject', '"reject" and the message the command is refused with');
-        mark(rule, 'rejection', peek());
-        rule.rejection = string('the message the command is refused with, in quotes');
-        body.conditions.push(rule);
-      } else if (accept('emit')) {
-        const eventToken = ident('an event name');
-        const emission = { name: eventToken.v };
-        mark(emission, 'name', eventToken);
-        if (accept('{')) emission.parameters = argumentList('}', commandOperand);
-        if (is('when')) {
-          fail('"when" on an emission is gone – 11.0 has no guarded emissions: an emission is published whenever its command is.');
-        }
-        body.publishes.push(emission);
+      } else if (startsStep()) {
+        body.steps.push(step());
       } else if (is('scenarios')) {
         group = scenariosGroup(owner, group);
       } else if (is('scenario')) {
         bare.push(scenarioDecl(peek(), owner));
       } else {
-        fail(`Expected alias, require, emit or scenarios, found ${describeToken(peek())}.`);
+        fail(`Expected alias, require, emit, if or scenarios, found ${describeToken(peek())}.`);
       }
     }
     const endAt = at;
@@ -1399,6 +1418,78 @@ function parseModelSourceText(text, options) {
     ungrouped(bare, endAt);
     resolveCommandNames(body);
     return define('command-definition', nameToken, body, start);
+  };
+
+  // ---------- a command's steps ----------
+  //
+  // Read top-down, as they run (11.0): `require … else reject "…"`,
+  // `emit E { … }`, `if … => …` with its `else if` / `else` arms, and –
+  // inside an arm – `reject "…"`. An arm is one emission or one
+  // `reject`, or a block `{ … }` of steps. A top-level `reject` parses,
+  // to be advised: it would refuse every time.
+  const STEP_STARTS = ['require', 'emit', 'if', 'reject'];
+  const startsStep = () => STEP_STARTS.some((word) => is(word));
+  const step = () => {
+    const start = peek();
+    if (accept('require')) {
+      // The message is required, as in Weltenwanderer: it is what the
+      // command is refused with, and what a scenario names the refusal by.
+      const rule = { condition: anyCondition() };
+      expect('else', '"else reject" and the message the command is refused with');
+      expect('reject', '"reject" and the message the command is refused with');
+      mark(rule, 'rejection', peek());
+      rule.rejection = string('the message the command is refused with, in quotes');
+      mark(rule, 'statement', start);
+      return rule;
+    }
+    if (accept('emit')) {
+      const eventToken = ident('an event name');
+      const emission = { name: eventToken.v };
+      mark(emission, 'name', eventToken);
+      if (accept('{')) emission.parameters = argumentList('}', commandOperand);
+      if (is('when')) {
+        fail('"when" on an emission is gone – 11.0 has no guarded emissions: "if … => emit …" emits under a condition.');
+      }
+      return emission;
+    }
+    if (accept('reject')) {
+      const out = {};
+      mark(out, 'rejection', peek());
+      out.reject = string('the message the command is refused with, in quotes');
+      return out;
+    }
+    expect('if');
+    enter();
+    const branch = { branches: [] };
+    mark(branch, 'statement', start);
+    for (;;) {
+      const condition = anyCondition();
+      expect('=>', '"=>" and what the branch does');
+      branch.branches.push({ condition, steps: armBody() });
+      if (!is('else')) break;
+      next();
+      if (accept('if')) continue;
+      expect('=>', '"=>" and what the else branch does – or "else if"');
+      branch.otherwise = armBody();
+      break;
+    }
+    return leave(branch);
+  };
+  // What an arm does: one emission or `reject`, or a block of steps.
+  const armBody = () => {
+    if (accept('{')) {
+      const steps = [];
+      while (!is('}')) {
+        guardBlock('}');
+        if (is('alias')) fail('An alias is read at the top of the command, not inside a branch.');
+        if (!startsStep()) fail(`Expected require, emit, if, reject or "}", found ${describeToken(peek())}.`);
+        steps.push(step());
+      }
+      expect('}');
+      return steps;
+    }
+    if (is('emit') || is('reject')) return [step()];
+    return fail(`Expected emit, reject or a block "{ … }" after "=>", found ${describeToken(peek())}.`);
   };
 
   const resolveCommandNames = (body) => {
@@ -1429,7 +1520,7 @@ function parseModelSourceText(text, options) {
       for (const key of Object.keys(value)) sourcePut(out, key, resolve(value[key]));
       return copyMarks(value, out);
     };
-    for (const key of ['boundary', 'conditions', 'publishes']) body[key] = resolve(body[key]);
+    for (const key of ['boundary', 'steps']) body[key] = resolve(body[key]);
   };
 
   // ---------- scenarios ----------
@@ -2021,9 +2112,7 @@ function parseModelSourceText(text, options) {
   }
   for (const body of Object.values(collections['command-definition'])) {
     if (!body || typeof body !== 'object') continue;
-    for (const key of ['conditions', 'publishes']) {
-      if (Array.isArray(body[key])) body[key] = settle(body[key]);
-    }
+    if (Array.isArray(body.steps)) body.steps = settle(body.steps);
   }
   const settleProjection = (body, group) => {
     if (!body || !body.derived || typeof body.derived !== 'object') return;
@@ -2512,6 +2601,87 @@ function sourceCommandOperand(body, names) {
   };
 }
 
+// A command's condition: its comparisons, joined. `and` binds tighter,
+// so an `or` inside an `and` is bracketed – and so is a group inside one
+// of its own kind, which a reader wrote as a group.
+function sourceAnyCondition(condition, operand) {
+  if (!isCompoundCondition(condition)) return sourceCondition(condition, operand);
+  const all = Array.isArray(condition.all);
+  const parts = all ? condition.all : condition.any;
+  if (parts.length < 2) unprintable('an and/or joins fewer than two conditions');
+  return parts.map((part) => {
+    const text = sourceAnyCondition(part, operand);
+    const bracket = isCompoundCondition(part) && (Array.isArray(part.any) || Array.isArray(part.all) === all);
+    return bracket ? `(${text})` : text;
+  }).join(all ? ' and ' : ' or ');
+}
+
+// One step as lines of text, its continuation lines indented.
+function sourceStep(step, operand) {
+  switch (stepKind(step)) {
+    case 'rule':
+      if (typeof step.rejection !== 'string') unprintable('a rule has no rejection message');
+      if (Object.keys(step).some((k) => !['condition', 'rejection'].includes(k))) unprintable('a rule carries fields a rule does not have');
+      return `require ${sourceAnyCondition(step.condition, operand)}\n  else reject ${JSON.stringify(step.rejection)}`;
+    case 'reject':
+      if (typeof step.reject !== 'string') unprintable('a reject has no message');
+      if (Object.keys(step).length !== 1) unprintable('a reject carries fields a reject does not have');
+      return `reject ${JSON.stringify(step.reject)}`;
+    case 'emit': {
+      if (Object.keys(step).some((k) => !['name', 'parameters'].includes(k))) unprintable(`its emission of "${step.name}" carries fields an emission does not have`);
+      let text = `emit ${sourceRef(step.name, 'event')}`;
+      if (step.parameters !== undefined) {
+        const fields = Object.entries(step.parameters).map(([key, value]) => {
+          const valueText = operand(value);
+          return valueText === sourceRef(key, 'event property') ? key : `${key}: ${valueText}`;
+        });
+        const inline = `${text} { ${fields.join(', ')} }`;
+        text = !fields.length ? `${text} {}`
+          : inline.length <= 88 ? inline
+            : `${text} {\n${fields.map((f) => '  ' + f + ',').join('\n')}\n}`;
+      }
+      return text;
+    }
+    case 'branch': {
+      if (Object.keys(step).some((k) => !['branches', 'otherwise'].includes(k))) unprintable('a branch carries fields a branch does not have');
+      // One emission or `reject` stands after the arrow; anything else
+      // is a block.
+      const arm = (steps) => {
+        if (!Array.isArray(steps)) unprintable('a branch arm\'s steps are not a list');
+        if (steps.length === 1 && ['emit', 'reject'].includes(stepKind(steps[0]))) return sourceStep(steps[0], operand);
+        if (!steps.length) return '{}';
+        const inner = sourceSteps(steps, operand).map((group) => group.join('\n')).join('\n');
+        return `{\n${inner.split('\n').map((line) => '  ' + line).join('\n')}\n}`;
+      };
+      const lines = step.branches.map((branch, index) => {
+        if (!branch || branch.condition === undefined) unprintable('a branch arm has no condition');
+        if (Object.keys(branch).some((k) => !['condition', 'steps'].includes(k))) unprintable('a branch arm carries fields an arm does not have');
+        return `${index ? 'else if' : 'if'} ${sourceAnyCondition(branch.condition, operand)} => ${arm(branch.steps || [])}`;
+      });
+      if (step.otherwise !== undefined) lines.push(`else => ${arm(step.otherwise)}`);
+      return lines.join('\n');
+    }
+    default:
+      return unprintable('a step is neither a rule, an emission, a branch nor a reject');
+  }
+}
+
+// Steps as groups of lines: a run of rules, then of emissions, then of
+// branches, each a group of its own – one blank line between groups, as
+// the rules and the emissions have always been printed.
+function sourceSteps(steps, operand) {
+  const groups = [];
+  let last = null;
+  for (const step of steps) {
+    const kind = stepKind(step);
+    const category = kind === 'reject' ? 'emit' : kind;
+    if (!groups.length || category !== last) groups.push([]);
+    groups[groups.length - 1].push(sourceStep(step, operand));
+    last = category;
+  }
+  return groups;
+}
+
 function printCommand(name, body, names) {
   const properties = body.properties || [];
   const boundary = body.boundary || [];
@@ -2539,26 +2709,9 @@ function printCommand(name, body, names) {
     }
     return unprintable(`the alias "${binding.alias}" is neither a group nor a projection`);
   });
-  const rules = (body.conditions || []).map((c) => {
-    if (!c || typeof c.rejection !== 'string') unprintable('a rule has no rejection message');
-    return `require ${sourceCondition(c, operand)}\n  else reject ${JSON.stringify(c.rejection)}`;
-  });
-  const emits = (body.publishes || []).map((emission) => {
-    const event = sourceRef(emission.name, 'event');
-    let text = `emit ${event}`;
-    if (emission.parameters !== undefined) {
-      const fields = Object.entries(emission.parameters).map(([key, value]) => {
-        const valueText = operand(value);
-        return valueText === sourceRef(key, 'event property') ? key : `${key}: ${valueText}`;
-      });
-      const inline = `${text} { ${fields.join(', ')} }`;
-      text = !fields.length ? `${text} {}`
-        : inline.length <= 88 ? inline
-          : `${text} {\n${fields.map((f) => '  ' + f + ',').join('\n')}\n}`;
-    }
-    return text;
-  });
-  const groups = [reads, rules, emits].filter((group) => group.length);
+  if (body.conditions !== undefined || body.publishes !== undefined) unprintable('it states conditions and publishes, not steps');
+  const steps = sourceSteps(body.steps || [], operand);
+  const groups = [reads, ...steps].filter((group) => group.length);
   const annotations = sourceAnnotations(body, ['feature', 'icon']);
   if (!groups.length) return `${annotations}${head} {}`;
   const inner = groups.map((group) => group.map((line) => '  ' + line.replace(/\n/g, '\n  ')).join('\n')).join('\n\n');
@@ -3706,8 +3859,12 @@ function sourceSymbols(parsed) {
       const tag = groupTagOf(own(groups, binding.group));
       tagOperands(binding.tags, (value) => commandOperand(name, body, value, tag ? tag.tagType : null));
     }
-    for (const rule of list(body.conditions)) condition(name, body, rule);
-    for (const emission of list(body.publishes)) {
+    // Every step, into every branch: a condition's comparisons, an
+    // emission's event and fields.
+    forEachCommandCondition(body, (stated) => {
+      for (const leaf of conditionLeaves(stated)) condition(name, body, leaf);
+    });
+    for (const emission of commandEmissions(body)) {
       add(sourceSymbol('event', emission.name), slotsOf(emission).name);
       keyed(emission.parameters, (key) => sourceSymbol('eventProperty', emission.name, key),
         (arg, key) => commandOperand(name, body, arg, eventPropertyType(emission.name, key)));
@@ -3970,7 +4127,7 @@ function sourceIntroduceAlias(text, line, col) {
   let reads = [];
   for (const [name, body] of Object.entries(parsed.collections['command-definition'])) {
     if (!body || !Array.isArray(body.boundary)) continue;
-    const all = readsIn([body.boundary, body.conditions, body.publishes]);
+    const all = readsIn([body.boundary, body.steps]);
     // Pre-order, so the last read covering the cursor is the innermost.
     const hit = all.filter(covers).pop();
     if (hit) { command = name; target = hit; reads = all; break; }
@@ -4043,7 +4200,7 @@ function sourceIntroduceAlias(text, line, col) {
 
 // ---------- completion ----------
 
-const SOURCE_CONDITION_STARTS = ['require'];
+const SOURCE_CONDITION_STARTS = ['require', 'if', 'and', 'or'];
 const SOURCE_COMPARISONS = ['==', '!=', '<', '<=', '>', '>=', ...SOURCE_WORD_PREDICATES];
 // How each predicate is written after an operand, in the order a rule
 // editor offers them.
@@ -4189,6 +4346,9 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     if (k === 'command') {
       if (opener === '{' && v(s[0]) === 'emit' && s.length === 2) return own('emitArgs', { event: v(s[1]) });
+      // A branch: an emission after its arrow, or a block of steps.
+      if (opener === '{' && v(s[s.length - 2]) === 'emit') return own('emitArgs', { event: prev });
+      if (opener === '{' && prev === '=>') return own('command');
       if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'command', name: frame.command } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'command', name: frame.command } });
       if (opener === '(' && prev === 'count') return own('count');
@@ -4372,8 +4532,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     if (decl_ && decl_.keyword === 'command' && decl_.name === name) {
       declared.forEach((t, i) => { if (t.t === 'string' && v(declared[i - 1]) === 'reject') offer(t.v); });
     }
-    for (const rule of list((def('command-definition', name) || {}).conditions)) {
-      if (rule && typeof rule.rejection === 'string') offer(rule.rejection);
+    for (const { rejection } of commandRejectionSteps(def('command-definition', name) || {})) {
+      if (typeof rejection === 'string') offer(rejection);
     }
   };
 
@@ -4422,7 +4582,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (written && written.line === line) continue;
       if (!boundary.some((q) => q.alias === b.alias)) boundary.push(b);
     }
-    for (const e of list(body && body.publishes)) if (!emits.includes(e.name)) emits.push(e.name);
+    for (const e of commandEmissions(body)) if (!emits.includes(e.name)) emits.push(e.name);
     return { name, properties, boundary, emits };
   };
   const operandType = (scope, head, property) => {
@@ -4789,10 +4949,25 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const scope = commandScope(commandName);
     if (!s.length) {
       keywords([['alias', 'alias ${1:name} = ', true], ['require', 'require '], ['emit', 'emit '],
-        ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
+        ['if', 'if '], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
       return done(false);
     }
     const first = v(s[0]);
+    // A branch: its condition, then after "=>" one emission or reject.
+    if (first === 'if') {
+      const words = s.map(v);
+      const arrow = words.lastIndexOf('=>');
+      const tail = s.slice(arrow + 1);
+      if (prev === 'else') { keywords([['if', 'if '], ['=>', '=> ']]); return done(); }
+      if (words.lastIndexOf('if') > arrow) return conditionItems(scope, conditionTail(s));
+      if (!tail.length) { keywords([['emit', 'emit '], ['reject', 'reject "${1}"', true]]); return done(); }
+      if (v(tail[0]) === 'emit' && tail.length === 1) {
+        definitionItems('event-definition', { sort: 0, detail: (n, b) => list(b.properties).map((p) => p.name).join(', ') });
+        return done();
+      }
+      if (v(tail[0]) === 'reject' && tail.length === 1) { rejectionItems(commandName); return done(); }
+      return done(false);
+    }
     if (first === 'alias') {
       if (prev === '=' && s.length <= 4) {
         definitionItems('group-definition', { sort: 0, call: (n) => `${n}($1)` });
@@ -5047,13 +5222,24 @@ The text get_model_source returns, apply_model_source applies and start_model ta
 - A group names projections that share one tag. It owns them – they are declared inside it, without a tag header – and means nothing for consistency: reading course.capacity queries only capacity's events. Read one in place as Course(courseId).capacity, or name the group once with alias course = Course(courseId) and read course.capacity. Projections tagged by several tags, or untagged, stay top-level.
 - @feature("Course management") on the line before a command puts it in that feature group; the pages list commands by feature. A command without one is ungrouped.`;
 
-const SOURCE_REFERENCE_FORMS = `Rules (after require), each negated by a leading not:
+const SOURCE_REFERENCE_FORMS = `Comparisons (after require or if), each negated by a leading not:
   a == b    a != b    a < b    a <= b    a > b    a >= b
   a in [Draft, Published]       a not in [Draft, Published]
   xs contains x    x in xs      (a list value holding x)
   xs containsAny ys    s startsWith "c"    s endsWith "c"
   count(xs) == 3                (also !=, < and >)
   a is empty    a is not empty    a is true    a is false
+Conditions join comparisons with and / or – and binds tighter – grouped in brackets:
+  require a > 0 and (b == c or d is true) else reject "<message>"
+
+A command's steps run top-down, in written order:
+  require <condition> else reject "<message>"     (refuses unless the condition holds)
+  emit E { … }
+  if <condition> => <arm>  else if <condition> => <arm>  else => <arm>
+An arm is one emit or reject "<message>", or a block { … } of require, emit and if steps.
+Separate ifs all run; an else chain runs its first arm that holds. Any rejection refuses
+the command with no events; the emits reached form one append, and none is then nothing.
+A read is made when a step reached first needs it, never before.
 
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
 a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
@@ -5093,6 +5279,7 @@ event BookAdded { tag bookId: BookId, isbn: Isbn, title: string, subtitle?: stri
 event CopiesDonated { donor: string, copies: Copy[] tag each bookId }
 event BookLent { tag bookId: BookId, tag memberId: MemberId, tag loanId: LoanId }
 event BookReturned { tag bookId: BookId, tag memberId: MemberId }
+event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
 event MemberJoined { tag memberId: MemberId, name: string }
 
@@ -5250,11 +5437,20 @@ command LendBook(bookId: BookId, memberId: MemberId) {
   emit BookLent { bookId, memberId, loanId: loanNumber }
 }
 
-command ReturnBook(bookId: BookId, memberId: MemberId) {
-  require MemberHasBook(memberId, bookId) is true
-    else reject "Book is not with this member"
-
-  emit BookReturned { bookId, memberId }
+// Steps run top-down. "if <condition> => …" runs its arm only when the
+// condition holds; "else if" and "else" chain arms, of which the first
+// that holds runs. An arm is one "emit" or "reject", or a block { … }.
+// Any rejection refuses the whole command, with no events. Conditions
+// join with "and" and "or" ("and" binds tighter; brackets group). Inside
+// "if damage is not empty" the optional parameter counts as present.
+command ReturnBook(bookId: BookId, memberId: MemberId, damage?: string) {
+  if MemberHasBook(memberId, bookId) is true and damage is not empty => {
+    emit BookReturned { bookId, memberId }
+    emit BookDamaged { bookId, damage }
+  }
+  else if MemberHasBook(memberId, bookId) is true => emit BookReturned { bookId, memberId }
+  else if BookStatus(bookId) == Withdrawn or (BookStatus(bookId) == Unknown and damage is empty) => reject "Book is not in the catalogue"
+  else => reject "Book is not with this member"
 }
 
 command WithdrawBook(bookId: BookId) {
@@ -5375,7 +5571,8 @@ const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 - Value types are nominal. An emitted value and a read's tag take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, and an integer does not fill a Seats property. Literals fit any matching base type. A read gives the type its projection declares, so declare the type the read's value goes on to fill.
 - An event property of a tag type must be one of the event's tags. So a command that reads by an identifier and stores it on an event needs that event tagged by it.
 - A handler has no condition: it runs for every event of its type that carries the projection's tags. When the change depends on the case, the event holds the amount for each case, with 0 where nothing changes.
-- A read needs a value for each tag, so an optional parameter cannot read one. Write one command with the read and one without.
+- A read needs a value for each tag, and is made only when a step reached needs it. So read by an optional parameter, or emit it into a required property, inside if x is not empty => … or after require x is not empty – not in a command of its own.
+- Cases that end differently are arms of one command, not one command each: if … => emit A { … }  else if … => emit B { … }  else => reject "…". Each arm that emits and each message owes a scenario.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 `;
 
@@ -5403,7 +5600,7 @@ function sourceLanguageReference() {
 const SOURCE_KEYWORDS = [
   'model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived',
   'projection', 'min', 'max', 'on', 'set', 'increment', 'decrement', 'append',
-  'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'not', 'is',
+  'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'or', 'not', 'is', 'if',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
   'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
   'else', 'reject',
@@ -5412,7 +5609,7 @@ const SOURCE_KEYWORDS = [
 // The words a block's statements start with, coloured apart so the
 // shape of a command – what it reads, requires, emits – shows at a
 // glance.
-const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'when', 'on', 'scenarios', 'scenario', 'given', 'then'];
+const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'if', 'when', 'on', 'scenarios', 'scenario', 'given', 'then'];
 
 const SOURCE_MONARCH = {
   // Names may be written in any script: `\p{…}` above needs the `u` flag.

@@ -76,6 +76,8 @@ function legacyEnvelope(index = PREDEFINED_INDEX('course-simple'), entities = LE
       }
       return Object.fromEntries(Object.entries(operand).map(([key, value]) => [key, toEntity(value)]));
     };
+    Object.assign(command, sandbox.commandLists(command));
+    delete command.steps;
     command.conditions = toEntity(command.conditions);
     command.publishes = toEntity(command.publishes);
     command.boundary = [...bindings, ...command.boundary];
@@ -116,12 +118,30 @@ const {
   evaluateCommand, foldProjection, tagsOfEvent,
   deriveThen, runScenario,
   deriveProjectionScenarioThen, runProjectionScenario,
-  addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember, reorderDefinitions,
+  removeDefinition, renameDefinition, renameMember, reorderDefinitions,
   createDcbModel,
   generateId, scenarioName, deepClone, evSuccessor,
   definitionsToSchema, buildShareEnvelope, importModelFromEnvelope,
   envelopeVersionWarning, modelMatchingEnvelope, commandRejections,
 } = sandbox;
+
+// Most fixtures here state a command the way it reads without branches
+// – its rules, then what it emits – and edit it so. `lists` gives a
+// stored command that way (a copy, its `steps` kept), and the writers
+// below put the two lists back into the steps they came from
+// (`withCommandLists`), so a branch a fixture has is never lost.
+function lists(body) {
+  const copy = deepClone(body);
+  return Object.assign(copy, sandbox.commandLists(copy));
+}
+function unlists(kind, body) {
+  if (kind !== 'command-definition' || !body || (body.conditions === undefined && body.publishes === undefined)) return body;
+  const { conditions, publishes, ...rest } = body;
+  const kept = sandbox.commandLists(rest);
+  return { ...rest, steps: sandbox.withCommandLists(rest.steps, conditions || kept.conditions, publishes || kept.publishes) };
+}
+const addDefinition = (kind, id, name, body) => sandbox.addDefinition(kind, id, name, unlists(kind, body));
+const updateDefinition = (kind, id, name, body) => sandbox.updateDefinition(kind, id, name, unlists(kind, body));
 
 // An event a fixture adds, tagged by every tag-typed value it holds –
 // what an author listing them all would write. Events are tagged only
@@ -342,11 +362,11 @@ function openSchedules() {
       { event: 'StudentUnsubscribedFromCourse', operation: 'remove', value: { eventProperty: 'courseId' } },
     ],
   });
-  const define = deepClone(model()['command-definitions'].DefineCourse);
+  const define = lists(model()['command-definitions'].DefineCourse);
   define.properties.push(list('slots', 'TimeSlot'));
   define.publishes[0].parameters.slots = { parameterName: 'slots' };
   updateDefinition('command-definition', id, 'DefineCourse', define);
-  const subscribe = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+  const subscribe = lists(model()['command-definitions'].SubscribeStudentToCourse);
   subscribe.boundary.push({ alias: 'others', group: 'Course',
     tags: { courseId: { each: of('student', 'subscribedCourseIds') } } });
   subscribe.conditions.push({ leftHandSide: of('others', 'slots'), predicate: 'containsAny',
@@ -534,16 +554,16 @@ function openSchedules() {
   drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
 
   const archive = model['command-definitions'].ArchiveCourse;
-  const original = archive.conditions;
+  const original = archive.steps;
 
   // ArchiveCourse binds `course` and takes `courseId`, so any condition
   // over the course's state can stand in for its own.
   const holds = (condition) => {
-    archive.conditions = [condition];
+    archive.steps = sandbox.withCommandLists(original, [{ ...condition, rejection: 'No' }], lists(archive).publishes);
     try {
       return evaluateCommand(model, log, 'ArchiveCourse', { courseId: 'c1' }).outcome === 'published';
     } finally {
-      archive.conditions = original;
+      archive.steps = original;
     }
   };
 
@@ -661,7 +681,7 @@ function openSchedules() {
 
     // A student may now be in at most zero courses, so what published
     // before is refused now.
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     command.conditions.find((c) => c.leftHandSide.property === 'subscriptionCount'
       && c.leftHandSide.alias === 'student').rightHandSide = 0;
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
@@ -679,7 +699,7 @@ function openSchedules() {
   // student's existence would refuse too if it were asked first.
   const refused = () => ({ ...scenarioBody(), given: [] });
   const moveToFront = (model, id, pick) => {
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     const at = command.conditions.findIndex(pick);
     command.conditions.unshift(...command.conditions.splice(at, 1));
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
@@ -713,7 +733,7 @@ function openSchedules() {
     eq(model()['scenario-definitions'][key].then.rejection, 'Course is not active', 'the course rule refuses');
     // The student rule now says the same thing, and is moved ahead, so
     // it refuses first – but the outcome is the one the scenario names.
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     command.conditions.find((c) => c.leftHandSide.alias === 'student' && c.predicate === 'isTrue')
       .rejection = 'Course is not active';
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
@@ -729,7 +749,7 @@ function openSchedules() {
 
   check('a refusal by a rule without a message is not an outcome a scenario can name', () => {
     const { id, model } = open_(GROUPED);
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     delete command.conditions[0].rejection;
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
     const result = runScenario(model(), { ...refused(), then: { outcome: 'rejected', events: [],
@@ -744,7 +764,7 @@ function openSchedules() {
 
   check('a rejection message is advised where it is missing or malformed', () => {
     const { id, model } = open_(GROUPED);
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     command.conditions[1].rejection = '';
     command.conditions[2].rejection = 'two\nlines';
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
@@ -1304,7 +1324,7 @@ function openSchedules() {
     ...(negate ? { negate: true } : {}),
   }];
   const outcomeWith = (conditions, args) => {
-    const body = deepClone(model()['command-definitions'].File);
+    const body = lists(model()['command-definitions'].File);
     body.conditions = conditions;
     updateDefinition('command-definition', id, 'File', body);
     return evaluateCommand(model(), [], 'File', args);
@@ -1343,7 +1363,7 @@ function openSchedules() {
 
   check('the defects an equalsAny list can carry are advisories, not refusals', () => {
     const flagged = (conditions, pattern) => {
-      const body = deepClone(model()['command-definitions'].File);
+      const body = lists(model()['command-definitions'].File);
       body.conditions = conditions;
       updateDefinition('command-definition', id, 'File', body);
       eq(sandbox.modelAdvisories(model()).some(
@@ -1364,7 +1384,7 @@ function openSchedules() {
 {
   const { id, model } = open_(GROUPED);
   const guardArchiveWith = (rightHandSide) => {
-    const body = deepClone(model()['command-definitions'].ArchiveCourse);
+    const body = lists(model()['command-definitions'].ArchiveCourse);
     body.conditions = [{
       leftHandSide: { alias: 'course', property: 'status' },
       predicate: 'equalsAny',
@@ -1383,7 +1403,7 @@ function openSchedules() {
   check('renaming an enum member rewrites the references inside a list', () => {
     guardArchiveWith([{ enumMember: 'Existent' }, { enumMember: 'Archived' }]);
     renameMember('custom-type-definition', id, 'CourseStatus', 'member', 'Existent', 'Active');
-    eq(model()['command-definitions'].ArchiveCourse.conditions[0].rightHandSide,
+    eq(lists(model()['command-definitions'].ArchiveCourse).conditions[0].rightHandSide,
       [{ enumMember: 'Active' }, { enumMember: 'Archived' }], 'the listed entry repointed');
   });
 }
@@ -1509,11 +1529,11 @@ check('an import missing the definition arrays is refused, not silently accepted
     const log = [];
     drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 7 });
     eq(foldMember(model, log, 'Course', 'capacity', 'c1'), 7, 'by the group\'s tag');
-    const body = deepClone(model['command-definitions'].ChangeCourseCapacity);
+    const body = lists(model['command-definitions'].ChangeCourseCapacity);
     body.conditions = [{ leftHandSide: { projection: 'Course.capacity', tags: { courseId: { parameterName: 'courseId' } } },
       predicate: 'equals', rightHandSide: 7, rejection: 'Not seven' }];
     body.boundary = [];
-    model['command-definitions'].ChangeCourseCapacity = body;
+    model['command-definitions'].ChangeCourseCapacity = unlists('command-definition', body);
     eq(evaluateCommand(model, log, 'ChangeCourseCapacity', { courseId: 'c1', newCapacity: 3 }).outcome,
       'published', 'Course(courseId).capacity, in place');
   });
@@ -1530,7 +1550,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('renaming a grouped projection moves every read of it', () => {
     const { id, model } = open_(GROUPED);
     renameDefinition('projection-definition', id, 'Course.capacity', 'seats');
-    const rule = model()['command-definitions'].SubscribeStudentToCourse.conditions
+    const rule = lists(model()['command-definitions'].SubscribeStudentToCourse).conditions
       .find((c) => c.rejection === 'Course is full');
     eq(rule.rightHandSide, { alias: 'course', property: 'seats' }, 'the member read followed');
     const log = [];
@@ -1758,7 +1778,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     });
     // Only the scenario and the command read it; drop the command first,
     // and the scenario must not be what refuses.
-    const define = deepClone(model()['command-definitions'].DefineCourse);
+    const define = lists(model()['command-definitions'].DefineCourse);
     define.properties = [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
       { name: 'capacity', propertyType: 'integer', isOptional: false, isList: false }];
     // Supplying the id instead of minting it – which is what makes the
@@ -1895,7 +1915,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   ];
 
   check('a chained fan pairs a zipped parameter by the element it came from', () => {
-    eq(sandbox.isZipped(model(), model()['command-definitions'].Check, model()['command-definitions'].Check.conditions[0],
+    eq(sandbox.isZipped(model(), model()['command-definitions'].Check, lists(model()['command-definitions'].Check).conditions[0],
       { parameterName: 'requirements', property: 'minimum' }), true, 'the minimum is zipped with the courses');
     // s1's courses are cA (10) and cB (3) and s1 asks for 5; s2 holds none.
     const result = evaluateCommand(model(), log, 'Check', {
@@ -2008,7 +2028,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   const { id, model } = open_(GROUPED);
 
   check('a literal tag containing "?" is a value, not a gap', () => {
-    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    const body = lists(model()['command-definitions'].ChangeCourseCapacity);
     body.boundary[0].tags.courseId = { tagType: 'CourseId', tagValue: 'what?' };
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
     eq(model()['command-definitions'].ChangeCourseCapacity.boundary[0].tags.courseId.tagValue, 'what?', 'stored');
@@ -2016,7 +2036,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a tag operand missing its name saves, and the advisory names the gap', () => {
-    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    const body = lists(model()['command-definitions'].ChangeCourseCapacity);
     body.boundary[0].tags.courseId = { parameterName: '' };
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
     eq(sandbox.modelAdvisories(model()).some(
@@ -2104,7 +2124,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a condition reads the null; isEmpty holds, ordering breaks', () => {
-    const body = deepClone(model()['command-definitions'].ErzeugeAnordnung);
+    const body = lists(model()['command-definitions'].ErzeugeAnordnung);
     body.conditions = [{ leftHandSide: { parameterName: 'notiz' }, predicate: 'isNotEmpty' }];
     updateDefinition('command-definition', id, 'ErzeugeAnordnung', body);
     const outcome = evaluateCommand(model(), [], 'ErzeugeAnordnung', { anordnungId: 'a1' });
@@ -2173,7 +2193,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a required event property fed from an optional parameter is advised', () => {
-    const body = deepClone(model()['command-definitions'].ErzeugeAnordnung);
+    const body = lists(model()['command-definitions'].ErzeugeAnordnung);
     body.properties = body.properties.map((p) => p.name === 'anordnungId' ? { ...p, isOptional: true } : p);
     addDefinition('command-definition', id, 'WackligErzeugen', body);
     eq(sandbox.modelAdvisories(model()).some(
@@ -2502,7 +2522,7 @@ check('every predefined model ships advisory-clean', () => {
     const body = deepClone(model()['projection-definitions'].DeveloperAvailableHoursPerWeek);
     body.initialValue = null;
     updateDefinition('projection-definition', id, 'DeveloperAvailableHoursPerWeek', body);
-    const command = deepClone(model()['command-definitions'].AllocateHours);
+    const command = lists(model()['command-definitions'].AllocateHours);
     command.conditions = command.conditions.slice(3);
     updateDefinition('command-definition', id, 'AllocateHours', command);
     let broke = null;
@@ -2705,7 +2725,7 @@ check('every predefined model ships advisory-clean', () => {
     const body = model()['projection-definitions'].HasSeats;
     eq(body.arguments, [{ name: 'wanted', propertyType: 'integer' }], 'the declaration');
     eq(body.derived.rightHandSide, { parameterName: 'wanted' }, 'its own side');
-    eq(model()['command-definitions'].Book.conditions[0].leftHandSide.arguments,
+    eq(lists(model()['command-definitions'].Book).conditions[0].leftHandSide.arguments,
       { wanted: { parameterName: 'seats' } }, 'the command\'s read, keyed by the new name');
   });
 
@@ -2736,7 +2756,7 @@ check('every predefined model ships advisory-clean', () => {
     const body = model()['projection-definitions'].NotSubscribed;
     eq([body.tags, body.arguments], [[{ name: 'courseId', tagType: 'CourseId' }], [{ name: 'studentId', propertyType: 'StudentId' }]],
       'an argument now, first among them');
-    const read = model()['command-definitions'].Subscribe.conditions[0].leftHandSide;
+    const read = lists(model()['command-definitions'].Subscribe).conditions[0].leftHandSide;
     eq([read.tags, read.arguments], [{ courseId: { parameterName: 'courseId' } }, { studentId: 's1' }],
       'the read gives it as an argument, as a bare literal');
     eq(sandbox.modelAdvisories(model()).map((a) => a.message), [], 'advisory-clean');
@@ -2744,7 +2764,7 @@ check('every predefined model ships advisory-clean', () => {
       'rejected', 'and it reads the same');
 
     sandbox.setProjectionParameterIsTag(id, 'NotSubscribed', 'studentId', true);
-    const back = model()['command-definitions'].Subscribe.conditions[0].leftHandSide;
+    const back = lists(model()['command-definitions'].Subscribe).conditions[0].leftHandSide;
     eq([back.tags, back.arguments], [{ courseId: { parameterName: 'courseId' }, studentId: { tagType: 'StudentId', tagValue: 's1' } }, undefined],
       'and back, the literal typed again');
     eq(model()['projection-definitions'].NotSubscribed.arguments, undefined, 'no empty list left behind');
@@ -2909,7 +2929,7 @@ check('every predefined model ships advisory-clean', () => {
     const { id, model } = open_(PREDEFINED_INDEX('content-decisions-derived'));
     renameMember('projection-definition', id, 'DocumentCurrentText', 'tag', 'documentId', 'docId');
     eq(model()['projection-definitions'].DocumentCurrentText.tags, [{ name: 'docId', tagType: 'DocumentId' }], 'declared');
-    eq(model()['command-definitions'].UpdateText.conditions[1].leftHandSide.tags,
+    eq(lists(model()['command-definitions'].UpdateText).conditions[1].leftHandSide.tags,
       { docId: { parameterName: 'docId' } }, 'a read in place');
     eq(model()['projection-definitions'].DocumentHasPendingChanges.derived.leftHandSide.tags,
       { docId: { parameterName: 'documentId' } }, 'a derived operand, which still passes its own tag on');
@@ -2921,7 +2941,7 @@ check('every predefined model ships advisory-clean', () => {
 
   check('a group read over a list says each, or is advised and refused', () => {
     const { id, model } = openSchedules();
-    const body = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const body = lists(model()['command-definitions'].SubscribeStudentToCourse);
     body.boundary.find((b) => b.alias === 'others').tags.courseId = { alias: 'student', property: 'subscribedCourseIds' };
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
     const found = sandbox.modelAdvisories(model()).map((a) => a.message);
@@ -2937,7 +2957,7 @@ check('every predefined model ships advisory-clean', () => {
 
   check('a read by a tag literal folds what the literal names', () => {
     const { id, model } = open_(SEQUENCE);
-    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    const body = lists(model()['command-definitions'].ChangeCourseCapacity);
     body.boundary.push({ alias: 'first', projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } } });
     body.conditions.push({ leftHandSide: { alias: 'first' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'The first course has no seats' });
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
@@ -2956,9 +2976,11 @@ check('every predefined model ships advisory-clean', () => {
 
   check('a read by a value of another type, by an untyped literal or unnamed is advised – and a run refuses it', () => {
     const { id, model } = open_(SIMPLE);
-    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    const body = lists(model()['command-definitions'].ChangeCourseCapacity);
     body.boundary.push({ alias: 'odd', projection: 'CourseCapacity', tags: { courseId: { parameterName: 'newCapacity' } } });
-    body.conditions.push({ leftHandSide: { alias: 'odd' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'Odd' });
+    // First, since reads are lazy: a read behind a rule that refuses is
+    // never made.
+    body.conditions.unshift({ leftHandSide: { alias: 'odd' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'Odd' });
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
     const advised = () => sandbox.modelAdvisories(model()).filter((a) => a.name === 'ChangeCourseCapacity').map((a) => a.message);
     let found = advised();
@@ -3816,7 +3838,7 @@ function modelsWithScenarios() {
     // A read in place is said through an alias of the group, named off
     // the value it is read by – not `Document(docId).currentText` in
     // front of every rule.
-    eq(model()['command-definitions'].UpdateText.conditions[1].leftHandSide,
+    eq(lists(model()['command-definitions'].UpdateText).conditions[1].leftHandSide,
       { alias: 'doc', property: 'currentText' }, 'a read in place, through an alias of the group');
     const docAlias = { alias: 'doc', group: 'Document', tags: { docId: { parameterName: 'docId' } } };
     eq(model()['command-definitions'].UpdateText.boundary.filter((b) => b.group), [docAlias], 'bound once');
@@ -3874,7 +3896,7 @@ function modelsWithScenarios() {
   check('moving a projection out turns a member read into the read it stood for', () => {
     const { id, model } = open_(GROUPED);
     eq(sandbox.moveProjectionOutOfGroup(id, 'Student.subscriptionCount'), 'StudentSubscriptionCount', 'named from its group');
-    const subscribe = model()['command-definitions'].SubscribeStudentToCourse;
+    const subscribe = lists(model()['command-definitions'].SubscribeStudentToCourse);
     eq(subscribe.conditions.find((c) => c.rejection === 'Student is subscribed to too many courses').leftHandSide,
       { projection: 'StudentSubscriptionCount', tags: { studentId: { parameterName: 'studentId' } } }, 'read in place');
     eq(subscribe.boundary.some((b) => b.alias === 'student'), true, 'the group binding stays while a rule still reads it');
@@ -3891,12 +3913,12 @@ function modelsWithScenarios() {
 
   check('renaming a group moves its bindings and every qualified read', () => {
     const { id, model } = open_(GROUPED);
-    const body = deepClone(model()['command-definitions'].ArchiveCourse);
+    const body = lists(model()['command-definitions'].ArchiveCourse);
     body.conditions.push({ leftHandSide: { projection: 'Course.capacity', tags: { courseId: { parameterName: 'courseId' } } },
       predicate: 'greaterThan', rightHandSide: 0, rejection: 'No seats' });
     updateDefinition('command-definition', id, 'ArchiveCourse', body);
     renameDefinition('group-definition', id, 'Course', 'Lecture');
-    const archive = model()['command-definitions'].ArchiveCourse;
+    const archive = lists(model()['command-definitions'].ArchiveCourse);
     eq(archive.boundary[0].group, 'Lecture', 'the binding');
     eq(archive.conditions[1].leftHandSide.projection, 'Lecture.capacity', 'the read in place');
     eq(sandbox.modelAdvisories(model()), [], 'nothing dangles');
@@ -3913,7 +3935,7 @@ function modelsWithScenarios() {
       valueType: 'integer', isList: false,
       derived: { leftHandSide: { projection: 'capacity' }, operator: 'subtract', rightHandSide: { projection: 'subscriptionCount' } },
     });
-    const body = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const body = lists(model()['command-definitions'].SubscribeStudentToCourse);
     body.conditions = body.conditions.filter((c) => c.rejection !== 'Course is full');
     body.conditions.push({ leftHandSide: { alias: 'course', property: 'hasRoomFor', arguments: { seats: 1 } },
       predicate: 'isTrue', rejection: 'Course is full' });
@@ -3941,7 +3963,7 @@ function modelsWithScenarios() {
   check('moving in folds a command\'s reads into aliases of the group, as one would write them', () => {
     const { id, model } = open_(PREDEFINED_INDEX('course-simple'));
     const byCourse = () => ({ courseId: { parameterName: 'courseId' } });
-    sandbox.addDefinition('command-definition', id, 'Probe', {
+    addDefinition('command-definition', id, 'Probe', {
       properties: [
         { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
         { name: 'course', propertyType: 'string', isOptional: false, isList: false },
@@ -3963,7 +3985,7 @@ function modelsWithScenarios() {
     });
     sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' });
     for (const name of ['CourseCapacity', 'CourseStatus', 'CourseSubscriptionCount']) sandbox.moveProjectionIntoGroup(id, name, 'Course');
-    const probe = model()['command-definitions'].Probe;
+    const probe = lists(model()['command-definitions'].Probe);
     // `course` is a payload property, so the alias is numbered past it.
     eq(probe.boundary, [
       { alias: 'course2', group: 'Course', tags: byCourse() },
@@ -4004,7 +4026,7 @@ function modelsWithScenarios() {
       'its icon kept, its tag its identifier\'s');
     eq(model['command-definitions'].ArchiveCourse.boundary, [{ alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } }],
       'an entity binding is a group binding');
-    eq(model['command-definitions'].ArchiveCourse.conditions[1].leftHandSide, { alias: 'course', property: 'capacity' },
+    eq(lists(model['command-definitions'].ArchiveCourse).conditions[1].leftHandSide, { alias: 'course', property: 'capacity' },
       'a read in place, through the alias the entity was read by');
     eq(model['projection-scenario-definitions'].cap.projection, 'Course.capacity', 'a scenario');
     eq(sandbox.modelAdvisories(model), [], 'advisory-clean');
@@ -4030,7 +4052,7 @@ function modelsWithScenarios() {
       'Entity Lecture was restated as plain reads – CourseCapacity is bound more than once.',
     ], 'said, with the reason');
     eq(Object.keys(model['group-definitions']), ['Student'], 'only the clean one is a group');
-    const body = model['command-definitions'].SubscribeStudentToCourse;
+    const body = lists(model['command-definitions'].SubscribeStudentToCourse);
     eq(body.boundary.map((b) => b.alias), ['student'], 'the restated bindings are gone');
     eq(body.conditions[0].leftHandSide, { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } },
       'a property read is the read in place it stood for');
@@ -4139,7 +4161,7 @@ function modelsWithScenarios() {
   check('a guarded emission keeps its command out of the import, and says so', () => {
     const envelope = current();
     const subscribe = envelope.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse');
-    subscribe.publishes[0].when = [{ leftHandSide: { parameterName: 'courseId' }, predicate: 'equals', rightHandSide: 'c1' }];
+    subscribe.steps.find((step) => step.name)['when'] = [{ leftHandSide: { parameterName: 'courseId' }, predicate: 'equals', rightHandSide: 'c1' }];
     resetStore();
     const { modelId, converted } = importModelFromEnvelope(envelope);
     const model = sandbox.projectState()[modelId];
@@ -4153,7 +4175,7 @@ function modelsWithScenarios() {
 
   check('the write path refuses a guarded emission', () => {
     const { id, model } = open_(SIMPLE);
-    const subscribe = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const subscribe = lists(model()['command-definitions'].SubscribeStudentToCourse);
     subscribe.publishes[0].when = [{ leftHandSide: { parameterName: 'courseId' }, predicate: 'equals', rightHandSide: 'c1' }];
     let refused = null;
     try { updateDefinition('command-definition', id, 'SubscribeStudentToCourse', subscribe); } catch (error) { refused = error.message; }
@@ -4187,7 +4209,7 @@ function modelsWithScenarios() {
 
   check('the write path refuses an optional read', () => {
     const { id, model } = open_(GROUPED);
-    const read = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const read = lists(model()['command-definitions'].SubscribeStudentToCourse);
     read.boundary.find((b) => b.alias === 'course').isOptional = true;
     let refused = null;
     try { updateDefinition('command-definition', id, 'SubscribeStudentToCourse', read); } catch (error) { refused = error.message; }
@@ -4203,6 +4225,92 @@ function modelsWithScenarios() {
         { ...capacity, handlers: [{ event: 'CourseDefined', operation: 'set', value: { currentValue: true } }] });
     } catch (error) { refused = error.message; }
     eq(refused, 'Projection "CourseCapacity" sets a value from currentValue – 11.0 has no currentValue.', 'named');
+  });
+}
+
+
+// ---------------------------------------------------------------
+// Steps (11.0): one list, run top-down; the two lists before it are
+// lifted on import, and refused on the write path.
+// ---------------------------------------------------------------
+{
+  const earlier = () => {
+    const envelope = deepClone(buildShareEnvelope(build(SIMPLE), []));
+    for (const command of envelope.commandDefinitions) {
+      Object.assign(command, sandbox.commandLists(command));
+      delete command.steps;
+    }
+    return envelope;
+  };
+
+  check('a document with conditions and publishes imports as steps – the rules, then the emissions', () => {
+    const shipped = build(SIMPLE);
+    resetStore();
+    const { modelId, skipped } = importModelFromEnvelope(earlier());
+    eq(skipped, [], 'nothing skipped');
+    const model = sandbox.projectState()[modelId];
+    for (const [name, body] of Object.entries(shipped['command-definitions'])) {
+      eq(model['command-definitions'][name].steps, body.steps, `${name}, losslessly`);
+    }
+    const subscribe = model['command-definitions'].SubscribeStudentToCourse.steps;
+    eq(subscribe.map(sandbox.stepKind), ['rule', 'rule', 'rule', 'rule', 'rule', 'emit'], 'in the order they evaluated');
+    const tenFive = earlier();
+    tenFive.dcbModelVersion = '10.0';
+    tenFive.$schema = 'https://dcb.events/schemas/model/v10.json';
+    tenFive.entityDefinitions = [];
+    delete tenFive.groupDefinitions;
+    resetStore();
+    const tenFiveId = importModelFromEnvelope(tenFive).modelId;
+    const lifted = sandbox.projectState()[tenFiveId];
+    eq(lifted['command-definitions'].DefineCourse.steps, shipped['command-definitions'].DefineCourse.steps, 'a 10.x one too');
+  });
+
+  check('the write path refuses the two lists, and steps it cannot hold', () => {
+    const { id, model } = open_(SIMPLE);
+    const refused = (body) => {
+      try { sandbox.updateDefinition('command-definition', id, 'ArchiveCourse', body); } catch (error) { return error.message; }
+      return null;
+    };
+    const body = model()['command-definitions'].ArchiveCourse;
+    eq(refused({ ...body, conditions: [] }), 'A command\'s "conditions" is gone – 11.0 says its rules and emissions in order, as "steps".', 'conditions');
+    eq(refused({ ...body, steps: [1] }), 'A Command Definition\'s "steps" must hold objects – got 1.', 'a step that is no object');
+    eq(refused({ ...body, steps: [{ branches: [{ condition: {}, steps: 'x' }] }] }),
+      'A command\'s branch arm\'s "steps" must be a list.', 'an arm whose steps are no list');
+  });
+
+  check('the pages edit the top-level rules and emissions, and leave a branch where it is', () => {
+    const branch = { branches: [{ condition: { leftHandSide: true, predicate: 'isTrue' }, steps: [{ reject: 'No' }] }] };
+    const rule = (n) => ({ condition: { leftHandSide: n, predicate: 'equals', rightHandSide: n }, rejection: 'r' + n });
+    const emit = { name: 'E', parameters: {} };
+    const steps = [rule(1), branch, rule(2), emit];
+    const { conditions, publishes } = sandbox.commandLists({ steps });
+    eq(conditions.map((c) => c.rejection), ['r1', 'r2'], 'the rules, flat');
+    eq(sandbox.withCommandLists(steps, conditions, publishes), steps, 'unchanged lists, unchanged steps');
+    eq(sandbox.withCommandLists(steps, [conditions[1], conditions[0]], publishes).map((s) => s.rejection || s.branches || s.name),
+      ['r2', branch.branches, 'r1', 'E'], 'reordered into the same slots, the branch kept between');
+    eq(sandbox.withCommandLists(steps, [...conditions, { ...rule(3).condition, rejection: 'r3' }], publishes).map((s) => s.rejection || s.name || 'branch'),
+      ['r1', 'branch', 'r2', 'r3', 'E'], 'a new rule after the last');
+    eq(sandbox.withCommandLists(steps, [conditions[0]], []).map((s) => s.rejection || 'branch'), ['r1', 'branch'],
+      'removing gives up the last slots, never the branch');
+  });
+
+  check('a binding read with an unset tag is never made behind a rule that refuses', () => {
+    const { id, model } = open_(SIMPLE);
+    addDefinition('command-definition', id, 'Probe', {
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: true, isList: false }],
+      boundary: [{ alias: 'cap', projection: 'CourseCapacity', tags: { courseId: { parameterName: 'courseId' } } }],
+      conditions: [
+        { leftHandSide: { parameterName: 'courseId' }, predicate: 'isNotEmpty', rejection: 'No course' },
+        { leftHandSide: { alias: 'cap' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'No seats' },
+      ],
+      publishes: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Probe'), [], 'the require narrows the optional tag');
+    const run = evaluateCommand(model(), [], 'Probe', {});
+    eq([run.outcome, run.failedRule.rejection, run.failedRule.path], ['rejected', 'No course', [0]], 'refused by the first');
+    eq(run.reads, {}, 'and the alias was never read');
+    const ported = evaluateCommand(model(), () => [], 'Probe', {});
+    eq(ported.query, [], 'so its append condition covers nothing');
   });
 }
 

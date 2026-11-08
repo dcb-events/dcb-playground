@@ -1738,7 +1738,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         }
       },
       "boundary": {
-        "description": "The reads this command names, each under a local alias –\nprojections, and instances of groups. **They are the command's\ndynamic consistency boundary**, together with the reads written in\nplace (`ProjectionRead`), with nothing contributed from outside: the\nappend condition's query is the union of their queries – a\nprojection read contributing its tags and its handled types, a group\nbinding exactly the projections of the group the command reads\nthrough it, each by the group's tag.\n\nA tag the command writes need not have been read: one the caller\nsupplies is asserted by the caller, and writing it is what makes any\nother command that did read it conflict with this one.\n\n**Declaration order is the chain.** A binding may draw its\noperands from a binding *above* it and never from one below,\nso a command can read one thing to learn which thing to read\nnext. One left-to-right pass resolves the chain, and a cycle\nis impossible to write.\n\n**Queries are derived, never authored.** A binding waits only\nfor the bindings it actually references, so the number of\nqueries to the store is the *depth* of that dependency\ngraph, not the length of this list: two bindings that both\ntake their identifiers from the payload are read in one\nquery, not two. Each binding's query is `1 + max(query of the\nbindings its operands name)`, or 1 when it names none –\ncomputable in the same left-to-right pass, since the list is\nalready topologically sorted by the rule above.\n\nIt is a graph and not a tree: a binding's tags and arguments may\neach name a different binding. That is why the structure is\nderived and rendered rather than written down as nesting,\nwhich could not represent a binding with two parents without\nduplicating it.\n\n**Execution.** The chain reads in several queries, but the\nwhole command decides as of a single point in the log:\n\n  1. `P` := the position of the last event overall – a\n     backwards read of everything, limited to one.\n  2. Resolve the bindings query by query, every read\n     **bounded at `P`**. Bounding matters: a read past `P`\n     could decide on an event that the append condition then\n     rejects it for.\n  3. Evaluate the conditions over the resolved instances.\n  4. Append with the condition\n     `query = the union of every binding's query, after = P`.\n\nBecause the query covers everything read and `P` precedes\nevery read, any concurrent change to anything this command\nlooked at invalidates the append – and nothing else does.\n",
+        "description": "The reads this command names, each under a local alias –\nprojections, and instances of groups. **They are the command's\ndynamic consistency boundary**, together with the reads written in\nplace (`ProjectionRead`), with nothing contributed from outside: the\nappend condition's query is the union of their queries – a\nprojection read contributing its tags and its handled types, a group\nbinding exactly the projections of the group the command reads\nthrough it, each by the group's tag.\n\nA tag the command writes need not have been read: one the caller\nsupplies is asserted by the caller, and writing it is what makes any\nother command that did read it conflict with this one.\n\n**Declaration order is the chain.** A binding may draw its\noperands from a binding *above* it and never from one below,\nso a command can read one thing to learn which thing to read\nnext. One left-to-right pass resolves the chain, and a cycle\nis impossible to write.\n\n**Queries are derived, never authored.** A binding waits only\nfor the bindings it actually references, so the number of\nqueries to the store is the *depth* of that dependency\ngraph, not the length of this list: two bindings that both\ntake their identifiers from the payload are read in one\nquery, not two. Each binding's query is `1 + max(query of the\nbindings its operands name)`, or 1 when it names none –\ncomputable in the same left-to-right pass, since the list is\nalready topologically sorted by the rule above.\n\nIt is a graph and not a tree: a binding's tags and arguments may\neach name a different binding. That is why the structure is\nderived and rendered rather than written down as nesting,\nwhich could not represent a binding with two parents without\nduplicating it.\n\n**Execution.** The chain reads in several queries, but the\nwhole command decides as of a single point in the log:\n\n  1. `P` := the position of the last event overall – a\n     backwards read of everything, limited to one.\n  2. Run the steps, making each read the first time a step\n     needs it, every read **bounded at `P`**. Bounding matters: a\n     read past `P` could decide on an event that the append\n     condition then rejects it for.\n  3. Append what was emitted with the condition\n     `query = the union of the queries of the reads made, after = P`.\n\nBecause the query covers everything read and `P` precedes\nevery read, any concurrent change to anything this run looked\nat invalidates the append – and nothing else does. A read the\nrun did not make did not decide anything; a change to the reads\nthat chose its way through the steps is still caught.\n",
         "type": "array",
         "items": {
           "description": "One thing the command reads. Distinguished by which of `group`\nor `projection` it carries.\n",
@@ -2214,275 +2214,25 @@ const WEBMCP_DEFINITION_SCHEMAS = {
           ]
         }
       },
-      "conditions": {
-        "description": "Conditions over the bound instances, all of which must hold\nbefore any event is emitted – each with the message the command\nis refused with when it does not (`Rule`).\n\nA condition reading a **fanned-out** alias must hold for\n*every* instance that alias bound; an empty set satisfies it\nvacuously. The quantifier is not written down – it follows\nfrom the alias being plural.\n\n**Zipping.** When a binding fans out over a list, the elements\nof that list stay available to conditions about the instances\nit bound, at the matching index:\n\n  an operand rooted at a list that some alias in the *same*\n  condition also fans from is read at that iteration's index;\n  otherwise it is the whole list.\n\nSo with `product` bound over `items[].productId`,\n`product.currentPrice equals items[].price` compares each\nproduct against the price submitted *for that product*, while\n`items[].price greaterThan 0` – mentioning no alias fanned\nfrom `items` – is an ordinary universal over the list. The\npairing is provenance, not declaration: the operands are\ncorrelated because they came from the same list.\n\n**One fan root per condition.** A condition may quantify over\nat most one fanned-out root. Two distinct roots is rejected\nrather than read as a cross product: their lengths are\nunrelated, nothing in this document can assert otherwise, and\nthe zipped and crossed readings look identical on the page.\n\nAn empty list does **not** mean the command is unguarded: the\nappend condition is derived from the `boundary`, not from\nthis list. A command with no conditions at all can still be\nstrictly serialised – which is what binding a parameterless\nprojection does to it.\n",
+      "steps": {
+        "description": "What the command does, as steps run top-down in written order\n(11.0) – each a rule (`Rule`), an emission (`EventEmission`), a branch\n(`BranchStep`) or, inside a branch, a `reject` (`RejectStep`):\n\n  - a rule that does not hold, or a `reject` reached, ends the run\n    refused, with no events, by its message;\n  - an emission reached joins the run's one append – reaching none is\n    publishing nothing;\n  - a branch runs the steps of its first arm whose condition holds, or\n    its `otherwise`, or nothing. Separate branches each run.\n\nA rule is the shorthand for a branch whose one arm is the opposite\ncondition and a `reject`; it stays a step of its own because it is the\ncommon case.\n\n**Reads are lazy.** A read – an alias's or one in place – is made the\nfirst time a step reached needs it, so a read behind a rule that\nrefused, or in an arm not taken, is never made: it cannot fail on what\nthe rule ruled out. A read reached with no value for a tag is still an\nerror. The append condition of a run covers the reads that run made;\n`boundary` and the reads in place are every read *any* run might make\n– the boundary an authoring tool shows for the command as a whole.\n\nA condition reading a **fanned-out** alias must hold for *every*\ninstance that alias bound; an empty set satisfies it vacuously. The\nquantifier is not written down – it follows from the alias being\nplural.\n\n**Zipping.** When a binding fans out over a list, the elements of that\nlist stay available to a comparison about the instances it bound, at\nthe matching index:\n\n  an operand rooted at a list that some alias in the *same*\n  comparison also fans from is read at that iteration's index;\n  otherwise it is the whole list.\n\nSo with `product` bound over `items[].productId`,\n`product.currentPrice equals items[].price` compares each product\nagainst the price submitted *for that product*, while `items[].price\ngreaterThan 0` – mentioning no alias fanned from `items` – is an\nordinary universal over the list. The pairing is provenance, not\ndeclaration: the operands are correlated because they came from the\nsame list.\n\n**One fan root per comparison.** A comparison may quantify over at most\none fanned-out root. Two distinct roots is rejected rather than read as\na cross product: their lengths are unrelated, nothing in this document\ncan assert otherwise, and the zipped and crossed readings look\nidentical on the page.\n\nA command without rules is **not** unguarded: the append condition is\nderived from the reads, not from the steps. A command with no rules at\nall can still be strictly serialised – which is what binding a\nparameterless projection does to it: a read nothing consults is made\nbefore the first step.\n",
         "type": "array",
         "items": {
-          "description": "A condition the command requires, and the message it is refused\nwith when the condition does not hold. The message is static text –\nwhat a person reads, and what a scenario expecting the refusal\nnames – so it carries no values.\n\nSeveral rules of one command may share a message: they are then\none outcome, however many conditions lead to it. Messages belong\nto their command, so two commands may use the same one\nindependently.\n",
-          "allOf": [
+          "description": "One step of a command (`CommandDefinition.steps`), told apart by\nthe key it carries: `condition` a rule, `name` an emission, `branches`\na branch, `reject` a rejection.\n",
+          "oneOf": [
             {
-              "oneOf": [
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "leftHandSide": {
-                      "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
-                      "oneOf": [
-                        {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "parameterName": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                              "examples": [
-                                "someProperty"
-                              ],
-                              "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                            }
-                          },
-                          "required": [
-                            "parameterName"
-                          ]
-                        },
-                        {
-                          "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "alias": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
-                              "examples": [
-                                "course",
-                                "sourceCourse"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "alias"
-                          ]
-                        },
-                        {
-                          "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "enumMember": {
-                              "type": [
-                                "string",
-                                "number",
-                                "boolean"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "enumMember"
-                          ]
-                        },
-                        {
-                          "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                          "type": [
-                            "string",
-                            "number",
-                            "boolean"
-                          ]
-                        },
-                        {
-                          "type": "object",
-                          "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
-                          "properties": {
-                            "projection": {
-                              "type": "string"
-                            },
-                            "tags": {
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "projection"
-                          ]
-                        }
-                      ]
-                    },
-                    "predicate": {
-                      "enum": [
-                        "isEmpty",
-                        "isNotEmpty",
-                        "isTrue",
-                        "isFalse"
-                      ]
-                    },
-                    "negate": {
-                      "description": "When true the condition holds iff the predicate does *not*.",
-                      "type": "boolean",
-                      "default": false
-                    },
-                    "rejection": {
-                      "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`).\n",
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "pattern": "^[^\\n]*\\S[^\\n]*$"
-                    }
-                  },
-                  "required": [
-                    "leftHandSide",
-                    "predicate"
-                  ]
-                },
-                {
-                  "description": "`contains` asks whether a list holds one value; `containsAny` asks\nwhether two lists intersect, which is how \"these two schedules\nclash\" is stated. Both sides of `containsAny` must be lists of the\nsame type, and `negate` turns it into \"must not overlap\".\n\n`equalsAny` asks whether a scalar equals one entry of a literal\nlist – \"status is one of Draft, Submitted\" – and `negate` turns it\ninto \"is not one of\". It is the one predicate whose\n`rightHandSide` is a `ValueList` rather than a `CommandOperand`,\nand the only predicate a `ValueList` means anything under;\nmembership against *data* stays `contains`/`containsAny` over a\nlist-typed source. An empty list holds for nothing (negated: for\neverything).\n",
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "leftHandSide": {
-                      "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
-                      "oneOf": [
-                        {
-                          "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "parameterName": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                              "examples": [
-                                "someProperty"
-                              ],
-                              "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                            }
-                          },
-                          "required": [
-                            "parameterName"
-                          ]
-                        },
-                        {
-                          "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "alias": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
-                              "examples": [
-                                "course",
-                                "sourceCourse"
-                              ]
-                            },
-                            "property": {
-                              "type": "string",
-                              "minLength": 2,
-                              "maxLength": 100,
-                              "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                              "examples": [
-                                "someProperty"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "alias"
-                          ]
-                        },
-                        {
-                          "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "enumMember": {
-                              "type": [
-                                "string",
-                                "number",
-                                "boolean"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "enumMember"
-                          ]
-                        },
-                        {
-                          "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                          "type": [
-                            "string",
-                            "number",
-                            "boolean"
-                          ]
-                        },
-                        {
-                          "type": "object",
-                          "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
-                          "properties": {
-                            "projection": {
-                              "type": "string"
-                            },
-                            "tags": {
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "projection"
-                          ]
-                        }
-                      ]
-                    },
-                    "predicate": {
-                      "enum": [
-                        "equals",
-                        "equalsAny",
-                        "countEquals",
-                        "countLessThan",
-                        "countGreaterThan",
-                        "contains",
-                        "containsAny",
-                        "lessThan",
-                        "lessThanOrEquals",
-                        "greaterThan",
-                        "greaterThanOrEquals",
-                        "startsWith",
-                        "endsWith"
-                      ]
-                    },
-                    "rightHandSide": {
-                      "oneOf": [
-                        {
+              "description": "A condition the command requires – `require c else reject \"m\"` –\nand the message it is refused with when the condition does not hold.\nThe message is static text – what a person reads, and what a scenario\nexpecting the refusal names – so it carries no values.\n\nSeveral rules of one command may share a message, a `reject` too: they\nare then one outcome, however many conditions lead to it. Messages\nbelong to their command, so two commands may use the same one\nindependently.\n",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "condition": {
+                  "description": "A comparison (`UnaryCondition`, `BinaryCondition`), or comparisons\njoined: `all` holds when every one does (`and`), `any` when one does\n(`or`). Each is checked in order, and checking stops once the answer\nis known – so a read in a later one is made only when the earlier ones\nleave it open.\n",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "leftHandSide": {
                           "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
                           "oneOf": [
                             {
@@ -2585,199 +2335,981 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                             }
                           ]
                         },
-                        {
-                          "description": "A literal list of values to compare against – the right-hand side\nof `equalsAny`, and besides `InitialValue` the one place this\ndocument spells a list out. Entries are literals or renameable\nenum-member references, never parameter or alias references\n(membership against data is `contains`/`containsAny` over a\nlist-typed source) and never `null` – \"unset or one of these\" is\ntwo conditions, not a null entry.\n",
-                          "type": "array",
-                          "items": {
-                            "oneOf": [
-                              {
-                                "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                                "type": [
-                                  "string",
-                                  "number",
-                                  "boolean"
-                                ]
+                        "predicate": {
+                          "enum": [
+                            "isEmpty",
+                            "isNotEmpty",
+                            "isTrue",
+                            "isFalse"
+                          ]
+                        },
+                        "negate": {
+                          "description": "When true the condition holds iff the predicate does *not*.",
+                          "type": "boolean",
+                          "default": false
+                        }
+                      },
+                      "required": [
+                        "leftHandSide",
+                        "predicate"
+                      ]
+                    },
+                    {
+                      "description": "`contains` asks whether a list holds one value; `containsAny` asks\nwhether two lists intersect, which is how \"these two schedules\nclash\" is stated. Both sides of `containsAny` must be lists of the\nsame type, and `negate` turns it into \"must not overlap\".\n\n`equalsAny` asks whether a scalar equals one entry of a literal\nlist – \"status is one of Draft, Submitted\" – and `negate` turns it\ninto \"is not one of\". It is the one predicate whose\n`rightHandSide` is a `ValueList` rather than a `CommandOperand`,\nand the only predicate a `ValueList` means anything under;\nmembership against *data* stays `contains`/`containsAny` over a\nlist-typed source. An empty list holds for nothing (negated: for\neverything).\n",
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "leftHandSide": {
+                          "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                          "oneOf": [
+                            {
+                              "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "parameterName": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                  "examples": [
+                                    "someProperty"
+                                  ]
+                                },
+                                "property": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                  "examples": [
+                                    "someProperty"
+                                  ],
+                                  "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                                }
                               },
-                              {
-                                "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "enumMember": {
+                              "required": [
+                                "parameterName"
+                              ]
+                            },
+                            {
+                              "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "alias": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
+                                  "examples": [
+                                    "course",
+                                    "sourceCourse"
+                                  ]
+                                },
+                                "property": {
+                                  "type": "string",
+                                  "minLength": 2,
+                                  "maxLength": 100,
+                                  "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                  "examples": [
+                                    "someProperty"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "alias"
+                              ]
+                            },
+                            {
+                              "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "enumMember": {
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "enumMember"
+                              ]
+                            },
+                            {
+                              "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                              "type": [
+                                "string",
+                                "number",
+                                "boolean"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
+                              "properties": {
+                                "projection": {
+                                  "type": "string"
+                                },
+                                "tags": {
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "projection"
+                              ]
+                            }
+                          ]
+                        },
+                        "predicate": {
+                          "enum": [
+                            "equals",
+                            "equalsAny",
+                            "countEquals",
+                            "countLessThan",
+                            "countGreaterThan",
+                            "contains",
+                            "containsAny",
+                            "lessThan",
+                            "lessThanOrEquals",
+                            "greaterThan",
+                            "greaterThanOrEquals",
+                            "startsWith",
+                            "endsWith"
+                          ]
+                        },
+                        "rightHandSide": {
+                          "oneOf": [
+                            {
+                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                              "oneOf": [
+                                {
+                                  "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "parameterName": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ]
+                                    },
+                                    "property": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ],
+                                      "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                                    }
+                                  },
+                                  "required": [
+                                    "parameterName"
+                                  ]
+                                },
+                                {
+                                  "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "alias": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
+                                      "examples": [
+                                        "course",
+                                        "sourceCourse"
+                                      ]
+                                    },
+                                    "property": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "alias"
+                                  ]
+                                },
+                                {
+                                  "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "enumMember": {
+                                      "type": [
+                                        "string",
+                                        "number",
+                                        "boolean"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "enumMember"
+                                  ]
+                                },
+                                {
+                                  "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
+                                  "properties": {
+                                    "projection": {
+                                      "type": "string"
+                                    },
+                                    "tags": {
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "projection"
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "description": "A literal list of values to compare against – the right-hand side\nof `equalsAny`, and besides `InitialValue` the one place this\ndocument spells a list out. Entries are literals or renameable\nenum-member references, never parameter or alias references\n(membership against data is `contains`/`containsAny` over a\nlist-typed source) and never `null` – \"unset or one of these\" is\ntwo conditions, not a null entry.\n",
+                              "type": "array",
+                              "items": {
+                                "oneOf": [
+                                  {
+                                    "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
                                     "type": [
                                       "string",
                                       "number",
                                       "boolean"
                                     ]
+                                  },
+                                  {
+                                    "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "enumMember": {
+                                        "type": [
+                                          "string",
+                                          "number",
+                                          "boolean"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "enumMember"
+                                    ]
                                   }
-                                },
-                                "required": [
-                                  "enumMember"
                                 ]
                               }
-                            ]
-                          }
+                            }
+                          ]
+                        },
+                        "negate": {
+                          "description": "When true the condition holds iff the predicate does *not*.",
+                          "type": "boolean",
+                          "default": false
                         }
+                      },
+                      "required": [
+                        "leftHandSide",
+                        "predicate",
+                        "rightHandSide"
                       ]
                     },
-                    "negate": {
-                      "description": "When true the condition holds iff the predicate does *not*.",
-                      "type": "boolean",
-                      "default": false
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "all": {
+                          "description": "Holds when every one of these does.",
+                          "type": "array",
+                          "minItems": 2,
+                          "items": {
+                            "type": "object",
+                            "description": "Recursive: a nested Condition, the same shape as the one this appears inside."
+                          }
+                        }
+                      },
+                      "required": [
+                        "all"
+                      ]
                     },
-                    "rejection": {
-                      "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`).\n",
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 200,
-                      "pattern": "^[^\\n]*\\S[^\\n]*$"
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "any": {
+                          "description": "Holds when at least one of these does.",
+                          "type": "array",
+                          "minItems": 2,
+                          "items": {
+                            "type": "object",
+                            "description": "Recursive: a nested Condition, the same shape as the one this appears inside."
+                          }
+                        }
+                      },
+                      "required": [
+                        "any"
+                      ]
                     }
-                  },
-                  "required": [
-                    "leftHandSide",
-                    "predicate",
-                    "rightHandSide"
                   ]
+                },
+                "rejection": {
+                  "description": "What a refused command says, as one line of text –\nsentence case and no full stop by convention: `\"Course is full\"`.\n",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "pattern": "^[^\\n]*\\S[^\\n]*$"
                 }
+              },
+              "required": [
+                "condition",
+                "rejection"
               ]
             },
             {
-              "required": [
-                "rejection"
-              ]
-            }
-          ]
-        }
-      },
-      "publishes": {
-        "description": "Events the command emits on success. Each entry binds the\nemitted event's properties to operands drawn from the\ncommand's payload, a bound instance's properties, or\nliterals.\n",
-        "type": "array",
-        "minItems": 1,
-        "items": {
-          "description": "A command's emission of one event, plus bindings supplying the\nevent's property values. It is published whenever its command is.\n",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "name": {
-              "type": "string",
-              "minLength": 2,
-              "maxLength": 100,
-              "pattern": "^\\p{Lu}[\\p{L}\\p{M}\\p{Nd}]+$",
-              "examples": [
-                "CourseDefined",
-                "StudentSubscribedToCourse"
-              ]
-            },
-            "parameters": {
-              "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere – and writes no tag for it, when the property is\ntag-marked.\n",
+              "description": "A command's emission of one event, plus bindings supplying the\nevent's property values – a step (`Step`): it joins the command's\nappend when the run reaches it.\n",
               "type": "object",
-              "additionalProperties": {
-                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
-                "oneOf": [
-                  {
-                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "parameterName": {
-                        "type": "string",
-                        "minLength": 2,
-                        "maxLength": 100,
-                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                        "examples": [
-                          "someProperty"
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 100,
+                  "pattern": "^\\p{Lu}[\\p{L}\\p{M}\\p{Nd}]+$",
+                  "examples": [
+                    "CourseDefined",
+                    "StudentSubscribedToCourse"
+                  ]
+                },
+                "parameters": {
+                  "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere – and writes no tag for it, when the property is\ntag-marked.\n",
+                  "type": "object",
+                  "additionalProperties": {
+                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                    "oneOf": [
+                      {
+                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "parameterName": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                            "examples": [
+                              "someProperty"
+                            ]
+                          },
+                          "property": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                            "examples": [
+                              "someProperty"
+                            ],
+                            "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                          }
+                        },
+                        "required": [
+                          "parameterName"
                         ]
                       },
-                      "property": {
-                        "type": "string",
-                        "minLength": 2,
-                        "maxLength": 100,
-                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                        "examples": [
-                          "someProperty"
-                        ],
-                        "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                      }
-                    },
-                    "required": [
-                      "parameterName"
-                    ]
-                  },
-                  {
-                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "alias": {
-                        "type": "string",
-                        "minLength": 2,
-                        "maxLength": 100,
-                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
-                        "examples": [
-                          "course",
-                          "sourceCourse"
+                      {
+                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "alias": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
+                            "examples": [
+                              "course",
+                              "sourceCourse"
+                            ]
+                          },
+                          "property": {
+                            "type": "string",
+                            "minLength": 2,
+                            "maxLength": 100,
+                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                            "examples": [
+                              "someProperty"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "alias"
                         ]
                       },
-                      "property": {
-                        "type": "string",
-                        "minLength": 2,
-                        "maxLength": 100,
-                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                        "examples": [
-                          "someProperty"
+                      {
+                        "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "enumMember": {
+                            "type": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "enumMember"
                         ]
-                      }
-                    },
-                    "required": [
-                      "alias"
-                    ]
-                  },
-                  {
-                    "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "enumMember": {
+                      },
+                      {
+                        "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
                         "type": [
                           "string",
                           "number",
                           "boolean"
                         ]
-                      }
-                    },
-                    "required": [
-                      "enumMember"
-                    ]
-                  },
-                  {
-                    "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
-                    "properties": {
-                      "projection": {
-                        "type": "string"
                       },
-                      "tags": {
-                        "type": "object"
+                      {
+                        "type": "object",
+                        "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
+                        "properties": {
+                          "projection": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "projection"
+                        ]
                       }
-                    },
-                    "required": [
-                      "projection"
                     ]
                   }
-                ]
-              }
+                }
+              },
+              "required": [
+                "name"
+              ]
+            },
+            {
+              "description": "`if c => … else if c => … else => …`: the steps of the first arm\nwhose condition holds run, or `otherwise`'s when none does, or none.\nAn arm's steps are steps like the command's own – rules, emissions,\nbranches and `reject`s – and run as they do.\n",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "branches": {
+                  "description": "The arms, in the order their conditions are tried.",
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "condition": {
+                        "description": "A comparison (`UnaryCondition`, `BinaryCondition`), or comparisons\njoined: `all` holds when every one does (`and`), `any` when one does\n(`or`). Each is checked in order, and checking stops once the answer\nis known – so a read in a later one is made only when the earlier ones\nleave it open.\n",
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "leftHandSide": {
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                                "oneOf": [
+                                  {
+                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "parameterName": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ]
+                                      },
+                                      "property": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ],
+                                        "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                                      }
+                                    },
+                                    "required": [
+                                      "parameterName"
+                                    ]
+                                  },
+                                  {
+                                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "alias": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
+                                        "examples": [
+                                          "course",
+                                          "sourceCourse"
+                                        ]
+                                      },
+                                      "property": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "alias"
+                                    ]
+                                  },
+                                  {
+                                    "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "enumMember": {
+                                        "type": [
+                                          "string",
+                                          "number",
+                                          "boolean"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "enumMember"
+                                    ]
+                                  },
+                                  {
+                                    "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                    "type": [
+                                      "string",
+                                      "number",
+                                      "boolean"
+                                    ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
+                                    "properties": {
+                                      "projection": {
+                                        "type": "string"
+                                      },
+                                      "tags": {
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": [
+                                      "projection"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "predicate": {
+                                "enum": [
+                                  "isEmpty",
+                                  "isNotEmpty",
+                                  "isTrue",
+                                  "isFalse"
+                                ]
+                              },
+                              "negate": {
+                                "description": "When true the condition holds iff the predicate does *not*.",
+                                "type": "boolean",
+                                "default": false
+                              }
+                            },
+                            "required": [
+                              "leftHandSide",
+                              "predicate"
+                            ]
+                          },
+                          {
+                            "description": "`contains` asks whether a list holds one value; `containsAny` asks\nwhether two lists intersect, which is how \"these two schedules\nclash\" is stated. Both sides of `containsAny` must be lists of the\nsame type, and `negate` turns it into \"must not overlap\".\n\n`equalsAny` asks whether a scalar equals one entry of a literal\nlist – \"status is one of Draft, Submitted\" – and `negate` turns it\ninto \"is not one of\". It is the one predicate whose\n`rightHandSide` is a `ValueList` rather than a `CommandOperand`,\nand the only predicate a `ValueList` means anything under;\nmembership against *data* stays `contains`/`containsAny` over a\nlist-typed source. An empty list holds for nothing (negated: for\neverything).\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "leftHandSide": {
+                                "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                                "oneOf": [
+                                  {
+                                    "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "parameterName": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ]
+                                      },
+                                      "property": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ],
+                                        "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                                      }
+                                    },
+                                    "required": [
+                                      "parameterName"
+                                    ]
+                                  },
+                                  {
+                                    "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "alias": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
+                                        "examples": [
+                                          "course",
+                                          "sourceCourse"
+                                        ]
+                                      },
+                                      "property": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        "maxLength": 100,
+                                        "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                        "examples": [
+                                          "someProperty"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "alias"
+                                    ]
+                                  },
+                                  {
+                                    "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "enumMember": {
+                                        "type": [
+                                          "string",
+                                          "number",
+                                          "boolean"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "enumMember"
+                                    ]
+                                  },
+                                  {
+                                    "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                    "type": [
+                                      "string",
+                                      "number",
+                                      "boolean"
+                                    ]
+                                  },
+                                  {
+                                    "type": "object",
+                                    "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
+                                    "properties": {
+                                      "projection": {
+                                        "type": "string"
+                                      },
+                                      "tags": {
+                                        "type": "object"
+                                      }
+                                    },
+                                    "required": [
+                                      "projection"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "predicate": {
+                                "enum": [
+                                  "equals",
+                                  "equalsAny",
+                                  "countEquals",
+                                  "countLessThan",
+                                  "countGreaterThan",
+                                  "contains",
+                                  "containsAny",
+                                  "lessThan",
+                                  "lessThanOrEquals",
+                                  "greaterThan",
+                                  "greaterThanOrEquals",
+                                  "startsWith",
+                                  "endsWith"
+                                ]
+                              },
+                              "rightHandSide": {
+                                "oneOf": [
+                                  {
+                                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\n",
+                                    "oneOf": [
+                                      {
+                                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field.\n",
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "parameterName": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                            "examples": [
+                                              "someProperty"
+                                            ]
+                                          },
+                                          "property": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                            "examples": [
+                                              "someProperty"
+                                            ],
+                                            "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                                          }
+                                        },
+                                        "required": [
+                                          "parameterName"
+                                        ]
+                                      },
+                                      {
+                                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n",
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "alias": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
+                                            "examples": [
+                                              "course",
+                                              "sourceCourse"
+                                            ]
+                                          },
+                                          "property": {
+                                            "type": "string",
+                                            "minLength": 2,
+                                            "maxLength": 100,
+                                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                            "examples": [
+                                              "someProperty"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "alias"
+                                        ]
+                                      },
+                                      {
+                                        "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "enumMember": {
+                                            "type": [
+                                              "string",
+                                              "number",
+                                              "boolean"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "enumMember"
+                                        ]
+                                      },
+                                      {
+                                        "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                        "type": [
+                                          "string",
+                                          "number",
+                                          "boolean"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
+                                        "properties": {
+                                          "projection": {
+                                            "type": "string"
+                                          },
+                                          "tags": {
+                                            "type": "object"
+                                          }
+                                        },
+                                        "required": [
+                                          "projection"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "description": "A literal list of values to compare against – the right-hand side\nof `equalsAny`, and besides `InitialValue` the one place this\ndocument spells a list out. Entries are literals or renameable\nenum-member references, never parameter or alias references\n(membership against data is `contains`/`containsAny` over a\nlist-typed source) and never `null` – \"unset or one of these\" is\ntwo conditions, not a null entry.\n",
+                                    "type": "array",
+                                    "items": {
+                                      "oneOf": [
+                                        {
+                                          "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                          "type": [
+                                            "string",
+                                            "number",
+                                            "boolean"
+                                          ]
+                                        },
+                                        {
+                                          "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "enumMember": {
+                                              "type": [
+                                                "string",
+                                                "number",
+                                                "boolean"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "enumMember"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              },
+                              "negate": {
+                                "description": "When true the condition holds iff the predicate does *not*.",
+                                "type": "boolean",
+                                "default": false
+                              }
+                            },
+                            "required": [
+                              "leftHandSide",
+                              "predicate",
+                              "rightHandSide"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "all": {
+                                "description": "Holds when every one of these does.",
+                                "type": "array",
+                                "minItems": 2,
+                                "items": {
+                                  "type": "object",
+                                  "description": "Recursive: a nested Condition, the same shape as the one this appears inside."
+                                }
+                              }
+                            },
+                            "required": [
+                              "all"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "any": {
+                                "description": "Holds when at least one of these does.",
+                                "type": "array",
+                                "minItems": 2,
+                                "items": {
+                                  "type": "object",
+                                  "description": "Recursive: a nested Condition, the same shape as the one this appears inside."
+                                }
+                              }
+                            },
+                            "required": [
+                              "any"
+                            ]
+                          }
+                        ]
+                      },
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "description": "Recursive: a nested Step, the same shape as the one this appears inside."
+                        }
+                      }
+                    },
+                    "required": [
+                      "condition",
+                      "steps"
+                    ]
+                  }
+                },
+                "otherwise": {
+                  "description": "The `else` arm: what runs when no arm's condition holds.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "description": "Recursive: a nested Step, the same shape as the one this appears inside."
+                  }
+                }
+              },
+              "required": [
+                "branches"
+              ]
+            },
+            {
+              "description": "`reject \"m\"`: the run ends refused, with no events, by this message.\nIt stands inside a branch – at the top of a command it would refuse\nevery time.\n",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "reject": {
+                  "description": "What a refused command says, as one line of text –\nsentence case and no full stop by convention: `\"Course is full\"`.\n",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "pattern": "^[^\\n]*\\S[^\\n]*$"
+                }
+              },
+              "required": [
+                "reject"
+              ]
             }
-          },
-          "required": [
-            "name"
           ]
         }
       }
@@ -2786,8 +3318,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
       "name",
       "properties",
       "boundary",
-      "conditions",
-      "publishes"
+      "steps"
     ]
   },
   "custom-type-definition": {
@@ -2814,7 +3345,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "type": "array",
         "minItems": 1,
         "items": {
-          "description": "One field of a composite value type. Deliberately **not** a\n`PropertyDefinition`: a field is always singular and always\nrequired, and it may not itself be typed with a composite.\n\nAll three restrictions exist to keep *zipping* meaningful (see\n`CommandDefinition.conditions`). Zipping is index correlation\nbetween a fanned-out binding and the list it fanned from, and it\nonly holds while the two have the same length:\n\n  - a **list** field would flatten, as list-valued reads off a\n    plural alias already do, and a flattened list has a different\n    length than the list it came from;\n  - an **optional** identifier field would contribute a variable\n    number of tags, so a binding fanned from it would be shorter\n    than its source;\n  - a **nested** composite would need a path operand rather than\n    the single hop `{parameterName, property}` affords.\n\nEach is a way for the index to drift silently, with nothing on the\npage to show it had.\n",
+          "description": "One field of a composite value type. Deliberately **not** a\n`PropertyDefinition`: a field is always singular and always\nrequired, and it may not itself be typed with a composite.\n\nAll three restrictions exist to keep *zipping* meaningful (see\n`CommandDefinition.steps`). Zipping is index correlation\nbetween a fanned-out binding and the list it fanned from, and it\nonly holds while the two have the same length:\n\n  - a **list** field would flatten, as list-valued reads off a\n    plural alias already do, and a flattened list has a different\n    length than the list it came from;\n  - an **optional** identifier field would contribute a variable\n    number of tags, so a binding fanned from it would be shorter\n    than its source;\n  - a **nested** composite would need a path operand rather than\n    the single hop `{parameterName, property}` affords.\n\nEach is a way for the index to drift silently, with nothing on the\npage to show it had.\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -2947,14 +3478,14 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "additionalProperties": false,
         "properties": {
           "outcome": {
-            "description": "`published` when every condition held, `rejected` when one did\nnot.\n",
+            "description": "`published` when the command got through – whether or not it\nemitted anything – and `rejected` when a rule or a `reject` refused it.\n",
             "enum": [
               "published",
               "rejected"
             ]
           },
           "events": {
-            "description": "The events published, in order, each with the payload the\ncommand built. Empty for a refusal – until a refusal is\nallowed to record something too.\n",
+            "description": "The events published, in order, each with the payload the\ncommand built – none when it got through emitting nothing (`then\nnothing`). Empty for a refusal – until a refusal is allowed to record\nsomething too.\n",
             "type": "array",
             "items": {
               "type": "object",

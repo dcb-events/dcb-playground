@@ -575,8 +575,8 @@ function effectsOf(model, eventName) {
 function publishersOf(model, eventName) {
   const out = [];
   for (const [name, body] of Object.entries(model['command-definitions'])) {
-    for (const emission of body.publishes || []) {
-      if (emission && emission.name === eventName) out.push({ command: name, emission });
+    for (const emission of commandEmissions(body)) {
+      if (emission.name === eventName) out.push({ command: name, emission });
     }
   }
   return out;
@@ -613,18 +613,26 @@ function scenariosReferencingEvent(model, eventName) {
 function sliceOf(model, commandName) {
   const body = model['command-definitions'][commandName];
   if (!body) return null;
+  const emitted = (emission) => ({
+    emission,
+    event: model['event-definitions'][emission.name] || null,
+    effects: effectsOf(model, emission.name),
+    standalone: projectionsHandling(model, emission.name),
+  });
   return {
     name: commandName,
     body,
     payload: body.properties || [],
     reads: body.boundary || [],
-    rules: body.conditions || [],
-    emits: (body.publishes || []).map((emission) => ({
-      emission,
-      event: model['event-definitions'][emission.name] || null,
-      effects: effectsOf(model, emission.name),
-      standalone: projectionsHandling(model, emission.name),
-    })),
+    // The rules and emissions written at the top, as the pages edit
+    // them (`commandLists`) – a rule flat, its message beside its
+    // condition – and the branches apart (11.0), shown as they are and
+    // edited in the code view. `allEmits` is every emission any run
+    // may reach, the branches' too – what the command records.
+    rules: commandLists(body).conditions,
+    branches: commandSteps(body).filter((step) => stepKind(step) === 'branch'),
+    emits: topLevelSteps(body, 'emit').map(emitted),
+    allEmits: commandEmissions(body).map(emitted),
     projections: projectionsRead(body),
     // Grouped by the query to the store each read actually happens in,
     // which is the depth of the boundary's dependency graph and not
@@ -657,7 +665,7 @@ function couplingMatrix(model) {
 
 function couplingRow(model, name, events) {
   const slice = sliceOf(model, name);
-  const produces = new Set((slice.body.publishes || []).map((e) => e && e.name).filter(Boolean));
+  const produces = new Set(commandEmissions(slice.body).map((e) => e.name).filter(Boolean));
   // event type -> Set of readable "where from" text.
   const via = {};
   for (const item of slice.dcb.items) {
@@ -923,6 +931,25 @@ function lifecycleReadOf(operand, body, projectionName) {
   return null;
 }
 
+// The comparisons every run of a command checks, as the machine can
+// read them: its top-level rules', an `and` split into its parts. What
+// else it decides by – an `or`, a branch's condition, a rule inside a
+// branch – is `other`: whether it holds depends on the run, so a
+// command deciding by one over the projection cannot be placed.
+function lifecycleConditions(body) {
+  const sure = [];
+  const other = [];
+  const split = (condition) => {
+    if (condition && Array.isArray(condition.all)) condition.all.forEach(split);
+    else if (isCompoundCondition(condition)) other.push(...conditionLeaves(condition));
+    else if (condition) sure.push(condition);
+  };
+  for (const step of commandSteps(body)) if (stepKind(step) === 'rule') split(step.condition);
+  const top = new Set([...sure, ...other]);
+  for (const leaf of commandConditionLeaves(body)) if (!top.has(leaf)) other.push(leaf);
+  return { sure, other };
+}
+
 // What one command's conditions say about the projection: whether they
 // read it, the states they allow (null: unconstrained), and whether a
 // rule over it could not be read. Several rules intersect.
@@ -949,7 +976,8 @@ function lifecycleConstraint(conditions, body, projectionName, states) {
 // through `each`, or has a rule over it `lifecycleAllowedStates` cannot
 // read.
 function lifecycleUnplaced(body, projectionName, states) {
-  const conditions = body.conditions || [];
+  const { sure: conditions, other } = lifecycleConditions(body);
+  if (lifecycleRulesOver(other, body, projectionName).length) return 'unreadable';
   const instances = new Set();
   let each = false;
   for (const condition of conditions) {
@@ -1011,7 +1039,7 @@ function lifecycleMachine(model, projectionName, body = projectionsOf(model)[pro
     const unguarded = [];
     for (const { command, emission } of publishers) {
       if (!isPlaced(command)) continue;
-      const constraint = lifecycleConstraint(commands[command].conditions || [], commands[command], projectionName, states);
+      const constraint = lifecycleConstraint(lifecycleConditions(commands[command]).sure, commands[command], projectionName, states);
       if (constraint.states === null) {
         if (!unguarded.includes(command)) unguarded.push(command);
       } else {
@@ -1042,15 +1070,14 @@ function lifecycleMachine(model, projectionName, body = projectionsOf(model)[pro
   const perState = states.map((state) => ({ state, commands: [] }));
   for (const [command, commandBody] of Object.entries(commands)) {
     if (!commandBody || !isPlaced(command)) continue;
-    const moving = (commandBody.publishes || []).filter((emission) => emission && handled.has(emission.name));
-    const constraint = lifecycleConstraint(commandBody.conditions || [], commandBody, projectionName, states);
+    const moving = commandEmissions(commandBody).filter((emission) => handled.has(emission.name));
+    const constraint = lifecycleConstraint(lifecycleConditions(commandBody).sure, commandBody, projectionName, states);
     if (!moving.length && constraint.states === null) continue;
     const entry = {
       command,
       movesTo: [...new Set(transitions
         .filter((t) => moving.some((emission) => emission.name === t.event)).map((t) => t.target))],
-      unguarded: !!moving.length && lifecycleConstraint(
-        commandBody.conditions || [], commandBody, projectionName, states).states === null,
+      unguarded: !!moving.length && constraint.states === null,
     };
     for (const slot of perState) {
       if (constraint.states === null || constraint.states.includes(slot.state)) slot.commands.push(entry);
@@ -1075,7 +1102,7 @@ function lifecycleMachine(model, projectionName, body = projectionsOf(model)[pro
 }
 
 // A command's rules that read the projection – either side of them, in
-// place or through an alias – out of `conditions`.
+// place or through an alias – out of `conditions` (comparisons).
 function lifecycleRulesOver(conditions, body, projectionName) {
   return conditions.filter((condition) => condition
     && ['leftHandSide', 'rightHandSide'].some((side) => lifecycleReadOf(condition[side], body, projectionName)));
@@ -1109,18 +1136,16 @@ function lifecycleMovements(model, projectionName, body = projectionsOf(model)[p
       operation: handler.operation,
       value: handler.value,
       appendedBy: Object.entries(commands).flatMap(([command, commandBody]) => {
-        const emissions = ((commandBody && commandBody.publishes) || [])
-          .filter((emission) => emission && emission.name === handler.event);
+        const emissions = commandEmissions(commandBody).filter((emission) => emission.name === handler.event);
         if (!emissions.length) return [];
-        const rules = lifecycleRulesOver(commandBody.conditions || [], commandBody, projectionName);
+        const rules = lifecycleRulesOver(commandConditionLeaves(commandBody), commandBody, projectionName);
         return [{ command, rules }];
       }),
     })),
     readers: Object.entries(commands).flatMap(([command, commandBody]) => {
       if (!commandBody) return [];
-      const publishes = (commandBody.publishes || []).filter(Boolean);
-      if (publishes.some((emission) => handled.has(emission.name))) return [];
-      const rules = lifecycleRulesOver(commandBody.conditions || [], commandBody, projectionName);
+      if (commandEmissions(commandBody).some((emission) => handled.has(emission.name))) return [];
+      const rules = lifecycleRulesOver(commandConditionLeaves(commandBody), commandBody, projectionName);
       return rules.length ? [{ command, rules }] : [];
     }),
   };
@@ -1171,17 +1196,19 @@ function eventModel(model) {
   const untagged = [];
   for (const name of ordered) {
     const body = commands[name];
-    const emits = (body.publishes || []).filter((emission) => emission && emission.name);
-    const events = emits.map((emission) => {
-      const tags = tagsOf(emission.name);
-      const event = { name: emission.name, tags, lanes: tags.map(laneOf) };
+    // Every event any run appends, each once – two arms of a branch may
+    // append the same one.
+    const emits = uniq(commandEmissions(body).map((emission) => emission.name).filter(Boolean));
+    const events = emits.map((name) => {
+      const tags = tagsOf(name);
+      const event = { name, tags, lanes: tags.map(laneOf) };
       if (!tags.length) untagged.push(event);
       return event;
     });
     columns.push({
       kind: 'command', command: name,
       payload: body.properties || [],
-      rules: (body.conditions || []).length,
+      rules: commandRules(body).length,
       reads: (body.boundary || []).map((binding) => binding.alias),
       events,
     });
@@ -1253,7 +1280,7 @@ function metroCommandMap(model) {
   const commands = Object.entries(model['command-definitions']).map(([name, body]) => ({
     command: name,
     reads: metroReadProjections(model, body),
-    emits: uniq((body.publishes || []).map((e) => e && e.name).filter((n) => n && events[n])),
+    emits: uniq(commandEmissions(body).map((e) => e.name).filter((n) => n && events[n])),
   }));
   const read = new Set(commands.flatMap((c) => c.reads));
   const appended = new Set(commands.flatMap((c) => c.emits));
@@ -1710,7 +1737,7 @@ function featureGroups(model) {
 function orphans(model) {
   const emitted = new Set();
   for (const body of Object.values(model['command-definitions'])) {
-    for (const e of body.publishes || []) emitted.add(e.name);
+    for (const e of commandEmissions(body)) emitted.add(e.name);
   }
   return {
     events: Object.keys(model['event-definitions']).filter((n) => !emitted.has(n)),
@@ -2020,6 +2047,15 @@ function requirementVerb(verb) {
 // hands the slice page's rule editor, joined into a string for a
 // read-only overview that has nowhere to hang per-operand styling.
 function ruleSentence(model, body, condition) {
+  // Joined comparisons (11.0) read joined, `and` binding tighter.
+  if (isCompoundCondition(condition)) {
+    const all = Array.isArray(condition.all);
+    return conditionMembers(condition).map((part) => {
+      const text = ruleSentence(model, body, part);
+      const bracket = isCompoundCondition(part) && (Array.isArray(part.any) || all === Array.isArray(part.all));
+      return bracket ? `(${text})` : text;
+    }).join(all ? ' and ' : ' or ');
+  }
   const p = conditionParts(condition, model, body);
   const quantifier = quantifierWords(model, body, condition);
   return (quantifier ? quantifier + ', ' : '') + p.left + ' ' + p.verb + (p.right ? ' ' + p.right : '');
@@ -2151,7 +2187,7 @@ function commandIcon(model, name) {
 // stops two commands recording the same fact.
 function commandsPublishing(model, eventName) {
   return Object.entries(model['command-definitions'] || {})
-    .filter(([, body]) => (body.publishes || []).some((emission) => emission.name === eventName))
+    .filter(([, body]) => commandEmissions(body).some((emission) => emission.name === eventName))
     .map(([name]) => name);
 }
 

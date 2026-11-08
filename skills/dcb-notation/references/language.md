@@ -24,13 +24,24 @@ The text get_model_source returns, apply_model_source applies and start_model ta
 
 ## Forms
 
-Rules (after require), each negated by a leading not:
+Comparisons (after require or if), each negated by a leading not:
   a == b    a != b    a < b    a <= b    a > b    a >= b
   a in [Draft, Published]       a not in [Draft, Published]
   xs contains x    x in xs      (a list value holding x)
   xs containsAny ys    s startsWith "c"    s endsWith "c"
   count(xs) == 3                (also !=, < and >)
   a is empty    a is not empty    a is true    a is false
+Conditions join comparisons with and / or – and binds tighter – grouped in brackets:
+  require a > 0 and (b == c or d is true) else reject "<message>"
+
+A command's steps run top-down, in written order:
+  require <condition> else reject "<message>"     (refuses unless the condition holds)
+  emit E { … }
+  if <condition> => <arm>  else if <condition> => <arm>  else => <arm>
+An arm is one emit or reject "<message>", or a block { … } of require, emit and if steps.
+Separate ifs all run; an else chain runs its first arm that holds. Any rejection refuses
+the command with no events; the emits reached form one append, and none is then nothing.
+A read is made when a step reached first needs it, never before.
 
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
 a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
@@ -52,7 +63,8 @@ Leave it as it is, or rewrite it in the language.
 - Value types are nominal. An emitted value and a read's tag take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, and an integer does not fill a Seats property. Literals fit any matching base type. A read gives the type its projection declares, so declare the type the read's value goes on to fill.
 - An event property of a tag type must be one of the event's tags. So a command that reads by an identifier and stores it on an event needs that event tagged by it.
 - A handler has no condition: it runs for every event of its type that carries the projection's tags. When the change depends on the case, the event holds the amount for each case, with 0 where nothing changes.
-- A read needs a value for each tag, so an optional parameter cannot read one. Write one command with the read and one without.
+- A read needs a value for each tag, and is made only when a step reached needs it. So read by an optional parameter, or emit it into a required property, inside if x is not empty => … or after require x is not empty – not in a command of its own.
+- Cases that end differently are arms of one command, not one command each: if … => emit A { … }  else if … => emit B { … }  else => reject "…". Each arm that emits and each message owes a scenario.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
 
 
@@ -82,6 +94,7 @@ event BookAdded { tag bookId: BookId, isbn: Isbn, title: string, subtitle?: stri
 event CopiesDonated { donor: string, copies: Copy[] tag each bookId }
 event BookLent { tag bookId: BookId, tag memberId: MemberId, tag loanId: LoanId }
 event BookReturned { tag bookId: BookId, tag memberId: MemberId }
+event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
 event MemberJoined { tag memberId: MemberId, name: string }
 
@@ -239,11 +252,20 @@ command LendBook(bookId: BookId, memberId: MemberId) {
   emit BookLent { bookId, memberId, loanId: loanNumber }
 }
 
-command ReturnBook(bookId: BookId, memberId: MemberId) {
-  require MemberHasBook(memberId, bookId) is true
-    else reject "Book is not with this member"
-
-  emit BookReturned { bookId, memberId }
+// Steps run top-down. "if <condition> => …" runs its arm only when the
+// condition holds; "else if" and "else" chain arms, of which the first
+// that holds runs. An arm is one "emit" or "reject", or a block { … }.
+// Any rejection refuses the whole command, with no events. Conditions
+// join with "and" and "or" ("and" binds tighter; brackets group). Inside
+// "if damage is not empty" the optional parameter counts as present.
+command ReturnBook(bookId: BookId, memberId: MemberId, damage?: string) {
+  if MemberHasBook(memberId, bookId) is true and damage is not empty => {
+    emit BookReturned { bookId, memberId }
+    emit BookDamaged { bookId, damage }
+  }
+  else if MemberHasBook(memberId, bookId) is true => emit BookReturned { bookId, memberId }
+  else if BookStatus(bookId) == Withdrawn or (BookStatus(bookId) == Unknown and damage is empty) => reject "Book is not in the catalogue"
+  else => reject "Book is not with this member"
 }
 
 command WithdrawBook(bookId: BookId) {

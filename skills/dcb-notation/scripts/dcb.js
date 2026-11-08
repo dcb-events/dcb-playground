@@ -90,17 +90,15 @@ function load(playground, file) {
   return { model, text, parsed, problems, sandboxSteps };
 }
 
-// What the commands' scenarios leave unshown: a command nothing runs to
-// success, and a rejection message no scenario reaches.
-function coverageGaps(model) {
+// What the commands' scenarios leave unshown: one scenario is owed per
+// way a command succeeds – each branch that emits, or plain success
+// without branches – and one per rejection message (`commandCoverageGaps`).
+function coverageGaps(playground, model) {
   const gaps = [];
-  const scenarios = Object.values(model['scenario-definitions']);
-  for (const [name, body] of Object.entries(model['command-definitions'])) {
-    const outcomes = scenarios.filter((s) => s.command === name).map((s) => s.then || {});
-    if (!outcomes.some((then) => then.outcome === 'published')) gaps.push({ name, gap: 'no scenario shows it succeed' });
-    for (const message of new Set((body.conditions || []).map((rule) => rule.rejection))) {
-      if (!outcomes.some((then) => then.rejection === message)) gaps.push({ name, gap: `no scenario shows "${message}"` });
-    }
+  for (const name of Object.keys(model['command-definitions'])) {
+    const { succeeds, rejections } = playground.commandCoverageGaps(model, name);
+    for (const owed of succeeds) gaps.push({ name, gap: `no scenario shows it ${playground.successOwedText(owed)}` });
+    for (const message of rejections) gaps.push({ name, gap: `no scenario shows "${message}"` });
   }
   return gaps;
 }
@@ -123,7 +121,7 @@ function checkProblems(playground, file, { model, parsed }, cover) {
   for (const name of cover || []) {
     if (!model['command-definitions'][name]) problems.push(`--cover names "${name}", which this model does not define`);
   }
-  const gaps = coverageGaps(model);
+  const gaps = coverageGaps(playground, model);
   const required = gaps.filter(({ name }) => !cover || cover.includes(name));
   problems.push(...required.map(({ name, gap }) => `command ${name}: ${gap}`));
   return { problems, otherGaps: gaps.filter((gap) => !required.includes(gap)) };
@@ -177,7 +175,7 @@ function conflictLines(playground, model) {
     const items = playground.boundarySummary(model, body).items;
     const found = new Set();
     for (const [other, otherBody] of commands) {
-      for (const eventName of new Set((otherBody.publishes || []).map((emission) => emission && emission.name))) {
+      for (const eventName of new Set(playground.commandEmissions(otherBody).map((emission) => emission.name))) {
         const event = model['event-definitions'][eventName];
         if (!event) continue;
         const carried = new Set(playground.eventTagLeaves(model, event).map((leaf) => leaf.identifierType));

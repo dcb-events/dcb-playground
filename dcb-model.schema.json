@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dcb.events/schemas/model/v11.json",
   "title": "DCB Model",
-  "description": "A DCB model: every definition a modeller has authored for one\nDCB-based system, in the form the playground exports it. The same\ndocument travels both ways out of the playground, as readable JSON and\nas the gzipped payload of a share link.\n\n**There is one kind of fold.** A `projectionDefinition` is it: a value\nthat starts somewhere and is advanced by the events it handles. It\ndeclares the tags it is read by, each named and typed – `courseId:\nCourseId` – and every read gives a value for each, so the query is `tag\nIN (those values, keyed by the declared types) AND type IN (handled\nevents)`. An untagged projection is a global numbering; one tagged by a\n`TenantId` restarts per tenant.\n\n**A group names projections that share one tag**, and is nothing more.\n`groupDefinitions[]` each declare one partition tag – `courseId:\nCourseId` – and own the projections listed inside them, which declare\nno tag of their own and are read by the group's. Inside its group a\nprojection has a local, lowerCamel name (`capacity`); outside it is\nnamed qualified, `Course.capacity`. A group means nothing for\nconsistency: reading one of its projections reads that projection and\nno other, exactly as a read of a top-level one does. Projections tagged\nby several tags, or by none, stay top-level, and a model needs no\ngroups at all.\n\nA thing's lifecycle is an ordinary boolean or enum projection that\nconditions read. There is no standalone constraint kind: conditions are\ninlined into the commands that check them.\n\n**Tags are declared on events, keyed by value types.** Any\n`customTypeDefinition` may set `isTag: true`, which is what makes it\nan identifier – the key a tag is rendered under (`tagSchema`). Which\nof an event's values *are* tags is the event's own list, `tags`:\nnothing is implied by a property's type. A composite value type is\nnever itself a tag; an event lists one of its tag-marked fields by\npath (`items.productId`), which is what lets two unrelated identifiers\nshare one component (a `TenantId` field) and be scoped together by it.\n\n**Versioning.** `dcbModelVersion` is what an importer dispatches on;\n`$schema` is for editors and is deliberately never read by one. A major\nbump means an older reader cannot correctly read the document and must\nrefuse it; a minor bump means it can, because the addition is one it\nignores. Note that \"additive\" is judged from the reader's side, not the\nschema's: a new member of a closed vocabulary – another condition\noperator, operand shape or handler operation – is a *major* change even\nthough this document merely grows an enum, because a reader that has\nnever heard of it fails on the value rather than passing it through.\n\n2.0 is such a major. An entity property stopped being a definition of\nits own and became a binding; a projection's partition became explicit\nin every case; `isOptional` went away, since `null` is an ordinary\ninitial value of any type and means \"no value yet\"; and an initial\nvalue may now be a non-empty list. A 1.x reader would misread each of\nthose rather than ignore it.\n\n4.0 is a major of the subtler kind the reader-side rule exists for:\nits one addition is additive in shape but not additive to a reader.\nAn `EntityBinding` may carry `isOptional`, under which an unset\nidentifier binds nothing instead of erroring, conditions over the\nalias hold vacuously, and reading a property of it yields null – a\n3.x reader ignores the flag and errors on exactly the case the author\ndeclared expected. The other direction is safe: a 3.x document never\nsays it, so a 4.0 reader reads 3.x whole.\n\n4.1 is the in-place kind: a *scripted* projection's `valueType`\nmay now be a composite value type. No shape changed – a documented\nrestriction was lifted – and a 4.0 reader loads and evaluates\nsuch a document correctly (equality was always deep, and a\ncomposite was always offered identity predicates only); the one\nthing it does wrong is flag the projection with the advisory that\nused to guard the restriction.\n\n5.0 is the closed-vocabulary kind the reader-side rule names\noutright: `equalsAny` joins the binary predicates – the left-hand\nvalue must (or with `negate`, must not) equal one entry of a\nliteral list, spelled as a bare array of `StaticValue` /\n`EnumMemberValue` entries in `rightHandSide`, the same list\nspelling `initialValue` already had. A 4.x reader fails on the\npredicate rather than passing it through, so this is a major even\nthough nothing a 4.x document says changed – a 5.0 reader reads\n3.x and 4.x whole.\n\n6.0 adds two members at once, each the closed-vocabulary kind. An\n`EventEmission` may carry `when`: conditions over the same operands\nits command's `conditions` read, under which the emission is\npublished or silently skipped – a guarded skip is not a rejection,\nand every guard failing publishes nothing. And a projection may be\n**derived**: no handlers, no initial value, a single declared\npredicate over other projections' values (`derived`), always one\nboolean – logic stated once, as data, where a script would have\nhidden it in code. A 5.x reader would publish an emission its\nauthor guarded and has no fold for a handlerless projection – both\nmisreads, so this is a major; a 6.0 reader reads 3.x, 4.x and 5.x\nwhole.\n\n6.1 is the ordinary minor, and a useful contrast with 4.0. An\n`entityDefinition` may carry `lifecycle`, naming which of its own\nproperties holds the state one of these is in, and a two-state\nlifecycle is spelled as a `boolean` projection rather than as a\ntwo-member enum. A 6.0 reader that ignores `lifecycle` loses a\nderived diagram and misreads nothing – no condition changed shape,\nand a boolean-valued projection was always readable. That is what\nmakes it a minor where 4.0's equally additive `isOptional` was a\nmajor: there, the ignored flag made the old reader error on exactly\nthe case the flag declared expected.\n\n7.0 gives every rule a rejection message and makes it what a\nrefusal is known by. A command's `conditions` are `Rule`s: a\ncondition plus `rejection`, the sentence the command is refused\nwith when it does not hold – `\"Course is full\"`. Several rules may\nshare one, which is how many technical conditions become a small,\nfixed set of outcomes. A scenario that expects a refusal names that\nmessage (`ScenarioThen.rejection`), and nothing else: not the\ncondition's text or position, and not the values it read. Both are\nrequired where a 6.x document has nothing to say, so a 6.x reader cannot read a 7.0 document and a 7.0\nreader does not read 6.x: there is no message to invent for a rule\nthat never had one.\n\n8.0 makes tags explicit on both sides of a query. An `EventDefinition`\nlists the values it is tagged by in `tags` – property paths, `courseId`\nor `items.productId` – and an event without the list carries no tag,\nwhere a 7.x reader tagged every property of a tag-marked type. And a\nprojection names the tags it is read by (`ProjectionDefinition.tags`),\neach a name and a tag type, and every read gives one value per name –\nan alias's (`ProjectionBinding.tags`), one in place (`ProjectionRead`),\na scenario's, a derived operand's – of the declared type, or a\n`TagLiteral` stating it. A scripted projection sees the values as\n`tags.<name>` and loses its `tagFilter`, and an entity read's fan-out\nwas marked the way a read's is (`TagEach`). A 7.x reader would misread all\nof it, so this reader reads 8.x only.\n\n9.0 lets a derived projection compute as well as compare: in place\nof `predicate` it may state an `operator` – `add`, `subtract`,\n`multiply`, `min` or `max` – over two numbers, and hold the number it\nyields (`DerivedValue`). A new member of a closed vocabulary: an 8.x\nreader finds no predicate and errors. Nothing an 8.x document says\nchanged shape, so a 9.0 reader reads 8.x whole.\n\n10.0 gives every kind of projection arguments: values a read gives\nbesides its tags, which never narrow its query\n(`ProjectionDefinition.arguments`, moved off `ProjectionScript`). A\nderived projection compares or computes with its own parameters – a\nside may be `{parameterName}` – and passes them on as an operand's tag\nor argument (`DerivedOperand`, `ProjectionReadValue`). A new operand\nmember and a moved field: a 9.x reader would find a side it cannot\nread and a script with no arguments. A 10.0 reader reads 8.x and 9.x\nwhole, lifting a script's arguments onto its projection.\n\n10.1 lets a name be written in any alphabet: the name patterns accept\nUnicode letters (`\\p{Lu}`, `\\p{Ll}`, `\\p{L}`), combining marks and\ndigits where they accepted ASCII only, casing rules unchanged –\n`Gjenåpnet`, `konsesjonærId`. No shape changed and nothing an older\ndocument says reads differently. A 10.0 reader skips, and lists, a\ndefinition whose name it finds malformed, and misreads nothing else.\n\n11.0 replaces entities by groups. `entityDefinitions` is gone, and with\nit the property binding, the `lifecycle` designation and a binding's\n`excluding`; `groupDefinitions` holds groups that own their projections\n(`GroupDefinition`). A command reads a group through a binding,\n`{alias, group, tags}` (`GroupBinding`), and each of its projections as\n`{alias, property}` – with that projection's own `arguments`, never the\ngroup's – or in place by its qualified name, `{projection:\n\"Course.capacity\", tags}`. A derived projection inside a group reads a\nsibling by its local name. A removed field and new operand members: a\n10.x reader finds no entities and reads qualified names it cannot\nresolve. An 11.0 reader reads 8.x to 10.x, lifting an entity into a\ngroup where every projection it binds is tagged by exactly its\nidentifier and bound by no other entity, and restating it as plain\nreads where not. A command with an `excluding` is left out, and said:\nreading every instance instead would change what its rules decide.\n\n11.0 also removes what the format kept for what it could not say:\nscripted projections (`script`, a handler's `code`), `currentValue`,\nguarded emissions (`EventEmission.when`) and optional reads (a group\nbinding's `isOptional`). A document saying one is read only as far as\nit can be read correctly. A scripted projection or a `currentValue`\nrefuses the whole document, naming the projection: its value decides\nrules, and nothing else in the document spells it. A command that\nguards an emission or reads optionally is left out, and said:\npublishing every time, or requiring the read, would change what it\ndecides.\n\nThis schema moves in place for minor changes; a major change is\npublished at a new `/vN.json` and the old URL keeps serving what it\nalways served. `x-dcb-schema-revision` moves with every edit either way.\n\nThe format is young and the playground it describes is a prototype.\nExpect majors.\n",
-  "x-dcb-schema-revision": "11.0.2",
+  "description": "A DCB model: every definition a modeller has authored for one\nDCB-based system, in the form the playground exports it. The same\ndocument travels both ways out of the playground, as readable JSON and\nas the gzipped payload of a share link.\n\n**There is one kind of fold.** A `projectionDefinition` is it: a value\nthat starts somewhere and is advanced by the events it handles. It\ndeclares the tags it is read by, each named and typed – `courseId:\nCourseId` – and every read gives a value for each, so the query is `tag\nIN (those values, keyed by the declared types) AND type IN (handled\nevents)`. An untagged projection is a global numbering; one tagged by a\n`TenantId` restarts per tenant.\n\n**A group names projections that share one tag**, and is nothing more.\n`groupDefinitions[]` each declare one partition tag – `courseId:\nCourseId` – and own the projections listed inside them, which declare\nno tag of their own and are read by the group's. Inside its group a\nprojection has a local, lowerCamel name (`capacity`); outside it is\nnamed qualified, `Course.capacity`. A group means nothing for\nconsistency: reading one of its projections reads that projection and\nno other, exactly as a read of a top-level one does. Projections tagged\nby several tags, or by none, stay top-level, and a model needs no\ngroups at all.\n\nA thing's lifecycle is an ordinary boolean or enum projection that\nconditions read. There is no standalone constraint kind: conditions are\ninlined into the commands that check them.\n\n**Tags are declared on events, keyed by value types.** Any\n`customTypeDefinition` may set `isTag: true`, which is what makes it\nan identifier – the key a tag is rendered under (`tagSchema`). Which\nof an event's values *are* tags is the event's own list, `tags`:\nnothing is implied by a property's type. A composite value type is\nnever itself a tag; an event lists one of its tag-marked fields by\npath (`items.productId`), which is what lets two unrelated identifiers\nshare one component (a `TenantId` field) and be scoped together by it.\n\n**Versioning.** `dcbModelVersion` is what an importer dispatches on;\n`$schema` is for editors and is deliberately never read by one. A major\nbump means an older reader cannot correctly read the document and must\nrefuse it; a minor bump means it can, because the addition is one it\nignores. Note that \"additive\" is judged from the reader's side, not the\nschema's: a new member of a closed vocabulary – another condition\noperator, operand shape or handler operation – is a *major* change even\nthough this document merely grows an enum, because a reader that has\nnever heard of it fails on the value rather than passing it through.\n\n2.0 is such a major. An entity property stopped being a definition of\nits own and became a binding; a projection's partition became explicit\nin every case; `isOptional` went away, since `null` is an ordinary\ninitial value of any type and means \"no value yet\"; and an initial\nvalue may now be a non-empty list. A 1.x reader would misread each of\nthose rather than ignore it.\n\n4.0 is a major of the subtler kind the reader-side rule exists for:\nits one addition is additive in shape but not additive to a reader.\nAn `EntityBinding` may carry `isOptional`, under which an unset\nidentifier binds nothing instead of erroring, conditions over the\nalias hold vacuously, and reading a property of it yields null – a\n3.x reader ignores the flag and errors on exactly the case the author\ndeclared expected. The other direction is safe: a 3.x document never\nsays it, so a 4.0 reader reads 3.x whole.\n\n4.1 is the in-place kind: a *scripted* projection's `valueType`\nmay now be a composite value type. No shape changed – a documented\nrestriction was lifted – and a 4.0 reader loads and evaluates\nsuch a document correctly (equality was always deep, and a\ncomposite was always offered identity predicates only); the one\nthing it does wrong is flag the projection with the advisory that\nused to guard the restriction.\n\n5.0 is the closed-vocabulary kind the reader-side rule names\noutright: `equalsAny` joins the binary predicates – the left-hand\nvalue must (or with `negate`, must not) equal one entry of a\nliteral list, spelled as a bare array of `StaticValue` /\n`EnumMemberValue` entries in `rightHandSide`, the same list\nspelling `initialValue` already had. A 4.x reader fails on the\npredicate rather than passing it through, so this is a major even\nthough nothing a 4.x document says changed – a 5.0 reader reads\n3.x and 4.x whole.\n\n6.0 adds two members at once, each the closed-vocabulary kind. An\n`EventEmission` may carry `when`: conditions over the same operands\nits command's `conditions` read, under which the emission is\npublished or silently skipped – a guarded skip is not a rejection,\nand every guard failing publishes nothing. And a projection may be\n**derived**: no handlers, no initial value, a single declared\npredicate over other projections' values (`derived`), always one\nboolean – logic stated once, as data, where a script would have\nhidden it in code. A 5.x reader would publish an emission its\nauthor guarded and has no fold for a handlerless projection – both\nmisreads, so this is a major; a 6.0 reader reads 3.x, 4.x and 5.x\nwhole.\n\n6.1 is the ordinary minor, and a useful contrast with 4.0. An\n`entityDefinition` may carry `lifecycle`, naming which of its own\nproperties holds the state one of these is in, and a two-state\nlifecycle is spelled as a `boolean` projection rather than as a\ntwo-member enum. A 6.0 reader that ignores `lifecycle` loses a\nderived diagram and misreads nothing – no condition changed shape,\nand a boolean-valued projection was always readable. That is what\nmakes it a minor where 4.0's equally additive `isOptional` was a\nmajor: there, the ignored flag made the old reader error on exactly\nthe case the flag declared expected.\n\n7.0 gives every rule a rejection message and makes it what a\nrefusal is known by. A command's `conditions` are `Rule`s: a\ncondition plus `rejection`, the sentence the command is refused\nwith when it does not hold – `\"Course is full\"`. Several rules may\nshare one, which is how many technical conditions become a small,\nfixed set of outcomes. A scenario that expects a refusal names that\nmessage (`ScenarioThen.rejection`), and nothing else: not the\ncondition's text or position, and not the values it read. Both are\nrequired where a 6.x document has nothing to say, so a 6.x reader cannot read a 7.0 document and a 7.0\nreader does not read 6.x: there is no message to invent for a rule\nthat never had one.\n\n8.0 makes tags explicit on both sides of a query. An `EventDefinition`\nlists the values it is tagged by in `tags` – property paths, `courseId`\nor `items.productId` – and an event without the list carries no tag,\nwhere a 7.x reader tagged every property of a tag-marked type. And a\nprojection names the tags it is read by (`ProjectionDefinition.tags`),\neach a name and a tag type, and every read gives one value per name –\nan alias's (`ProjectionBinding.tags`), one in place (`ProjectionRead`),\na scenario's, a derived operand's – of the declared type, or a\n`TagLiteral` stating it. A scripted projection sees the values as\n`tags.<name>` and loses its `tagFilter`, and an entity read's fan-out\nwas marked the way a read's is (`TagEach`). A 7.x reader would misread all\nof it, so this reader reads 8.x only.\n\n9.0 lets a derived projection compute as well as compare: in place\nof `predicate` it may state an `operator` – `add`, `subtract`,\n`multiply`, `min` or `max` – over two numbers, and hold the number it\nyields (`DerivedValue`). A new member of a closed vocabulary: an 8.x\nreader finds no predicate and errors. Nothing an 8.x document says\nchanged shape, so a 9.0 reader reads 8.x whole.\n\n10.0 gives every kind of projection arguments: values a read gives\nbesides its tags, which never narrow its query\n(`ProjectionDefinition.arguments`, moved off `ProjectionScript`). A\nderived projection compares or computes with its own parameters – a\nside may be `{parameterName}` – and passes them on as an operand's tag\nor argument (`DerivedOperand`, `ProjectionReadValue`). A new operand\nmember and a moved field: a 9.x reader would find a side it cannot\nread and a script with no arguments. A 10.0 reader reads 8.x and 9.x\nwhole, lifting a script's arguments onto its projection.\n\n10.1 lets a name be written in any alphabet: the name patterns accept\nUnicode letters (`\\p{Lu}`, `\\p{Ll}`, `\\p{L}`), combining marks and\ndigits where they accepted ASCII only, casing rules unchanged –\n`Gjenåpnet`, `konsesjonærId`. No shape changed and nothing an older\ndocument says reads differently. A 10.0 reader skips, and lists, a\ndefinition whose name it finds malformed, and misreads nothing else.\n\n11.0 replaces entities by groups. `entityDefinitions` is gone, and with\nit the property binding, the `lifecycle` designation and a binding's\n`excluding`; `groupDefinitions` holds groups that own their projections\n(`GroupDefinition`). A command reads a group through a binding,\n`{alias, group, tags}` (`GroupBinding`), and each of its projections as\n`{alias, property}` – with that projection's own `arguments`, never the\ngroup's – or in place by its qualified name, `{projection:\n\"Course.capacity\", tags}`. A derived projection inside a group reads a\nsibling by its local name. A removed field and new operand members: a\n10.x reader finds no entities and reads qualified names it cannot\nresolve. An 11.0 reader reads 8.x to 10.x, lifting an entity into a\ngroup where every projection it binds is tagged by exactly its\nidentifier and bound by no other entity, and restating it as plain\nreads where not. A command with an `excluding` is left out, and said:\nreading every instance instead would change what its rules decide.\n\n11.0 also removes what the format kept for what it could not say:\nscripted projections (`script`, a handler's `code`), `currentValue`,\nguarded emissions (`EventEmission.when`) and optional reads (a group\nbinding's `isOptional`). A document saying one is read only as far as\nit can be read correctly. A scripted projection or a `currentValue`\nrefuses the whole document, naming the projection: its value decides\nrules, and nothing else in the document spells it. A command that\nguards an emission or reads optionally is left out, and said:\npublishing every time, or requiring the read, would change what it\ndecides.\n\n11.0 also says a command as the steps it runs, top-down, in one list\n(`CommandDefinition.steps`) where it had `conditions`, all checked\nfirst, and `publishes`, all published after: a rule (`Rule`), an\nemission (`EventEmission`), a branch (`BranchStep`, `if … else if …\nelse`, whose first arm that holds runs) and, inside a branch, a\n`reject` (`RejectStep`). Any rejection refuses the command with no\nevents, and the emissions reached form its one append. A condition may\njoin others with `all` and `any` (`and` and `or`). Reads are made when\na step reached first needs them, so the append condition of one run\ncovers the reads that run made. A reader of the two lists cannot read\nthe one, so this is part of the major; an 11.0 reader lifts a document\nthat still says `conditions` and `publishes` – from before 11.0, or\nfrom an earlier revision of it – into steps, the rules in order and\nthen the emissions, which is exactly how they evaluated.\n\nThis schema moves in place for minor changes; a major change is\npublished at a new `/vN.json` and the old URL keeps serving what it\nalways served. `x-dcb-schema-revision` moves with every edit either way.\n\nThe format is young and the playground it describes is a prototype.\nExpect majors.\n",
+  "x-dcb-schema-revision": "11.0.3",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -588,25 +588,17 @@
           }
         },
         "boundary": {
-          "description": "The reads this command names, each under a local alias –\nprojections, and instances of groups. **They are the command's\ndynamic consistency boundary**, together with the reads written in\nplace (`ProjectionRead`), with nothing contributed from outside: the\nappend condition's query is the union of their queries – a\nprojection read contributing its tags and its handled types, a group\nbinding exactly the projections of the group the command reads\nthrough it, each by the group's tag.\n\nA tag the command writes need not have been read: one the caller\nsupplies is asserted by the caller, and writing it is what makes any\nother command that did read it conflict with this one.\n\n**Declaration order is the chain.** A binding may draw its\noperands from a binding *above* it and never from one below,\nso a command can read one thing to learn which thing to read\nnext. One left-to-right pass resolves the chain, and a cycle\nis impossible to write.\n\n**Queries are derived, never authored.** A binding waits only\nfor the bindings it actually references, so the number of\nqueries to the store is the *depth* of that dependency\ngraph, not the length of this list: two bindings that both\ntake their identifiers from the payload are read in one\nquery, not two. Each binding's query is `1 + max(query of the\nbindings its operands name)`, or 1 when it names none –\ncomputable in the same left-to-right pass, since the list is\nalready topologically sorted by the rule above.\n\nIt is a graph and not a tree: a binding's tags and arguments may\neach name a different binding. That is why the structure is\nderived and rendered rather than written down as nesting,\nwhich could not represent a binding with two parents without\nduplicating it.\n\n**Execution.** The chain reads in several queries, but the\nwhole command decides as of a single point in the log:\n\n  1. `P` := the position of the last event overall – a\n     backwards read of everything, limited to one.\n  2. Resolve the bindings query by query, every read\n     **bounded at `P`**. Bounding matters: a read past `P`\n     could decide on an event that the append condition then\n     rejects it for.\n  3. Evaluate the conditions over the resolved instances.\n  4. Append with the condition\n     `query = the union of every binding's query, after = P`.\n\nBecause the query covers everything read and `P` precedes\nevery read, any concurrent change to anything this command\nlooked at invalidates the append – and nothing else does.\n",
+          "description": "The reads this command names, each under a local alias –\nprojections, and instances of groups. **They are the command's\ndynamic consistency boundary**, together with the reads written in\nplace (`ProjectionRead`), with nothing contributed from outside: the\nappend condition's query is the union of their queries – a\nprojection read contributing its tags and its handled types, a group\nbinding exactly the projections of the group the command reads\nthrough it, each by the group's tag.\n\nA tag the command writes need not have been read: one the caller\nsupplies is asserted by the caller, and writing it is what makes any\nother command that did read it conflict with this one.\n\n**Declaration order is the chain.** A binding may draw its\noperands from a binding *above* it and never from one below,\nso a command can read one thing to learn which thing to read\nnext. One left-to-right pass resolves the chain, and a cycle\nis impossible to write.\n\n**Queries are derived, never authored.** A binding waits only\nfor the bindings it actually references, so the number of\nqueries to the store is the *depth* of that dependency\ngraph, not the length of this list: two bindings that both\ntake their identifiers from the payload are read in one\nquery, not two. Each binding's query is `1 + max(query of the\nbindings its operands name)`, or 1 when it names none –\ncomputable in the same left-to-right pass, since the list is\nalready topologically sorted by the rule above.\n\nIt is a graph and not a tree: a binding's tags and arguments may\neach name a different binding. That is why the structure is\nderived and rendered rather than written down as nesting,\nwhich could not represent a binding with two parents without\nduplicating it.\n\n**Execution.** The chain reads in several queries, but the\nwhole command decides as of a single point in the log:\n\n  1. `P` := the position of the last event overall – a\n     backwards read of everything, limited to one.\n  2. Run the steps, making each read the first time a step\n     needs it, every read **bounded at `P`**. Bounding matters: a\n     read past `P` could decide on an event that the append\n     condition then rejects it for.\n  3. Append what was emitted with the condition\n     `query = the union of the queries of the reads made, after = P`.\n\nBecause the query covers everything read and `P` precedes\nevery read, any concurrent change to anything this run looked\nat invalidates the append – and nothing else does. A read the\nrun did not make did not decide anything; a change to the reads\nthat chose its way through the steps is still caught.\n",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Binding"
           }
         },
-        "conditions": {
-          "description": "Conditions over the bound instances, all of which must hold\nbefore any event is emitted – each with the message the command\nis refused with when it does not (`Rule`).\n\nA condition reading a **fanned-out** alias must hold for\n*every* instance that alias bound; an empty set satisfies it\nvacuously. The quantifier is not written down – it follows\nfrom the alias being plural.\n\n**Zipping.** When a binding fans out over a list, the elements\nof that list stay available to conditions about the instances\nit bound, at the matching index:\n\n  an operand rooted at a list that some alias in the *same*\n  condition also fans from is read at that iteration's index;\n  otherwise it is the whole list.\n\nSo with `product` bound over `items[].productId`,\n`product.currentPrice equals items[].price` compares each\nproduct against the price submitted *for that product*, while\n`items[].price greaterThan 0` – mentioning no alias fanned\nfrom `items` – is an ordinary universal over the list. The\npairing is provenance, not declaration: the operands are\ncorrelated because they came from the same list.\n\n**One fan root per condition.** A condition may quantify over\nat most one fanned-out root. Two distinct roots is rejected\nrather than read as a cross product: their lengths are\nunrelated, nothing in this document can assert otherwise, and\nthe zipped and crossed readings look identical on the page.\n\nAn empty list does **not** mean the command is unguarded: the\nappend condition is derived from the `boundary`, not from\nthis list. A command with no conditions at all can still be\nstrictly serialised – which is what binding a parameterless\nprojection does to it.\n",
+        "steps": {
+          "description": "What the command does, as steps run top-down in written order\n(11.0) – each a rule (`Rule`), an emission (`EventEmission`), a branch\n(`BranchStep`) or, inside a branch, a `reject` (`RejectStep`):\n\n  - a rule that does not hold, or a `reject` reached, ends the run\n    refused, with no events, by its message;\n  - an emission reached joins the run's one append – reaching none is\n    publishing nothing;\n  - a branch runs the steps of its first arm whose condition holds, or\n    its `otherwise`, or nothing. Separate branches each run.\n\nA rule is the shorthand for a branch whose one arm is the opposite\ncondition and a `reject`; it stays a step of its own because it is the\ncommon case.\n\n**Reads are lazy.** A read – an alias's or one in place – is made the\nfirst time a step reached needs it, so a read behind a rule that\nrefused, or in an arm not taken, is never made: it cannot fail on what\nthe rule ruled out. A read reached with no value for a tag is still an\nerror. The append condition of a run covers the reads that run made;\n`boundary` and the reads in place are every read *any* run might make\n– the boundary an authoring tool shows for the command as a whole.\n\nA condition reading a **fanned-out** alias must hold for *every*\ninstance that alias bound; an empty set satisfies it vacuously. The\nquantifier is not written down – it follows from the alias being\nplural.\n\n**Zipping.** When a binding fans out over a list, the elements of that\nlist stay available to a comparison about the instances it bound, at\nthe matching index:\n\n  an operand rooted at a list that some alias in the *same*\n  comparison also fans from is read at that iteration's index;\n  otherwise it is the whole list.\n\nSo with `product` bound over `items[].productId`,\n`product.currentPrice equals items[].price` compares each product\nagainst the price submitted *for that product*, while `items[].price\ngreaterThan 0` – mentioning no alias fanned from `items` – is an\nordinary universal over the list. The pairing is provenance, not\ndeclaration: the operands are correlated because they came from the\nsame list.\n\n**One fan root per comparison.** A comparison may quantify over at most\none fanned-out root. Two distinct roots is rejected rather than read as\na cross product: their lengths are unrelated, nothing in this document\ncan assert otherwise, and the zipped and crossed readings look\nidentical on the page.\n\nA command without rules is **not** unguarded: the append condition is\nderived from the reads, not from the steps. A command with no rules at\nall can still be strictly serialised – which is what binding a\nparameterless projection does to it: a read nothing consults is made\nbefore the first step.\n",
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Rule"
-          }
-        },
-        "publishes": {
-          "description": "Events the command emits on success. Each entry binds the\nemitted event's properties to operands drawn from the\ncommand's payload, a bound instance's properties, or\nliterals.\n",
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/EventEmission"
+            "$ref": "#/$defs/Step"
           }
         }
       },
@@ -614,8 +606,7 @@
         "name",
         "properties",
         "boundary",
-        "conditions",
-        "publishes"
+        "steps"
       ]
     },
     "CommandName": {
@@ -734,7 +725,7 @@
       ]
     },
     "EventEmission": {
-      "description": "A command's emission of one event, plus bindings supplying the\nevent's property values. It is published whenever its command is.\n",
+      "description": "A command's emission of one event, plus bindings supplying the\nevent's property values – a step (`Step`): it joins the command's\nappend when the run reaches it.\n",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -753,17 +744,92 @@
         "name"
       ]
     },
-    "Rule": {
-      "description": "A condition the command requires, and the message it is refused\nwith when the condition does not hold. The message is static text –\nwhat a person reads, and what a scenario expecting the refusal\nnames – so it carries no values.\n\nSeveral rules of one command may share a message: they are then\none outcome, however many conditions lead to it. Messages belong\nto their command, so two commands may use the same one\nindependently.\n",
-      "allOf": [
+    "Step": {
+      "description": "One step of a command (`CommandDefinition.steps`), told apart by\nthe key it carries: `condition` a rule, `name` an emission, `branches`\na branch, `reject` a rejection.\n",
+      "oneOf": [
         {
-          "$ref": "#/$defs/Condition"
+          "$ref": "#/$defs/Rule"
         },
         {
-          "required": [
-            "rejection"
-          ]
+          "$ref": "#/$defs/EventEmission"
+        },
+        {
+          "$ref": "#/$defs/BranchStep"
+        },
+        {
+          "$ref": "#/$defs/RejectStep"
         }
+      ]
+    },
+    "Rule": {
+      "description": "A condition the command requires – `require c else reject \"m\"` –\nand the message it is refused with when the condition does not hold.\nThe message is static text – what a person reads, and what a scenario\nexpecting the refusal names – so it carries no values.\n\nSeveral rules of one command may share a message, a `reject` too: they\nare then one outcome, however many conditions lead to it. Messages\nbelong to their command, so two commands may use the same one\nindependently.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "condition": {
+          "$ref": "#/$defs/Condition"
+        },
+        "rejection": {
+          "$ref": "#/$defs/RejectionMessage"
+        }
+      },
+      "required": [
+        "condition",
+        "rejection"
+      ]
+    },
+    "BranchStep": {
+      "description": "`if c => … else if c => … else => …`: the steps of the first arm\nwhose condition holds run, or `otherwise`'s when none does, or none.\nAn arm's steps are steps like the command's own – rules, emissions,\nbranches and `reject`s – and run as they do.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "branches": {
+          "description": "The arms, in the order their conditions are tried.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "condition": {
+                "$ref": "#/$defs/Condition"
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Step"
+                }
+              }
+            },
+            "required": [
+              "condition",
+              "steps"
+            ]
+          }
+        },
+        "otherwise": {
+          "description": "The `else` arm: what runs when no arm's condition holds.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Step"
+          }
+        }
+      },
+      "required": [
+        "branches"
+      ]
+    },
+    "RejectStep": {
+      "description": "`reject \"m\"`: the run ends refused, with no events, by this message.\nIt stands inside a branch – at the top of a command it would refuse\nevery time.\n",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reject": {
+          "$ref": "#/$defs/RejectionMessage"
+        }
+      },
+      "required": [
+        "reject"
       ]
     },
     "RejectionMessage": {
@@ -774,13 +840,54 @@
       "pattern": "^[^\\n]*\\S[^\\n]*$"
     },
     "Condition": {
+      "description": "A comparison (`UnaryCondition`, `BinaryCondition`), or comparisons\njoined: `all` holds when every one does (`and`), `any` when one does\n(`or`). Each is checked in order, and checking stops once the answer\nis known – so a read in a later one is made only when the earlier ones\nleave it open.\n",
       "oneOf": [
         {
           "$ref": "#/$defs/UnaryCondition"
         },
         {
           "$ref": "#/$defs/BinaryCondition"
+        },
+        {
+          "$ref": "#/$defs/AllCondition"
+        },
+        {
+          "$ref": "#/$defs/AnyCondition"
         }
+      ]
+    },
+    "AllCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "description": "Holds when every one of these does.",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/Condition"
+          }
+        }
+      },
+      "required": [
+        "all"
+      ]
+    },
+    "AnyCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "any": {
+          "description": "Holds when at least one of these does.",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/Condition"
+          }
+        }
+      },
+      "required": [
+        "any"
       ]
     },
     "UnaryCondition": {
@@ -802,10 +909,6 @@
           "description": "When true the condition holds iff the predicate does *not*.",
           "type": "boolean",
           "default": false
-        },
-        "rejection": {
-          "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`).\n",
-          "$ref": "#/$defs/RejectionMessage"
         }
       },
       "required": [
@@ -852,10 +955,6 @@
           "description": "When true the condition holds iff the predicate does *not*.",
           "type": "boolean",
           "default": false
-        },
-        "rejection": {
-          "description": "The message a refusal by this condition carries. Required on a\ncommand's rule (`Rule`).\n",
-          "$ref": "#/$defs/RejectionMessage"
         }
       },
       "required": [
@@ -1036,14 +1135,14 @@
       "additionalProperties": false,
       "properties": {
         "outcome": {
-          "description": "`published` when every condition held, `rejected` when one did\nnot.\n",
+          "description": "`published` when the command got through – whether or not it\nemitted anything – and `rejected` when a rule or a `reject` refused it.\n",
           "enum": [
             "published",
             "rejected"
           ]
         },
         "events": {
-          "description": "The events published, in order, each with the payload the\ncommand built. Empty for a refusal – until a refusal is\nallowed to record something too.\n",
+          "description": "The events published, in order, each with the payload the\ncommand built – none when it got through emitting nothing (`then\nnothing`). Empty for a refusal – until a refusal is allowed to record\nsomething too.\n",
           "type": "array",
           "items": {
             "$ref": "#/$defs/ScenarioEmittedEvent"
@@ -1125,7 +1224,7 @@
       ]
     },
     "CompositeFieldDefinition": {
-      "description": "One field of a composite value type. Deliberately **not** a\n`PropertyDefinition`: a field is always singular and always\nrequired, and it may not itself be typed with a composite.\n\nAll three restrictions exist to keep *zipping* meaningful (see\n`CommandDefinition.conditions`). Zipping is index correlation\nbetween a fanned-out binding and the list it fanned from, and it\nonly holds while the two have the same length:\n\n  - a **list** field would flatten, as list-valued reads off a\n    plural alias already do, and a flattened list has a different\n    length than the list it came from;\n  - an **optional** identifier field would contribute a variable\n    number of tags, so a binding fanned from it would be shorter\n    than its source;\n  - a **nested** composite would need a path operand rather than\n    the single hop `{parameterName, property}` affords.\n\nEach is a way for the index to drift silently, with nothing on the\npage to show it had.\n",
+      "description": "One field of a composite value type. Deliberately **not** a\n`PropertyDefinition`: a field is always singular and always\nrequired, and it may not itself be typed with a composite.\n\nAll three restrictions exist to keep *zipping* meaningful (see\n`CommandDefinition.steps`). Zipping is index correlation\nbetween a fanned-out binding and the list it fanned from, and it\nonly holds while the two have the same length:\n\n  - a **list** field would flatten, as list-valued reads off a\n    plural alias already do, and a flattened list has a different\n    length than the list it came from;\n  - an **optional** identifier field would contribute a variable\n    number of tags, so a binding fanned from it would be shorter\n    than its source;\n  - a **nested** composite would need a path operand rather than\n    the single hop `{parameterName, property}` affords.\n\nEach is a way for the index to drift silently, with nothing on the\npage to show it had.\n",
       "type": "object",
       "additionalProperties": false,
       "properties": {

@@ -325,22 +325,22 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "ProjectStatus",
-            "tags": {
-              "projectId": {
-                "parameterName": "projectId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "ProjectStatus",
+              "tags": {
+                "projectId": {
+                  "parameterName": "projectId"
+                }
               }
-            }
+            },
+            "predicate": "equals",
+            "rightHandSide": null
           },
-          "predicate": "equals",
-          "rightHandSide": null,
           "rejection": "Project already exists"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "ProjectAdded",
           "parameters": {
@@ -366,24 +366,24 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "ProjectStatus",
-            "tags": {
-              "projectId": {
-                "parameterName": "projectId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "ProjectStatus",
+              "tags": {
+                "projectId": {
+                  "parameterName": "projectId"
+                }
               }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "enumMember": "Active"
             }
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Active"
-          },
           "rejection": "Project is not active"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "ProjectArchived",
           "parameters": {
@@ -418,21 +418,21 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "DeveloperExists",
-            "tags": {
-              "developerId": {
-                "parameterName": "developerId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DeveloperExists",
+              "tags": {
+                "developerId": {
+                  "parameterName": "developerId"
+                }
               }
-            }
+            },
+            "predicate": "isFalse"
           },
-          "predicate": "isFalse",
           "rejection": "Developer is already registered"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "DeveloperRegistered",
           "parameters": {
@@ -479,74 +479,80 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "ProjectStatus",
-            "tags": {
-              "projectId": {
-                "parameterName": "projectId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "ProjectStatus",
+              "tags": {
+                "projectId": {
+                  "parameterName": "projectId"
+                }
               }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "enumMember": "Active"
             }
-          },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Active"
           },
           "rejection": "Project is not active"
         },
         {
-          "leftHandSide": {
-            "projection": "DeveloperExists",
-            "tags": {
-              "developerId": {
-                "parameterName": "developerId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DeveloperExists",
+              "tags": {
+                "developerId": {
+                  "parameterName": "developerId"
+                }
               }
-            }
+            },
+            "predicate": "isTrue"
           },
-          "predicate": "isTrue",
           "rejection": "Developer is not registered"
         },
         {
-          "leftHandSide": {
-            "projection": "DeveloperSeniorityLevel",
-            "tags": {
-              "developerId": {
-                "parameterName": "developerId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DeveloperSeniorityLevel",
+              "tags": {
+                "developerId": {
+                  "parameterName": "developerId"
+                }
               }
-            }
-          },
-          "predicate": "greaterThanOrEquals",
-          "rightHandSide": {
-            "projection": "ProjectRequiredSeniorityLevel",
-            "tags": {
-              "projectId": {
-                "parameterName": "projectId"
+            },
+            "predicate": "greaterThanOrEquals",
+            "rightHandSide": {
+              "projection": "ProjectRequiredSeniorityLevel",
+              "tags": {
+                "projectId": {
+                  "parameterName": "projectId"
+                }
               }
             }
           },
           "rejection": "Developer seniority level too low"
         },
         {
-          "leftHandSide": {
-            "projection": "DeveloperRemainingHoursForWeek",
-            "tags": {
-              "developerId": {
-                "parameterName": "developerId"
-              },
-              "week": {
-                "parameterName": "week"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DeveloperRemainingHoursForWeek",
+              "tags": {
+                "developerId": {
+                  "parameterName": "developerId"
+                },
+                "week": {
+                  "parameterName": "week"
+                }
               }
+            },
+            "predicate": "greaterThanOrEquals",
+            "rightHandSide": {
+              "parameterName": "requestedHours"
             }
           },
-          "predicate": "greaterThanOrEquals",
-          "rightHandSide": {
-            "parameterName": "requestedHours"
-          },
           "rejection": "Developer does not have enough hours left that week"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "HoursAllocated",
           "parameters": {

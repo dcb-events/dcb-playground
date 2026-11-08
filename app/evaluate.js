@@ -3,9 +3,10 @@
 //
 // `model.js` says what a definition *means*; this says what it *does*.
 // Given a model, a log of events and a command with its arguments,
-// it resolves the boundary, folds every projection the boundary reads,
-// checks the conditions and returns either the events the command
-// publishes or the rule that refused it.
+// it runs the command's steps top-down (11.0) – its rules, its
+// branches, its emissions – folding each read the first time a step
+// reached needs it, and returns either the events the command
+// publishes or the step that refused it.
 //
 // Nothing here touches the DOM, `localStorage` or the event log the
 // playground stores its own history in. It takes a model object and
@@ -602,8 +603,7 @@ function evReadOperand(operand, scope) {
         : evOwn(value, operand.property);
     }
     case 'alias-property': {
-      const binding = scope.bound[operand.alias];
-      if (!binding) fail(`Nothing in this boundary is bound as "${operand.alias}".`);
+      const binding = evBound(operand.alias, scope);
       if (binding.kind === 'projection') {
         if (operand.property) {
           fail(`"${operand.alias}" reads a projection, which holds one value and has no properties.`);
@@ -652,7 +652,7 @@ function evReadOperand(operand, scope) {
 // reading the alias whole flattens them, a list per instance into its
 // elements.
 function evFanSourceIndexes(operand, scope, count) {
-  const parent = operandSource(operand) === 'alias-property' ? scope.bound[operand.alias] : null;
+  const parent = operandSource(operand) === 'alias-property' ? evBound(operand.alias, scope) : null;
   if (parent && parent.fanned && parent.instances) {
     const out = [];
     parent.instances.forEach((instance, j) => {
@@ -732,6 +732,25 @@ function evProjectionRead(model, events, body, read, scope, label) {
     sourceIndexes: fanned.roots,
     value: instances.map((instance) => instance.value),
   };
+}
+
+// An alias's read, made the first time something needs it (11.0): a
+// read no step reaches is never made, so a read guarded by an earlier
+// rule or branch cannot fail on what that rule ruled out – and the
+// append condition covers only the reads the decision made. A read that
+// is reached with a tag it cannot read by is still an error.
+function evBound(alias, scope) {
+  if (scope.bound[alias]) return scope.bound[alias];
+  const binding = (scope.body.boundary || []).find((b) => b && b.alias === alias);
+  if (!binding) fail(`Nothing in this boundary is bound as "${alias}".`);
+  if (scope.resolving.has(alias)) fail(`Binding "${alias}" is read through itself.`);
+  scope.resolving.add(alias);
+  try {
+    evResolveBinding(scope.model, scope.events, scope.body, binding, scope);
+  } finally {
+    scope.resolving.delete(alias);
+  }
+  return scope.bound[alias];
 }
 
 function evResolveBinding(model, events, body, binding, scope) {
@@ -864,7 +883,7 @@ function evFannedAliasesOf(condition, scope) {
   const out = [];
   for (const operand of conditionOperands(condition)) {
     if (operandSource(operand) !== 'alias-property') continue;
-    const binding = scope.bound[operand.alias];
+    const binding = evBound(operand.alias, scope);
     if (binding && binding.fanned && !out.includes(operand.alias)) out.push(operand.alias);
   }
   return out;
@@ -938,24 +957,50 @@ function evCheckCondition(model, body, condition, scope) {
   return { held: true, index: null };
 }
 
+// A condition: a predicate, checked as above, or a combination of
+// them. `and` checks its parts in written order and stops at the first
+// that fails; `or` stops at the first that holds – so a read in a later
+// part is made only when the earlier ones leave the answer open, as
+// a read in a later step is. A refusal by a combination reports the
+// part that decided it: the failing part of an `and`, and nothing of
+// an `or`, where every part failed. The dry run checks every part.
+function evCheck(model, body, condition, scope) {
+  if (!isCompoundCondition(condition)) return evCheckCondition(model, body, condition, scope);
+  const all = Array.isArray(condition.all);
+  for (const part of conditionMembers(condition)) {
+    if (scope.collect) {
+      try { evCheck(model, body, part, scope); } catch (error) { /* stepped over */ }
+      continue;
+    }
+    const outcome = evCheck(model, body, part, scope);
+    if (outcome.held !== all) return all ? outcome : { held: true, index: null };
+  }
+  return all ? { held: true, index: null } : { held: false, index: null };
+}
+
 // ============================================================
 // Evaluating a command.
 // ============================================================
 
 // `(model, events, commandName, args)` in, one outcome out:
 //
-//   { outcome: 'published', events, reads }
-//   { outcome: 'rejected', failedRule, reads }
+//   { outcome: 'published', events, reads, arms }
+//   { outcome: 'rejected', failedRule, reads, arms }
 //
 // The discriminator is there from the start so that publishing an
 // alternative event on refusal – a rejection that also carries events –
 // is a change to what a `rejected` outcome holds rather than a change
 // to the shape every stored scenario was written in.
 //
-// `reads` is what the boundary resolved to. Nothing stored in a
-// scenario's expected outcome keeps it; the sandbox shows it, because
-// "what did this command see when it decided" is the question a step
-// raises.
+// `reads` is what the decision read – the reads it *made*, which since
+// reads are lazy (11.0) are the ones its path through the steps
+// reached, not every read the command might make: the boundary of this
+// run, where `deriveDcb` (model.js) is the boundary of every run.
+// Nothing stored in a scenario's expected outcome keeps it; the sandbox
+// shows it, because "what did this command see when it decided" is the
+// question a step raises. `arms` names each branch arm the run took
+// (`armKey`, model.js) – what tells the scenarios that show each way a
+// command succeeds apart (`commandSuccessesOwed`).
 function evaluateCommand(model, events, commandName, args) {
   if (typeof events === 'function') return evDecideThroughPort(model, events, commandName, args);
   return evDecide(model, events || [], commandName, args, false);
@@ -963,21 +1008,28 @@ function evaluateCommand(model, events, commandName, args) {
 
 // One decision over `events` – a log, or the fold-by-fold port
 // `evDecideThroughPort` serves. `collect` is that driver's dry run: it
-// only wants to see which reads the decision makes, so it reads all of
-// them – every rule, every instance of a quantified one, every
-// emission – and steps over whatever fails. Its outcome is discarded.
+// only wants to see which reads the decision might make, so it walks
+// all of them – every step, every arm of every branch, past every
+// refusal, every instance of a quantified rule – and steps over
+// whatever fails. Its outcome is discarded.
+//
+// The steps run top-down (11.0): a rule that does not hold, or a
+// `reject` reached, ends the run refused and with no events; an
+// emission reached joins the one append; a branch runs its first arm
+// whose condition holds, or `otherwise`.
 function evDecide(model, events, commandName, args, collect) {
   const body = evOwn(model['command-definitions'], commandName);
   if (!body) fail(`This model has no command "${commandName}".`);
 
   const supplied = args || {};
   const log = events;
-  // `model`, `body` and `events` ride along for an inline read, which is
-  // folded from inside an operand; `inline` holds what it folded.
-  // `args` and `bound` are keyed by authored names, so have no
-  // prototype (see evOwn).
+  // `model`, `body` and `events` ride along for a read made from inside
+  // an operand; `inline` holds what a read in place folded, `bound` what
+  // an alias did. `args` and `bound` are keyed by authored names, so
+  // have no prototype (see evOwn).
   const scope = {
-    args: Object.create(null), bound: Object.create(null), inline: new Map(), model, body, events: log, collect,
+    args: Object.create(null), bound: Object.create(null), inline: new Map(), resolving: new Set(),
+    model, body, events: log, collect,
   };
   // In the dry run a step that fails is stepped over, not reported.
   const attempt = (step) => {
@@ -1000,41 +1052,38 @@ function evDecide(model, events, commandName, args, collect) {
     scope.args[property.name] = evNormalize(evOwn(supplied, property.name));
   }
 
-  for (const round of deriveRounds(body)) {
-    for (const { binding } of round) attempt(() => evResolveBinding(model, log, body, binding, scope));
+  // A read nothing consults – the parameterless projection a command
+  // binds to be serialised – is made up front: it is there for its
+  // boundary, and no step would ever ask for it.
+  const references = bindingReferences(model, body);
+  for (const binding of body.boundary || []) {
+    if (!binding || !binding.alias) continue;
+    const reasons = references.get(binding.alias) || new Set();
+    if (['rule', 'emission', 'chain'].some((reason) => reasons.has(reason))) continue;
+    attempt(() => evBound(binding.alias, scope));
   }
 
-  // Described at each way out rather than here, because a binding
-  // reports the properties the decision *depended on* – and it has not
-  // depended on any of them until the conditions have run.
-  const conditions = body.conditions || [];
-  for (let index = 0; index < conditions.length; index++) {
-    const condition = conditions[index];
-    if (!condition) continue;
-    const outcome = attempt(() => evCheckCondition(model, body, condition, scope));
-    if (collect || outcome.held) continue;
-    return {
-      outcome: 'rejected',
-      events: [],
-      // `rejection` is what the refusal is known by; `index` and `text`
-      // say which rule it was, for the interface – a scenario keeps
-      // neither (`deriveThen`).
-      failedRule: {
-        index,
-        rejection: condition.rejection === undefined ? null : condition.rejection,
-        text: conditionText(condition),
-        leftValue: outcome.left === undefined ? null : outcome.left,
-        rightValue: outcome.right === undefined ? null : outcome.right,
-        // Which instance refused it, when the rule was quantified.
-        atInstance: outcome.index === null ? null : outcome.index,
-      },
-      reads: evDescribeReads(scope),
-    };
-  }
-
+  const ruleIndex = new Map(commandRules(body).map((rule, index) => [rule, index]));
   const published = [];
-  for (const emission of body.publishes || []) {
-    if (!emission || !emission.name) continue;
+  const arms = [];
+  // `failedRule` describes the refusal: `rejection` is what it is known
+  // by; `index` (among the command's rules, in written order), `path`
+  // (the step's place, `forEachStep`) and `text` say which step it was,
+  // for the interface – a scenario keeps none of them (`deriveThen`).
+  const refusal = (step, path, outcome) => ({
+    index: stepKind(step) === 'rule' ? ruleIndex.get(step) : null,
+    path,
+    rejection: stepKind(step) === 'reject' ? step.reject
+      : step.rejection === undefined ? null : step.rejection,
+    text: stepKind(step) === 'reject' ? `reject ${JSON.stringify(step.reject)}` : conditionText(step.condition),
+    leftValue: outcome.left === undefined ? null : outcome.left,
+    rightValue: outcome.right === undefined ? null : outcome.right,
+    // Which instance refused it, when the rule was quantified.
+    atInstance: outcome.index === null || outcome.index === undefined ? null : outcome.index,
+  });
+
+  const emit = (emission) => {
+    if (!emission.name) return;
     const definition = evOwn(model['event-definitions'], emission.name);
     if (!definition) {
       fail(`"${commandName}" publishes "${emission.name}", which this model does not define.`);
@@ -1056,13 +1105,63 @@ function evDecide(model, events, commandName, args, collect) {
       data[property.name] = attempt(() => evReadOperand(operand, scope));
     }
     published.push({ type: emission.name, data });
-  }
+  };
 
-  return { outcome: 'published', events: published, reads: evDescribeReads(scope) };
+  // Runs `steps`; a refusal comes back, getting through is null.
+  const run = (steps, path) => {
+    for (let index = 0; index < steps.length; index++) {
+      const step = steps[index];
+      const at = [...path, index];
+      switch (stepKind(step)) {
+        case 'rule': {
+          const outcome = attempt(() => evCheck(model, body, step.condition, scope));
+          if (collect || outcome.held) break;
+          return refusal(step, at, outcome);
+        }
+        case 'reject':
+          if (collect) break;
+          return refusal(step, at, {});
+        case 'emit':
+          if (collect) attempt(() => emit(step));
+          else emit(step);
+          break;
+        case 'branch': {
+          for (const arm of stepArms(step)) {
+            if (collect) {
+              if (arm.condition !== undefined) attempt(() => evCheck(model, body, arm.condition, scope));
+              run(arm.steps, [...at, arm.index]);
+              continue;
+            }
+            if (arm.condition !== undefined && !evCheck(model, body, arm.condition, scope).held) continue;
+            arms.push(armKey(at, arm.index));
+            const refused = run(arm.steps, [...at, arm.index]);
+            if (refused) return refused;
+            break;
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    return null;
+  };
+
+  // Described at each way out rather than here, because a binding
+  // reports the properties the decision *depended on* – and it has not
+  // depended on any of them until the steps have run.
+  const refused = run(commandSteps(body), []);
+  if (refused) {
+    return { outcome: 'rejected', events: [], failedRule: refused, reads: evDescribeReads(scope), arms };
+  }
+  return { outcome: 'published', events: published, reads: evDescribeReads(scope), arms };
 }
 
 // A decision through a read port, asking the store as few times as the
-// boundary allows: once per round of reads, never once per fold.
+// boundary allows: once per round of reads, never once per fold. The
+// dry runs fetch what any way through the steps might read; the query
+// the result carries is what the deciding run read, so the append
+// condition follows the reads made, not the reads fetched.
 //
 // Which reads a round makes is a question only evaluation answers – a
 // read's tags are the command's arguments, fanned out, excluded, or an
@@ -1261,6 +1360,42 @@ function deriveThen(model, scenario) {
     fail(`"${scenario.command}" was refused by "${text}", which has no rejection message to test against.`);
   }
   return { outcome: 'rejected', events: [], rejection };
+}
+
+// What a command's scenarios leave unshown (11.0) – the scenarios it
+// owes and has not got: `succeeds`, each way it succeeds that no
+// scenario shows (`commandSuccessesOwed`, model.js – one per arm that
+// emits, or one in all without branches), and `rejections`, each
+// message no scenario is refused with. Only a scenario that holds shows
+// anything: one that drifted asserts what the command no longer does,
+// and one that cannot run asserts nothing it can show.
+function commandCoverageGaps(model, commandName) {
+  const body = evOwn(model['command-definitions'], commandName);
+  if (!body) return { succeeds: [], rejections: [] };
+  const runs = [];
+  for (const scenario of Object.values(model['scenario-definitions'] || {})) {
+    if (!scenario || scenario.command !== commandName) continue;
+    if (runScenario(model, scenario).status !== 'current') continue;
+    try {
+      runs.push(evaluateCommand(model, scenarioLog(scenario), commandName, (scenario.when || {}).arguments));
+    } catch (error) { /* broken – it shows nothing */ }
+  }
+  const published = runs.filter((run) => run.outcome === 'published');
+  const refusedWith = new Set(runs.filter((run) => run.outcome === 'rejected').map((run) => run.failedRule.rejection));
+  return {
+    succeeds: commandSuccessesOwed(body).filter(({ arm }) => (arm === null
+      ? !published.length : !published.some((run) => (run.arms || []).includes(arm)))),
+    rejections: commandRejections(body).map(({ rejection }) => rejection).filter((message) => !refusedWith.has(message)),
+  };
+}
+
+// A way to succeed, as a gap names it: "emit X when …", "emit X
+// otherwise", or – without branches – plain success.
+function successOwedText(owed) {
+  const events = (owed.events || []).join(', ');
+  if (owed.arm === null) return 'succeed';
+  if (owed.condition === undefined) return `emit ${events} otherwise`;
+  return `emit ${events} when ${conditionText(owed.condition)}`;
 }
 
 // Why something could not be worked out. An EvaluationError is a

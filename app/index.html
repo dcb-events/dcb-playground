@@ -3731,7 +3731,7 @@ function looseEnds(model) {
       what: readable(slice.name), why,
       go: () => { state.view = 'slice'; state.slice = slice.name; },
     });
-    if (!slice.emits.length) open('records nothing – nothing it decides is kept');
+    if (!slice.allEmits.length) open('records nothing – nothing it decides is kept');
     if (!slice.payload.length) open('takes no input');
   }
   return found;
@@ -3880,7 +3880,7 @@ function paletteEntries(model) {
   }
   const records = {};
   for (const slice of allSlices(model)) {
-    for (const emit of slice.emits) records[emit.emission.name] = slice.name;
+    for (const emit of slice.allEmits) records[emit.emission.name] = slice.name;
   }
   for (const name of Object.keys(model['event-definitions'])) {
     const from = records[name];
@@ -4952,11 +4952,27 @@ function projectionReadChoices(model, slice, choices) {
 // A grouped projection is patched by its qualified name, as it is read:
 // its body is the one `projectionsOf` gives, and the update lands on its
 // group (`updateDefinitions`).
+// A command is edited as the pages show it: its top-level rules and
+// emissions as two lists, `conditions` and `publishes`
+// (`commandLists`, model.js). What a mutation does to those lists goes
+// back into the slots they came from (`withCommandLists`), so a branch
+// it did not touch is never flattened or dropped; one that edits the
+// steps themselves – renaming an alias, naming a read – leaves the
+// lists alone and keeps what it did.
 function patch(kind, name, mutate) {
   const model = activeModel();
   const previous = kind === 'projection-definition' ? projectionsOf(model)[name] : model[DEF_COLLECTIONS[kind]][name];
   let body = deepClone(previous);
-  mutate(body);
+  if (kind === 'command-definition') {
+    Object.assign(body, deepClone(commandLists(body)));
+    const before = JSON.stringify([body.conditions, body.publishes]);
+    mutate(body);
+    const { conditions, publishes, ...rest } = body;
+    body = JSON.stringify([conditions, publishes]) === before ? rest
+      : { ...rest, steps: withCommandLists(rest.steps, conditions, publishes) };
+  } else {
+    mutate(body);
+  }
   if (kind === 'event-definition') body = withEditedTags(model, previous, body);
   run(() => updateDefinition(kind, model.id, name, body));
 }
@@ -5705,8 +5721,8 @@ function createCommand(model, label) {
       addDefinition('event-definition', model.id, eventName, { properties: [] });
     }
     const body = {
-      properties: [], boundary: [], conditions: [],
-      publishes: [{ name: eventName, parameters: {} }],
+      properties: [], boundary: [],
+      steps: [{ name: eventName, parameters: {} }],
     };
     if (current !== UNGROUPED) body.feature = current;
     addDefinition('command-definition', model.id, name, body);
@@ -5741,7 +5757,7 @@ const WIZARD_STEPS = [
   // answering the rule. The skip reading covers both halves, because a
   // command can look at nothing *and* have no rules – and, the other
   // way round, can look at something with no rule at all.
-  { key: 'decide', paint: (m, s) => stepDecision(m, s), empty: (s) => !s.rules.length && !s.reads.length, skipWords: 'always allowed' },
+  { key: 'decide', paint: (m, s) => stepDecision(m, s), empty: (s) => !s.rules.length && !s.reads.length && !s.branches.length, skipWords: 'always allowed' },
   { key: 'emits', paint: (m, s) => stepEmits(m, s), empty: () => false },
   { key: 'changes', paint: (m, s) => stepChanges(m, s), empty: () => false },
 ];
@@ -6512,7 +6528,7 @@ function readCard(model, slice, binding, index, waitsFor) {
   const names = (condition) => conditionOperands(condition)
     .some((operand) => operandSource(operand) === 'alias-property'
       && operand.alias === binding.alias);
-  const usingRules = (slice.body.conditions || []).filter((c) => c && names(c)).length;
+  const usingRules = commandConditionLeaves(slice.body).filter((c) => c && names(c)).length;
 
   return h('div', { class: 'card projection', 'data-src': 'alias:' + binding.alias },
     qrow('div', { cls: 'row', key: 'read:' + binding.alias },
@@ -6790,6 +6806,23 @@ function ruleOperandRef(slice, row, operand, text) {
 // One rule, as a row of the rules card. More than one, and each can be
 // dragged into the order they are checked in.
 function ruleRow(model, slice, condition, i, draggable) {
+  // Comparisons joined by and / or (11.0) are not something the rule
+  // editor writes: shown as a sentence, edited in the code view, and
+  // still removable and reorderable here.
+  if (isCompoundCondition(condition)) {
+    return h('div', { class: 'rule-row', 'data-rule': draggable ? i : null },
+      draggable ? ruleGrip(slice, i) : null,
+      qrow('div', { cls: 'row wraps', key: 'rule:' + i },
+        h('span', { class: 'sentence' }, ruleSentence(model, slice.body, condition)),
+        rejectionMark(condition),
+        h('span', { class: 'grow' }),
+        reveal(
+          codeViewButton('Edit this rule in the code view – the rule editor writes one comparison'),
+          h('button', {
+            class: 'btn tiny danger',
+            onclick: () => patchSlice((b) => { b.conditions.splice(i, 1); }),
+          }, '×'))));
+  }
   if (state.editRule === i) return h('div', { class: 'rule-row' }, ruleEditor(model, slice, i));
   const p = conditionParts(condition, model, slice.body);
   const quantifier = quantifierWords(model, slice.body, condition);
@@ -6830,6 +6863,54 @@ function ruleRow(model, slice, condition, i, draggable) {
           class: 'btn tiny danger',
           onclick: () => patchSlice((b) => { b.conditions.splice(i, 1); }),
         }, '×'))));
+}
+
+// The way to the code view, from something a page shows but does not
+// edit.
+function codeViewButton(title) {
+  return h('button', {
+    class: 'btn tiny', title,
+    onclick: () => { setSurface('code'); render(); },
+  }, 'Edit in code');
+}
+
+// ---------- branches ----------
+//
+// A command's branches (11.0) – `if … => … else if … => … else => …` –
+// are shown as they run and edited in the code view: the visual
+// editors write the rules and emissions at the top, and never flatten
+// or drop a branch they do not show (`patch`). Each arm is a line per
+// step, its condition and its message read the way a rule's are.
+function branchCard(model, slice, step, n) {
+  const stepLines = (steps, depth) => steps.flatMap((inner) => {
+    const pad = { style: `padding-left:${depth * 1.2}em` };
+    switch (stepKind(inner)) {
+      case 'rule':
+        return [h('div', { class: 'sentence', ...pad }, h('span', { class: 'verb' }, 'require '),
+          ruleSentence(model, slice.body, inner.condition), rejectionMark(inner))];
+      case 'reject':
+        return [h('div', { class: 'sentence', ...pad }, h('span', { class: 'verb' }, 'reject '), rejectionQuote(inner.reject))];
+      case 'emit':
+        return [h('div', { class: 'sentence', ...pad }, h('span', { class: 'verb' }, 'emit '), eventRef(model, inner.name))];
+      case 'branch':
+        return armLines(inner, depth);
+      default:
+        return [];
+    }
+  });
+  const armLines = (branch, depth) => stepArms(branch).flatMap((arm, i) => [
+    h('div', { class: 'sentence', style: `padding-left:${depth * 1.2}em` },
+      h('span', { class: 'verb' }, arm.condition === undefined ? 'else' : i ? 'else if ' : 'if '),
+      arm.condition === undefined ? null : ruleSentence(model, slice.body, arm.condition)),
+    ...(arm.steps.length ? stepLines(arm.steps, depth + 1)
+      : [h('div', { class: 'muted tiny', style: `padding-left:${(depth + 1) * 1.2}em` }, 'nothing')]),
+  ]);
+  return h('div', { class: 'card rule branch-card', 'data-src': 'branch:' + n },
+    h('div', { class: 'row' },
+      h('span', { class: 'muted tiny' }, 'Branch – the first arm that holds runs'),
+      h('span', { class: 'grow' }),
+      codeViewButton('Branches are edited in the code view')),
+    ...armLines(step, 0));
 }
 
 // ---------- the merged step ----------
@@ -6886,6 +6967,7 @@ function stepDecision(model, slice) {
     cards.push(h('div', { class: 'card rule' },
       ...slice.rules.map((condition, i) => ruleRow(model, slice, condition, i, slice.rules.length > 1))));
   }
+  slice.branches.forEach((branch, n) => cards.push(branchCard(model, slice, branch, n)));
 
   const body = [h('div', {}, cards)];
 
@@ -6895,7 +6977,7 @@ function stepDecision(model, slice) {
   // Nothing tested is nothing decided. `DefineCourse` really is always
   // allowed: the numbering it reads is read in order to *record* the
   // course's id, which is said beside the event that records it.
-  if (!slice.rules.length) {
+  if (!slice.rules.length && !slice.branches.length) {
     body.unshift(h('div', { class: 'empty' }, 'Always allowed.'));
   }
 
@@ -7462,7 +7544,7 @@ function ruleEditor(model, slice, index) {
   // vanish under a pick. Answered, never assumed: a left side still
   // unset keeps the question on screen rather than strand the row.
   const isProjectionRead = (alias) => reads.some((b) => b && b.alias === alias && b.projection);
-  const storedLeft = editingExisting ? ((slice.body.conditions || [])[index] || {}).leftHandSide : null;
+  const storedLeft = editingExisting ? (slice.rules[index] || {}).leftHandSide : null;
   // A read in place is one value too, stored or being edited.
   const leftNow = draft.left ? (() => { try { return JSON.parse(draft.left); } catch { return null; } })() : null;
   const oneValue = (aboutAlias && isProjectionRead(aboutAlias))
@@ -7535,8 +7617,8 @@ function ruleEditor(model, slice, index) {
   // rule (`derivedRejection`) – shown as the placeholder, so what an
   // empty field saves is never a surprise. The messages the command
   // already has are offered, so two rules can be one outcome.
-  const knownMessages = uniq((slice.body.conditions || [])
-    .map((c) => c && c.rejection).filter((m) => typeof m === 'string' && m));
+  const knownMessages = uniq(commandRejectionSteps(slice.body)
+    .map((c) => c.rejection).filter((m) => typeof m === 'string' && m));
   const messageList = 'rejections-' + slice.name;
   const rejectionStage = stage < TEST_STAGE ? null
     : stageRow('Refused with',
@@ -7722,11 +7804,11 @@ function removeEventField(model, eventName, index, propertyName) {
 
     const changes = [];
     for (const [name, body] of Object.entries(activeModel()['command-definitions'])) {
-      const bound = (body.publishes || [])
+      const bound = commandEmissions(body)
         .some((e) => e.name === eventName && e.parameters && propertyName in e.parameters);
       if (!bound) continue;
       const next = deepClone(body);
-      for (const e of next.publishes || []) {
+      for (const e of commandEmissions(next)) {
         if (e.name === eventName && e.parameters) delete e.parameters[propertyName];
       }
       changes.push({ kind: 'command-definition', name, body: next });
@@ -8168,7 +8250,7 @@ function copyCommandPropertiesIntoEvent(model, commandName, eventName) {
     }
     updateDefinition('event-definition', model.id, eventName, withEditedTags(activeModel(), previous, eventBody));
     const commandBody = deepClone(activeModel()['command-definitions'][commandName]);
-    const emission = (commandBody.publishes || []).find((x) => x.name === eventName);
+    const emission = commandEmissions(commandBody).find((x) => x.name === eventName);
     if (emission) {
       emission.parameters = emission.parameters || {};
       for (const p of missing) emission.parameters[p.name] = { parameterName: p.name };
@@ -11764,8 +11846,8 @@ function renderOverview(model, main) {
   const bodies = Object.values(commands);
   const sum = (xs) => xs.reduce((a, b) => a + b, 0);
   const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
-  const ruleCount = sum(bodies.map((b) => (b.conditions || []).length));
-  const appended = new Set(bodies.flatMap((b) => (b.publishes || []).map((p) => p && p.name)));
+  const ruleCount = sum(bodies.map((b) => commandRules(b).length));
+  const appended = new Set(bodies.flatMap((b) => commandEmissions(b).map((p) => p && p.name)));
   const events = Object.keys(model['event-definitions']);
   const unappended = events.filter((e) => !appended.has(e)).length;
   const projectionCount = Object.keys(projectionsOf(model)).length;
@@ -11844,10 +11926,10 @@ function renderOverview(model, main) {
       });
       for (const projection of inPlace) reads.push(projectionRef(model, projection));
 
-      const rules = (body.conditions || []).length;
+      const rules = commandRules(body).length;
       const ruleWords = rules ? plural(rules, 'rule') : '';
 
-      const emits = (body.publishes || []).filter((p) => p && p.name);
+      const emits = commandEmissions(body).filter((p) => p && p.name);
 
       table.appendChild(h('div', { class: 'overview-row' },
         h('div', {},
@@ -12037,7 +12119,17 @@ function renderRuleMap(model, main) {
     main.appendChild(h('h3', { class: 'rulemap-feature' }, group.name));
     for (const name of group.commands) {
       const slice = sliceOf(model, name);
-      const rules = slice.rules.map((condition) => ruleSentence(model, slice.body, condition));
+      const rules = [
+        ...slice.rules.map((condition) => ruleSentence(model, slice.body, condition)),
+        // A branch, one line per arm: what it tests, then what it does.
+        ...slice.branches.flatMap((branch) => stepArms(branch).map((arm, i) => {
+          const does = arm.steps.map((inner) => (stepKind(inner) === 'emit' ? 'emit ' + readable(inner.name)
+            : stepKind(inner) === 'reject' ? `reject \u201c${inner.reject}\u201d`
+              : stepKind(inner) === 'rule' ? 'require ' + ruleSentence(model, slice.body, inner.condition) : 'branch'))
+            .join(', ') || 'nothing';
+          return `${arm.condition === undefined ? 'else' : (i ? 'else if ' : 'if ') + ruleSentence(model, slice.body, arm.condition)} → ${does}`;
+        })),
+      ];
       main.appendChild(h('div', { class: 'card command rulemap-row' },
         h('div', { class: 'rulemap-cmd' }, commandRef(model, name)),
         h('div', { class: 'rulemap-arrow' }, '→'),
@@ -12047,8 +12139,8 @@ function renderRuleMap(model, main) {
             : h('div', { class: 'empty tiny' }, 'always allowed')),
         h('div', { class: 'rulemap-arrow' }, '→'),
         h('div', { class: 'rulemap-events' },
-          slice.emits.length
-            ? slice.emits.map(({ emission }) => eventRef(model, emission.name))
+          slice.allEmits.length
+            ? uniq(slice.allEmits.map(({ emission }) => emission.name)).map((name) => eventRef(model, name))
             : h('div', { class: 'empty tiny' }, 'records nothing yet'))));
     }
   }
@@ -12749,36 +12841,26 @@ function reorderByDrag(kind, model, fromKey, toKey, before) {
   reorderDefinitions(kind, model.id, order);
 }
 
-// What each of this command's scenarios currently derives – judged
-// against the live definitions, not what a scenario was last saved as: a
-// scenario that used to refuse by one rule can stop covering it the
-// moment something upstream drifts.
-function currentScenarioThens(model, commandName) {
-  return scenariosOf(model, commandName)
-    .map(({ body: scenario }) => storedScenarioRun('scenario-definition', model, scenario).actual)
-    .filter(Boolean);
-}
-
-// A message this command can be refused with that no scenario currently
-// demonstrates – the gap between a rule being present and a rule being
-// proven to matter. A rule only ever seen holding true could be removed
-// tomorrow and nothing here would notice. Counted by message, the way a
-// refusal is known: rules sharing one are one outcome, covered together.
+// What this command's scenarios owe it and do not show
+// (`commandCoverageGaps`, evaluate.js): a message it can be refused
+// with that no scenario demonstrates – the gap between a rule being
+// present and a rule being proven to matter; a rule only ever seen
+// holding true could be removed tomorrow and nothing here would notice
+// – counted by message, the way a refusal is known. And a way it
+// succeeds that none shows: with no branches, succeeding at all – every
+// rule can be proven to refuse and the happy path still go untested;
+// with branches, each arm that emits (11.0). Only a scenario that holds
+// shows anything.
 function uncoveredRejections(model, commandName) {
-  const covered = new Set();
-  for (const then of currentScenarioThens(model, commandName)) {
-    if (then.outcome === 'rejected') covered.add(then.rejection);
-  }
-  return commandRejections(model['command-definitions'][commandName])
-    .filter(({ rejection }) => !covered.has(rejection));
+  return commandCoverageGaps(model, commandName).rejections.map((rejection) => ({ rejection }));
 }
 
-// Whether any scenario currently shows this command succeeding – every
-// rule can be individually proven to refuse and the happy path still go
-// untested, which is its own gap: nothing here says the rules, taken
-// together, ever let the command through at all.
 function happyPathUntested(model, commandName) {
-  return !currentScenarioThens(model, commandName).some((then) => then.outcome === 'published');
+  return commandCoverageGaps(model, commandName).succeeds.some((owed) => owed.arm === null);
+}
+
+function uncoveredArms(model, commandName) {
+  return commandCoverageGaps(model, commandName).succeeds.filter((owed) => owed.arm !== null);
 }
 
 // Every scenario in the model that is not saying "current" – what
@@ -13267,11 +13349,17 @@ function saveScenario(model) {
 function coverageGapsCard(model, commandName) {
   const missing = uncoveredRejections(model, commandName);
   const noHappyPath = happyPathUntested(model, commandName);
-  if (!missing.length && !noHappyPath) return null;
+  const arms = uncoveredArms(model, commandName);
+  if (!missing.length && !noHappyPath && !arms.length) return null;
   return h('div', { class: 'card uncovered-rules' },
     noHappyPath
       ? h('div', { class: 'muted tiny' }, 'No scenario here shows this command succeeding')
       : null,
+    arms.length
+      ? h('div', { class: 'muted tiny' },
+          arms.length === 1 ? 'One branch no scenario here shows yet' : arms.length + ' branches no scenario here shows yet')
+      : null,
+    arms.map((owed) => h('div', { class: 'rulemap-rule' }, successOwedText(owed))),
     missing.length
       ? h('div', { class: 'muted tiny' },
           missing.length === 1
@@ -14704,6 +14792,12 @@ function sandboxStore(model) {
       h('div', {}, h('span', { class: 'verb' }, verb), h('span', { class: 'k' }, '  → ' + result)),
       entry.failed ? h('div', { style: 'color:var(--danger)' }, 'failed: ' + entry.failed) : null,
       ...rest));
+  // What the reads fetched, item by item – to tell whether the append
+  // condition is all of it. A command that branches fetches what any
+  // way through it might read, and its condition covers only the reads
+  // its run made (11.0).
+  const fetched = new Set(trace.filter((t) => t.call === 'read' && !t.failed)
+    .flatMap((t) => t.query.map((item) => JSON.stringify(item))));
   const calls = trace.map((entry) => {
     if (entry.restart) return h('div', { class: 'k small' }, 'A second read nothing planned for: started over, with head.');
     if (entry.call === 'head') {
@@ -14733,8 +14827,18 @@ function sandboxStore(model) {
           json ? copyable(entry.events) : entry.events.map((event) => eventLine(event)),
           condition
             ? h('div', { class: 'dq-cond' },
-                h('div', {}, h('b', {}, 'failIfEventsMatch'), ': ',
-                  reads.length === 1 ? `the query of call ${reads[0]}` : `the items of calls ${reads.join(', ')}, as one query`),
+                (() => {
+                  const items = condition.failIfEventsMatch;
+                  const whole = items.length === fetched.size && items.every((item) => fetched.has(JSON.stringify(item)));
+                  if (whole) {
+                    return h('div', {}, h('b', {}, 'failIfEventsMatch'), ': ',
+                      reads.length === 1 ? `the query of call ${reads[0]}` : `the items of calls ${reads.join(', ')}, as one query`);
+                  }
+                  return h('div', {}, h('b', {}, 'failIfEventsMatch'), ': ',
+                    h('span', { class: 'k' }, 'the reads this run made – not all it fetched'),
+                    json ? copyable({ items }) : queryBox(items, 'query',
+                      `${items.length} item${items.length === 1 ? '' : 's'}${items.length > 1 ? ', ORed' : ''}`));
+                })(),
                 h('div', {}, h('b', {}, 'after'), ': ', queryAfterWords(condition.after),
                   trace.some((t) => t.call === 'head') ? h('span', { class: 'k' }, ' – head, taken first') : h('span', { class: 'k' }, ' – the last position read')))
             : h('div', { class: 'k' }, 'no condition – it read nothing, so there is nothing to be consistent with'),

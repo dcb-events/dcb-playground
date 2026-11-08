@@ -41,13 +41,32 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
 const { check, eq, finish } = makeChecker();
 
 const {
-  loadPredefinedModel, projectState, addDefinition, updateDefinition,
+  loadPredefinedModel, projectState,
   projectionDraftFrom, cleanProjectionBody, blankProjectionDraft,
   initialValueWords, defaultInitialValue, operationsFor,
   projectionTypeOptions, handlerValueChoices,
   projectionReaders, effectsOf, typeLabel, literalOfType, blankSlotValue,
   createDcbModel, partitionCells, projectionScenariosFor,
 } = sandbox;
+
+// Many fixtures here state a command the way it reads without branches
+// – its rules, then what it emits – and read it back so. `lists` gives a
+// stored command that way (a copy, its `steps` kept, the lists as the
+// pages edit them – `commandLists`), and the writers below put the two
+// lists back into the steps they came from (`withCommandLists`).
+function lists(body) {
+  if (!body) return body;
+  const copy = JSON.parse(JSON.stringify(body));
+  return Object.assign(copy, sandbox.commandLists(copy));
+}
+function unlists(kind, body) {
+  if (kind !== 'command-definition' || !body || (body.conditions === undefined && body.publishes === undefined)) return body;
+  const { conditions, publishes, ...rest } = body;
+  const kept = sandbox.commandLists(rest);
+  return { ...rest, steps: sandbox.withCommandLists(rest.steps, conditions || kept.conditions, publishes || kept.publishes) };
+}
+const addDefinition = (kind, id, name, body) => sandbox.addDefinition(kind, id, name, unlists(kind, body));
+const updateDefinition = (kind, id, name, body) => sandbox.updateDefinition(kind, id, name, unlists(kind, body));
 
 // An event a fixture adds, tagged by every tag-typed value it holds –
 // what an author listing them all would write. Events are tagged only
@@ -1500,9 +1519,9 @@ function build(which) {
   check('a projection knows who reads it, by name or through a group', () => {
     eq(projectionReaders(model(), 'CourseNumbering'), ['DefineCourse'], 'read directly by name');
     eq(projectionReaders(model(), 'Course.capacity'), ['SubscribeStudentToCourse'], 'and by its qualified name');
-    const before = model()['command-definitions'].SubscribeStudentToCourse;
+    const before = lists(model()['command-definitions'].SubscribeStudentToCourse);
     // Moving it in said its reads through an alias; put one back in place.
-    const subscribe = sandbox.deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const subscribe = lists(model()['command-definitions'].SubscribeStudentToCourse);
     let rewrote = false;
     sandbox.forEachCommandOperand(subscribe, (operand) => {
       if (sandbox.operandSource(operand) === 'alias-property' && operand.property === 'capacity' && !rewrote) {
@@ -1795,7 +1814,7 @@ check('importing an older model with entities says what became of them', () => {
     const before = model()['command-definitions'].DefineCourse.properties.length;
     const adder = sandbox.propertyAdder(model(), {
       draftKey: 'in:DefineCourse',
-      onAdd: (property) => sandbox.updateDefinition('command-definition', id, 'DefineCourse', {
+      onAdd: (property) => updateDefinition('command-definition', id, 'DefineCourse', {
         ...model()['command-definitions'].DefineCourse,
         properties: [...model()['command-definitions'].DefineCourse.properties, property],
       }),
@@ -1884,7 +1903,7 @@ check('importing an older model with entities says what became of them', () => {
     sandbox.createCommand(model(), 'certify course');
     eq(!!model()['command-definitions'].CertifyCourse, true, 'the command exists');
     eq(sandbox.state.wizard, { slice: 'CertifyCourse', upto: 0 }, 'and its page starts at step one');
-    eq((model()['command-definitions'].CertifyCourse.publishes || []).map((p) => p.name),
+    eq((lists(model()['command-definitions'].CertifyCourse).publishes || []).map((p) => p.name),
       ['CourseCertified'], 'the success event exists from the start – the model requires one');
     eq(model()['event-definitions'].CourseCertified.properties, [],
       'but it is bare: its fields wait for the step that shows it');
@@ -1895,7 +1914,7 @@ check('importing an older model with entities says what became of them', () => {
     // produce one: with the rule that wanted it. A boundary written
     // without one would be pruned by this very write – nothing would
     // consult it – which is the whole point of the merge.
-    sandbox.updateDefinition('command-definition', id, 'CertifyCourse', {
+    updateDefinition('command-definition', id, 'CertifyCourse', {
       ...model()['command-definitions'].CertifyCourse,
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
       boundary: [{ alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } }],
@@ -1912,7 +1931,7 @@ check('importing an older model with entities says what became of them', () => {
     const event = model()['event-definitions'].CourseCertified;
     eq(event.properties.map((p) => p.name), ['courseId'],
       'the event now records what the command was given');
-    const emission = model()['command-definitions'].CertifyCourse.publishes[0];
+    const emission = lists(model()['command-definitions'].CertifyCourse).publishes[0];
     eq(emission.parameters, { courseId: { parameterName: 'courseId' } },
       'wired through unchanged, not merely declared');
     eq(sandbox.state.openEvent, 'CourseCertified', 'and its fields are on screen');
@@ -2020,7 +2039,7 @@ check('importing an older model with entities says what became of them', () => {
     const event = model()['event-definitions'].CourseWaitlisted;
     eq(event.properties.map((p) => p.name), ['courseId', 'studentId'],
       'field for field from the payload');
-    const emission = model()['command-definitions'].SubscribeStudentToCourse.publishes
+    const emission = lists(model()['command-definitions'].SubscribeStudentToCourse).publishes
       .find((e) => e.name === 'CourseWaitlisted');
     eq(emission.parameters, {
       courseId: { parameterName: 'courseId' },
@@ -2075,7 +2094,7 @@ check('importing an older model with entities says what became of them', () => {
   check('a touched, complete rule is added by leaving it', () => {
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
-    const count = model()['command-definitions'].DefineCourse.conditions.length;
+    const count = lists(model()['command-definitions'].DefineCourse).conditions.length;
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: true,
       left: JSON.stringify({ alias: 'course', property: 'status' }),
@@ -2085,7 +2104,7 @@ check('importing an older model with entities says what became of them', () => {
     };
     sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
     sandbox.closeForms();
-    const conditions = model()['command-definitions'].DefineCourse.conditions;
+    const conditions = lists(model()['command-definitions'].DefineCourse).conditions;
     eq(conditions.length, count + 1, 'the rule landed without its button');
     eq(conditions[conditions.length - 1], {
       leftHandSide: { alias: 'course', property: 'status' },
@@ -2099,7 +2118,7 @@ check('importing an older model with entities says what became of them', () => {
   check('a touched rule without its message is added by leaving it, refused with what it requires', () => {
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
-    const shipped = sandbox.deepClone(model()['command-definitions'].DefineCourse);
+    const shipped = lists(model()['command-definitions'].DefineCourse);
     const count = shipped.conditions.length;
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: true,
@@ -2113,10 +2132,10 @@ check('importing an older model with entities says what became of them', () => {
     const field = findAll(editor, (n) => n.tag === 'input' && /\brejection\b/.test(n.className || ''))[0];
     eq(field.attributes.placeholder, 'Course status must not be Archived', 'the message it would get, shown while empty');
     sandbox.closeForms();
-    const conditions = model()['command-definitions'].DefineCourse.conditions;
+    const conditions = lists(model()['command-definitions'].DefineCourse).conditions;
     eq(conditions.length, count + 1, 'added');
     eq(conditions[count].rejection, 'Course status must not be Archived', 'with the derived message');
-    sandbox.updateDefinition('command-definition', id, 'DefineCourse', shipped);
+    updateDefinition('command-definition', id, 'DefineCourse', shipped);
   });
 
   // The read half of the merged row narrows exactly as the old read
@@ -2478,7 +2497,7 @@ check('importing an older model with entities says what became of them', () => {
     sandbox.removeDefinition('event-definition', id, 'CourseDefined');
     sandbox.removeDefinition('group-definition', id, 'Student');
     addTaggedEvent(id, 'weird_thing', { properties: [] });
-    sandbox.updateDefinition('command-definition', id, 'DefineCourse', {
+    updateDefinition('command-definition', id, 'DefineCourse', {
       properties: [{ name: 'courseId', propertyType: 'NoSuchType', isOptional: false, isList: false }],
       boundary: [{ alias: 'ghost', group: 'NoSuchGroup', tags: { courseId: { parameterName: 'courseId' } } }],
       conditions: [{ leftHandSide: { alias: 'ghost', property: 'gone' }, predicate: 'equals',
@@ -3073,7 +3092,7 @@ check('importing an older model with entities says what became of them', () => {
 // ---------------------------------------------------------------
 {
   const { model } = build(GROUPED);
-  const body = () => model()['command-definitions'].SubscribeStudentToCourse;
+  const body = () => lists(model()['command-definitions'].SubscribeStudentToCourse);
   const partsOf = (condition) => sandbox.conditionParts(condition, model(), body());
 
   check('an enum status is left to say itself', () => {
@@ -3279,7 +3298,7 @@ check('importing an older model with entities says what became of them', () => {
 
   check('and folded with its operations, stored and evaluated as written', () => {
     eq(sandbox.operationsFor(model(), { valueType: 'Hours' }), ['set', 'increment', 'decrement'], 'decrement on Hours');
-    const body = model()['command-definitions'].Allocate;
+    const body = lists(model()['command-definitions'].Allocate);
     eq(body.conditions[0].predicate, 'greaterThanOrEquals', 'the ordering, stored');
     eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
   });
@@ -3314,7 +3333,7 @@ check('importing an older model with entities says what became of them', () => {
     sandbox.setActiveModelId(id);
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
-    const count = model()['command-definitions'].DefineCourse.conditions.length;
+    const count = lists(model()['command-definitions'].DefineCourse).conditions.length;
     sandbox.state.ruleDraft = {
       predicate: 'equalsAny', negate: false,
       left: JSON.stringify({ alias: 'course', property: 'status' }),
@@ -3325,7 +3344,7 @@ check('importing an older model with entities says what became of them', () => {
     };
     sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
     sandbox.closeForms();
-    const conditions = model()['command-definitions'].DefineCourse.conditions;
+    const conditions = lists(model()['command-definitions'].DefineCourse).conditions;
     eq(conditions.length, count + 1, 'the rule landed without its button');
     eq(conditions[conditions.length - 1], {
       leftHandSide: { alias: 'course', property: 'status' },
@@ -3347,7 +3366,7 @@ check('importing an older model with entities says what became of them', () => {
 {
   const { id, model } = build('course-schedules');   // Course Example (with schedules)
   sandbox.setActiveModelId(id);
-  const command = (name) => model()['command-definitions'][name];
+  const command = (name) => lists(model()['command-definitions'][name]);
 
   check('the reasons a read is consulted, on the shipped models', () => {
     const refs = sandbox.bindingReferences(model(), command('RescheduleCourse'));
@@ -3409,7 +3428,7 @@ check('importing an older model with entities says what became of them', () => {
 {
   const { id, model } = build('course-schedules');   // its own copy: this one strips a command down
   sandbox.setActiveModelId(id);
-  const command = (name) => model()['command-definitions'][name];
+  const command = (name) => lists(model()['command-definitions'][name]);
 
   check('removing a read takes the rules about it, and leaves the chain to dangle', () => {
     // `course` is the root of this command's chain: `students` draws
@@ -3440,7 +3459,7 @@ check('importing an older model with entities says what became of them', () => {
 {
   const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
-  const command = (name) => model()['command-definitions'][name];
+  const command = (name) => lists(model()['command-definitions'][name]);
 
   check('a rule brings its read with it, in a single append', () => {
     const before = command('ChangeCourseCapacity');
@@ -3470,7 +3489,7 @@ check('importing an older model with entities says what became of them', () => {
     // What an agent writing a whole body, or a hand-written file, can
     // still produce. It bounds the append, so it stays until someone
     // edits this command – and says so meanwhile.
-    sandbox.addDefinition('command-definition', id, 'TouchCourse', {
+    addDefinition('command-definition', id, 'TouchCourse', {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
       boundary: [
         { alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } },
@@ -3509,7 +3528,7 @@ check('importing an older model with entities says what became of them', () => {
 {
   const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
-  const cmd = () => model()['command-definitions'].SubscribeStudentToCourse;
+  const cmd = () => lists(model()['command-definitions'].SubscribeStudentToCourse);
   const shipped = JSON.parse(JSON.stringify(cmd()));
   const slice = () => sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
 
@@ -3561,7 +3580,7 @@ check('importing an older model with entities says what became of them', () => {
 
   check('the first question is asked on its own – two pickers, not five', () => {
     sandbox.state.slice = 'SubscribeStudentToCourse';
-    sandbox.updateDefinition('command-definition', id, 'SubscribeStudentToCourse', {
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', {
       ...cmd(), boundary: [], conditions: [],
     });
     sandbox.state.adder = 'rule';
@@ -3660,7 +3679,7 @@ check('importing an older model with entities says what became of them', () => {
     sandbox.state.ruleDraft.rejection = 'Label is not foo';
     const button = findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0];
     button.onclick();
-    const body = model()['command-definitions'].Finish;
+    const body = lists(model()['command-definitions'].Finish);
     // Read in place (8.0): no alias is invented, the rule names the read.
     eq(body.boundary, [], 'no binding');
     eq(body.conditions, [{
@@ -3683,7 +3702,7 @@ check('importing an older model with entities says what became of them', () => {
     sandbox.state.ruleDraft.predicate = 'lessThan';
     sandbox.state.ruleDraft.rejection = 'Folder is full';
     findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
-    const body = model()['command-definitions'].Finish;
+    const body = lists(model()['command-definitions'].Finish);
     eq(body.properties.map((p) => [p.name, p.propertyType]), [['documentId', 'DocumentId'], ['folderId', 'FolderId']],
       'the input it needed, named after the tag');
     eq(body.conditions[body.conditions.length - 1].leftHandSide,
@@ -3691,11 +3710,11 @@ check('importing an older model with entities says what became of them', () => {
     const finish = sandbox.deepClone(body);
     finish.properties.pop();
     finish.conditions.pop();
-    sandbox.updateDefinition('command-definition', id, 'Finish', finish);
+    updateDefinition('command-definition', id, 'Finish', finish);
   });
 
   check('the first question asks no name; a stored read is named afterwards, and unnamed again', () => {
-    const shipped = sandbox.deepClone(model()['command-definitions'].Finish);
+    const shipped = lists(model()['command-definitions'].Finish);
     const addAbout = (target, rejection) => {
       sandbox.state.slice = 'Finish';
       sandbox.state.adder = 'rule';
@@ -3706,7 +3725,7 @@ check('importing an older model with entities says what became of them', () => {
         { predicate: 'lessThan', right: ' literal', rightText: '5', rejection });
       findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
     };
-    const body = () => model()['command-definitions'].Finish;
+    const body = () => lists(model()['command-definitions'].Finish);
     const added = () => body().conditions.slice(shipped.conditions.length).map((c) => c.leftHandSide);
     const read = { projection: 'DoneCount', tags: { documentId: { parameterName: 'documentId' } } };
     const n = shipped.conditions.length;
@@ -3748,7 +3767,7 @@ check('importing an older model with entities says what became of them', () => {
     eq(body().boundary, [], 'no binding');
     eq(added(), [read, read], 'read in place again');
 
-    sandbox.updateDefinition('command-definition', id, 'Finish', shipped);
+    updateDefinition('command-definition', id, 'Finish', shipped);
   });
 
   check('a projection read in place is never asked which of its values, reopened', () => {
@@ -3804,10 +3823,10 @@ check('importing an older model with entities says what became of them', () => {
   // FolderSize is tagged by a FolderId, and no event here carries one:
   // no event can reach it, so none is offered to move it.
   const readFolder = () => {
-    const body = sandbox.deepClone(model()['command-definitions'].Finish);
+    const body = lists(model()['command-definitions'].Finish);
     body.boundary.push({ alias: 'folder', projection: 'FolderSize', tags: { folderId: { tagType: 'FolderId', tagValue: 'f1' } } });
     body.conditions.push({ leftHandSide: { alias: 'folder' }, predicate: 'lessThan', rightHandSide: 100, rejection: 'Folder is full' });
-    sandbox.updateDefinition('command-definition', id, 'Finish', body);
+    updateDefinition('command-definition', id, 'Finish', body);
   };
   check('an event that reaches none of a projection\'s reads is not offered to move it', () => {
     readFolder();
@@ -3883,7 +3902,7 @@ check('importing an older model with entities says what became of them', () => {
     '}',
   ].join('\n'));
   const model = () => projectState()[id];
-  const cmd = () => model()['command-definitions'].Assign;
+  const cmd = () => lists(model()['command-definitions'].Assign);
   const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'Assign'));
   const required = { projection: 'RequiredSeniority', tags: { projectId: { parameterName: 'projectId' } } };
 
@@ -3947,7 +3966,7 @@ check('importing an older model with entities says what became of them', () => {
       { ...rule, rejection: 'Developer seniority must be more than 0' },
       { ...rule, rejection: 'Too junior' },
     ];
-    sandbox.updateDefinition('command-definition', id, 'Assign', withRules);
+    updateDefinition('command-definition', id, 'Assign', withRules);
     sandbox.state.slice = 'Assign';
     const edit = (i) => {
       sandbox.state.sel = 'rule:' + i;
@@ -3959,23 +3978,23 @@ check('importing an older model with entities says what became of them', () => {
     sandbox.closeForms();
     eq(edit(1).rejection, 'Too junior', 'written: kept');
     sandbox.closeForms();
-    sandbox.updateDefinition('command-definition', id, 'Assign', shipped);
+    updateDefinition('command-definition', id, 'Assign', shipped);
   });
 
   check('an alias is put back in place only while every use is its whole value', () => {
     const body = {
       boundary: [{ alias: 'senior', ...seniority }],
-      conditions: [{ leftHandSide: { alias: 'senior' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'r' }],
+      steps: [{ condition: { leftHandSide: { alias: 'senior' }, predicate: 'greaterThan', rightHandSide: 0 }, rejection: 'r' }],
     };
     eq(sandbox.aliasInlinable(body, 'senior'), true, 'a rule about its value');
     const viaProperty = sandbox.deepClone(body);
-    viaProperty.conditions.push({ leftHandSide: { alias: 'senior', property: 'level' }, predicate: 'isNotEmpty', rejection: 'r' });
+    viaProperty.steps.push({ condition: { leftHandSide: { alias: 'senior', property: 'level' }, predicate: 'isNotEmpty' }, rejection: 'r' });
     eq(sandbox.aliasInlinable(viaProperty, 'senior'), false, 'not with a property of it read');
     const asTag = sandbox.deepClone(body);
     asTag.boundary.push({ alias: 'other', projection: 'RequiredSeniority', tags: { projectId: { alias: 'senior' } } });
     eq(sandbox.aliasInlinable(asTag, 'senior'), false, 'nor with another read tagged by it');
     sandbox.inlineAliasedRead(body, 'senior');
-    eq(body, { boundary: [], conditions: [{ leftHandSide: seniority, predicate: 'greaterThan', rightHandSide: 0, rejection: 'r' }] },
+    eq(body, { boundary: [], steps: [{ condition: { leftHandSide: seniority, predicate: 'greaterThan', rightHandSide: 0 }, rejection: 'r' }] },
       'back in place');
   });
 }
@@ -4017,7 +4036,7 @@ check('importing an older model with entities says what became of them', () => {
     '}',
   ].join('\n'));
   const model = () => projectState()[id];
-  const cmd = () => model()['command-definitions'].Assign;
+  const cmd = () => lists(model()['command-definitions'].Assign);
   const slice = () => sandbox.sliceOf(model(), 'Assign');
   const paint = () => sandbox.stepDecision(model(), slice());
   const A = (alias, property) => JSON.stringify({ alias, property });
@@ -4128,7 +4147,7 @@ check('importing an older model with entities says what became of them', () => {
   const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
   const command = 'SubscribeStudentToCourse';
-  const lefts = () => model()['command-definitions'][command].conditions
+  const lefts = () => lists(model()['command-definitions'][command]).conditions
     .map((c) => c.leftHandSide.alias + '.' + c.leftHandSide.property);
   const rows = () => {
     sandbox.state.slice = command;
@@ -4430,7 +4449,7 @@ check('importing an older model with entities says what became of them', () => {
     eq(sandbox.codeDirty(), true, 'edited');
     sandbox.leaveCode();
     eq(state.code, false, 'back on the pages');
-    eq(m()['command-definitions'].ArchiveCourse.publishes[0].name, 'CourseCapacityChanged', 'applied on the way');
+    eq(lists(m()['command-definitions'].ArchiveCourse).publishes[0].name, 'CourseCapacityChanged', 'applied on the way');
     eq(sandbox.codeDirty(), false, 'and the text is what the model says');
   });
 
@@ -4569,7 +4588,7 @@ check('importing an older model with entities says what became of them', () => {
     const paint = () => sandbox.renderCode(sandbox.activeModel(), sandbox.document.createElement('div'));
     paint();
     sandbox.onCodeInput(swap(codeView.text, 'student.subscriptionCount < 10', 'student.subscriptionCount < 12'));
-    const body = JSON.parse(JSON.stringify(m()['command-definitions'].ArchiveCourse));
+    const body = lists(m()['command-definitions'].ArchiveCourse);
     body.publishes[0].name = 'CourseCapacityChanged';
     updateDefinition('command-definition', id, 'ArchiveCourse', body);
     paint();
@@ -4581,7 +4600,7 @@ check('importing an older model with entities says what became of them', () => {
     paint();
     eq([codeView.stale, sandbox.codeDirty()], [true, true], 'still stale, still edited, when it comes back');
     sandbox.leaveCode();
-    eq(m()['command-definitions'].ArchiveCourse.publishes[0].name, 'CourseCapacityChanged', 'the change it missed survives');
+    eq(lists(m()['command-definitions'].ArchiveCourse).publishes[0].name, 'CourseCapacityChanged', 'the change it missed survives');
   });
 
   check('the page paints, rule counts and all', () => {
@@ -5257,7 +5276,7 @@ check('the reference links only anchors the website defines', () => {
     const now = hours()['projection-definitions'].DeveloperHasHoursForWeek;
     eq([now.tags.map((t) => t.name), now.arguments.map((a) => a.name)], [['developerId'], ['week', 'hours']],
       'the first argument now');
-    const read = hours()['command-definitions'].AllocateHours.conditions[3].leftHandSide;
+    const read = lists(hours()['command-definitions'].AllocateHours).conditions[3].leftHandSide;
     eq(Object.keys(read.arguments), ['hours', 'week'], 'the command gives it as an argument');
     eq(sandbox.state.projDraft.body.arguments.map((a) => a.name), ['week', 'hours'], 'and the draft says the same');
     sandbox.setActiveModelId(id);
@@ -5731,7 +5750,7 @@ check('a skipped definition, a defective one and a tag named like an argument ke
   const [simple] = twoModels('course-simple');
   const envelope = JSON.parse(JSON.stringify(sandbox.buildShareEnvelope(simple)));
   envelope.eventDefinitions.push({ name: 'Broken', properties: 'not a list' });
-  envelope.commandDefinitions[0].publishes[0].name = 'CourseInvented';
+  envelope.commandDefinitions[0].steps.find((step) => step.name)['name'] = 'CourseInvented';
   const status = envelope.projectionDefinitions.find((p) => p.name === 'CourseStatus');
   status.arguments = [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }];
   const { model, skipped } = sandbox.modelFromEnvelope(envelope);

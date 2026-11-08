@@ -96,7 +96,7 @@ async function call(name, args) {
   await check('each add/update tool carries its kind\'s full schema, inlined', () => {
     const add = registered.get('add_command_definition').inputSchema;
     eq(Object.keys(add.properties).includes('boundary'), true, 'the real shape, not a free body');
-    eq(typeof add.properties.conditions.items, 'object', 'nested shapes spelled out in place');
+    eq(typeof add.properties.steps.items, 'object', 'nested shapes spelled out in place');
     const flat = JSON.stringify(add);
     eq(flat.includes('"$ref"') || flat.includes('"$defs"'), false,
       'nothing referencing anything – the consumers cannot resolve references');
@@ -119,7 +119,8 @@ async function call(name, args) {
     eq('feature' in command, true, 'feature groups are not experimental');
     eq('icon' in command, true, 'a command\'s icon is not experimental');
     eq(JSON.stringify(command.boundary).includes('"isOptional"'), false, 'no optional reads');
-    eq('when' in command.publishes.items.properties, false, 'no guarded emissions');
+    const emission = command.steps.items.oneOf.find((shape) => shape.properties && 'name' in shape.properties);
+    eq('when' in emission.properties, false, 'no guarded emissions');
     const projection = offered('add_projection_definition');
     eq('derived' in projection, true, 'derived projections are offered');
     eq(projection.derived.properties.operator.enum, ['add', 'subtract', 'multiply', 'min', 'max'],
@@ -271,8 +272,8 @@ async function call(name, args) {
     await call('add_command_definition', {
       name: 'NoteProbe',
       properties: [{ name: 'note', propertyType: 'string', isOptional: true, isList: false }],
-      boundary: [], conditions: [],
-      publishes: [{ name: 'ProbeNoted', parameters: { note: { parameterName: 'note' } } }],
+      boundary: [],
+      steps: [{ name: 'ProbeNoted', parameters: { note: { parameterName: 'note' } } }],
     });
     const { value, isError } = await call('evaluate_command', { commandName: 'NoteProbe', arguments: {} });
     eq(isError, false, 'unset is a call, not a broken one');
@@ -308,8 +309,8 @@ async function call(name, args) {
   await check('an accepted edit that strands a reference echoes the advisory', async () => {
     const { isError, text } = await call('add_command_definition', {
       name: 'ProbeCommand',
-      properties: [], boundary: [], conditions: [],
-      publishes: [{ name: 'NoSuchEvent', parameters: {} }],
+      properties: [], boundary: [],
+      steps: [{ name: 'NoSuchEvent', parameters: {} }],
     });
     eq(isError, false, 'accepted, not refused – the demoted validations');
     eq(text.includes('Advisories introduced by this change'), true, 'the result says so');
@@ -671,8 +672,8 @@ async function call(name, args) {
     const { isError, text } = await call('add_command_definition', {
       name: 'ProbeGuarded',
       properties: [{ name: 'bookId', propertyType: 'BookId', isOptional: false, isList: false }],
-      boundary: [], conditions: [],
-      publishes: [{
+      boundary: [],
+      steps: [{
         name: 'BookAdded', parameters: { bookId: { parameterName: 'bookId' } },
         when: [{ leftHandSide: { parameterName: 'bookId' }, predicate: 'isNotEmpty' }],
       }],

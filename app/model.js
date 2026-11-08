@@ -39,6 +39,14 @@
 // that. Only the editing commands and the reference rewriting see the
 // nesting, because that is what is stored.
 //
+// **Commands run top-down** (11.0): a command's body is one ordered
+// list, `steps` – rules, emissions, branches, and `reject`s inside a
+// branch – walked by `forEachStep` and the helpers beside it. Anything
+// that reads or rewrites a command goes through them, into every
+// branch. The pages edit the top-level rules and emissions as two
+// lists (`commandLists` / `withCommandLists`), which leave every
+// branch where it is.
+//
 // Command bodies carry an optional `feature`, naming the set a command
 // belongs to. Nothing in the model reads it – it rides along untouched
 // through validation, references and renames – and it is the one field
@@ -1230,7 +1238,7 @@ function forEachReferenceSlot(kind, name, body, slot) {
         projectionAt(operand, 'projection');
         tagLiteralSlots(operand.tags);
       });
-      for (const emission of body.publishes || []) at(emission, 'name', 'event-definition', 'name');
+      for (const emission of commandEmissions(body)) at(emission, 'name', 'event-definition', 'name');
       break;
     case 'scenario-definition':
       // A scenario names the command it exercises, every event its
@@ -1413,6 +1421,15 @@ function predicateText(predicate) { return PREDICATE_SYMBOL[predicate] || predic
 
 function conditionText(condition) {
   if (!condition) return '';
+  if (isCompoundCondition(condition)) {
+    const and = Array.isArray(condition.all);
+    return conditionMembers(condition).map((part) => {
+      const text = conditionText(part);
+      // `and` binds tighter, so only an `or` inside an `and` needs its
+      // brackets.
+      return and && part && Array.isArray(part.any) ? `(${text})` : text;
+    }).join(and ? ' and ' : ' or ');
+  }
   const left = operandText(condition.leftHandSide);
   const core = condition.rightHandSide === undefined
     ? `${left} ${predicateText(condition.predicate)}`
@@ -1713,6 +1730,326 @@ function offersSuccessor(model, valueType) {
   return cls.kind === 'value' && !cls.composite;
 }
 
+// ============================================================
+// Command steps (11.0).
+//
+// A command's body is one ordered list, `steps`, run top-down:
+//
+//   {condition, rejection}            a rule – `require c else reject "m"`
+//   {name, parameters}                an emission – `emit E { … }`
+//   {branches: [{condition, steps}], otherwise?: steps}
+//                                     `if c => … else if c => … else => …`
+//   {reject: "m"}                     `reject "m"`, inside a branch
+//
+// Any rejection – a rule that does not hold, or a `reject` reached –
+// aborts the command with no events; the emissions reached on the way
+// form its one append, and reaching none is publishing nothing. Separate
+// branch steps all run; one branch step runs its first arm whose
+// condition holds, else `otherwise`, else nothing. A rule is the
+// shorthand `if not c => reject "m"`, kept as its own step because it
+// is the common case and reads as one.
+//
+// A condition is a predicate (`UnaryCondition` / `BinaryCondition`, the
+// leaf) or a combination, `{all: [c, …]}` (`and`) or `{any: [c, …]}`
+// (`or`). The leaf is what every analysis of one comparison – types,
+// fan roots, zipping, enum members – reads (`conditionLeaves`).
+//
+// Before 11.0 a command had `conditions` (every rule, all checked first)
+// and `publishes` (every emission, published together); `stepsFrom`
+// writes that as steps – the rules in order, then the emissions in
+// order – which is exactly how it evaluated.
+// ============================================================
+
+// What a step is, by the key that tells it apart – the way a binding is
+// told apart by `group` or `projection`. Null for anything else.
+function stepKind(step) {
+  if (!step || typeof step !== 'object' || Array.isArray(step)) return null;
+  if (step.branches !== undefined) return 'branch';
+  if (step.reject !== undefined) return 'reject';
+  if (step.condition !== undefined) return 'rule';
+  if (step.name !== undefined) return 'emit';
+  return null;
+}
+
+function commandSteps(body) {
+  return (body && Array.isArray(body.steps)) ? body.steps : [];
+}
+
+// A branch step's arms, `otherwise` last as an arm without a condition.
+function stepArms(step) {
+  const arms = (Array.isArray(step && step.branches) ? step.branches : [])
+    .filter((arm) => arm && typeof arm === 'object')
+    .map((arm, index) => ({ index, condition: arm.condition, steps: Array.isArray(arm.steps) ? arm.steps : [] }));
+  if (step && step.otherwise !== undefined) {
+    arms.push({ index: 'otherwise', condition: undefined, steps: Array.isArray(step.otherwise) ? step.otherwise : [] });
+  }
+  return arms;
+}
+
+// Every step, depth first in written order: `visit(step, at)`, `at` the
+// step's path (`[2, 0, 1]`: the first arm of step 2, its step 1 –
+// `'otherwise'` for the else arm) and `depth`, 0 at the top.
+function forEachStep(steps, visit, path = []) {
+  (Array.isArray(steps) ? steps : []).forEach((step, index) => {
+    const at = [...path, index];
+    visit(step, { path: at, depth: path.length / 2 });
+    if (stepKind(step) !== 'branch') return;
+    for (const arm of stepArms(step)) forEachStep(arm.steps, visit, [...at, arm.index]);
+  });
+}
+
+function stepsOfKind(body, kind) {
+  const out = [];
+  forEachStep(commandSteps(body), (step) => { if (stepKind(step) === kind) out.push(step); });
+  return out;
+}
+
+// Every rule, emission and branch step, wherever it sits.
+function commandRules(body) { return stepsOfKind(body, 'rule'); }
+function commandEmissions(body) { return stepsOfKind(body, 'emit'); }
+function commandBranchSteps(body) { return stepsOfKind(body, 'branch'); }
+
+// The steps written at the top, of one kind – what the pages edit.
+function topLevelSteps(body, kind) {
+  return commandSteps(body).filter((step) => stepKind(step) === kind);
+}
+
+function commandHasBranches(body) {
+  return commandSteps(body).some((step) => stepKind(step) === 'branch');
+}
+
+// An arm's key, as evaluation reports the arms it took: the branch
+// step's path, then the arm – `2/0`, `2/otherwise`, `2/0/1/1`.
+function armKey(path, arm) {
+  return [...path, arm].join('/');
+}
+
+// The pre-11.0 body, as steps: the rules in order, then the emissions.
+// A rule moves its message out of the condition beside it.
+function stepsFrom(conditions, publishes) {
+  const rules = (Array.isArray(conditions) ? conditions : []).filter(Boolean).map((rule) => {
+    const { rejection, ...condition } = rule;
+    return rejection === undefined ? { condition } : { condition, rejection };
+  });
+  // An empty guard said nothing, and was read as none.
+  const emissions = (Array.isArray(publishes) ? publishes : []).filter(Boolean).map((emission) => {
+    if (!Array.isArray(emission.when) || emission.when.length) return emission;
+    const { when, ...rest } = emission;
+    return rest;
+  });
+  return [...rules, ...emissions];
+}
+
+// The pages' view of a command, and its way back (11.0). The visual
+// editors edit two lists, as before steps: the rules written at the top
+// – each flat, its condition with the `rejection` beside it – and the
+// emissions written at the top. Everything else stays where it is:
+// `withCommandLists` puts the edited lists back into the slots they
+// came from, in order, so a branch is never flattened or dropped by an
+// edit that did not touch it. A rule added goes after the last rule (or
+// first, when there was none), an emission added goes last, and a
+// removed one gives up the last slot of its kind.
+function commandLists(body) {
+  const steps = commandSteps(body);
+  return {
+    conditions: steps.filter((step) => stepKind(step) === 'rule')
+      .map((rule) => (rule.rejection === undefined ? { ...rule.condition } : { ...rule.condition, rejection: rule.rejection })),
+    publishes: steps.filter((step) => stepKind(step) === 'emit'),
+  };
+}
+
+function withCommandLists(steps, conditions, publishes) {
+  const rules = (conditions || []).filter(Boolean).map((flat) => {
+    const { rejection, ...condition } = flat;
+    return rejection === undefined ? { condition } : { condition, rejection };
+  });
+  const emissions = (publishes || []).filter(Boolean);
+  const out = [];
+  let lastRule = -1;
+  for (const step of Array.isArray(steps) ? steps : []) {
+    const kind = stepKind(step);
+    if (kind === 'rule') {
+      if (rules.length) { out.push(rules.shift()); lastRule = out.length - 1; }
+      continue;
+    }
+    if (kind === 'emit') {
+      if (emissions.length) out.push(emissions.shift());
+      continue;
+    }
+    out.push(step);
+  }
+  out.splice(lastRule + 1, 0, ...rules);
+  out.push(...emissions);
+  return out;
+}
+
+// ---------- conditions ----------
+
+function isCompoundCondition(condition) {
+  return !!condition && typeof condition === 'object' && !Array.isArray(condition)
+    && (Array.isArray(condition.all) || Array.isArray(condition.any));
+}
+
+function conditionMembers(condition) {
+  if (!isCompoundCondition(condition)) return [];
+  return (Array.isArray(condition.all) ? condition.all : condition.any).filter(Boolean);
+}
+
+// The predicates a condition is made of, in written order.
+function conditionLeaves(condition, out = []) {
+  if (!condition || typeof condition !== 'object') return out;
+  if (isCompoundCondition(condition)) {
+    for (const part of conditionMembers(condition)) conditionLeaves(part, out);
+    return out;
+  }
+  out.push(condition);
+  return out;
+}
+
+// A rule step's condition, or a pre-11.0 rule (the condition itself,
+// carrying its `rejection`) – the editors still hold that flat shape.
+function ruleCondition(rule) {
+  if (!rule || typeof rule !== 'object') return null;
+  return rule.condition !== undefined ? rule.condition : rule;
+}
+
+// Every condition a command states – its rules' and its arms' – as
+// `visit(condition, where)`, `where` the rule or the arm it guards.
+function forEachCommandCondition(body, visit) {
+  forEachStep(commandSteps(body), (step, at) => {
+    const kind = stepKind(step);
+    if (kind === 'rule' && step.condition) visit(step.condition, { step, ...at });
+    if (kind !== 'branch') return;
+    (step.branches || []).forEach((arm) => {
+      if (arm && arm.condition) visit(arm.condition, { step, arm, ...at });
+    });
+  });
+}
+
+// Every predicate a command states, whichever condition holds it.
+function commandConditionLeaves(body) {
+  const out = [];
+  forEachCommandCondition(body, (condition) => conditionLeaves(condition, out));
+  return out;
+}
+
+// Every rejection message a command can be refused with, in written
+// order – its rules' and its `reject`s'.
+function commandRejectionSteps(body) {
+  const out = [];
+  forEachStep(commandSteps(body), (step) => {
+    const kind = stepKind(step);
+    if (kind === 'rule') out.push({ step, rejection: step.rejection, text: conditionText(step.condition) });
+    if (kind === 'reject') out.push({ step, rejection: step.reject, text: `reject ${JSON.stringify(step.reject)}` });
+  });
+  return out;
+}
+
+// A body's steps rebuilt by `map(step) → step`, depth first – the
+// rewrites that rename an event or move a read go through here, so a
+// branch is never left behind.
+function mapSteps(steps, map) {
+  return (Array.isArray(steps) ? steps : []).map((step) => {
+    if (stepKind(step) !== 'branch') return map(step);
+    const out = { ...step };
+    if (Array.isArray(step.branches)) {
+      out.branches = step.branches.map((arm) => (arm && typeof arm === 'object'
+        ? { ...arm, steps: mapSteps(arm.steps, map) } : arm));
+    }
+    if (step.otherwise !== undefined) out.otherwise = mapSteps(step.otherwise, map);
+    return map(out);
+  });
+}
+
+// A condition rebuilt leaf by leaf.
+function mapConditionLeaves(condition, map) {
+  if (isCompoundCondition(condition)) {
+    const key = Array.isArray(condition.all) ? 'all' : 'any';
+    return { ...condition, [key]: condition[key].map((part) => mapConditionLeaves(part, map)) };
+  }
+  return condition ? map(condition) : condition;
+}
+
+// ---------- what a condition says about optional parameters ----------
+//
+// Inside `if x is not empty`, and after `require x is not empty`, an
+// optional parameter `x` holds a value – so emitting it into a required
+// field, or reading by it, is no hazard there. `conditionPresence` is
+// what holding a condition says (`x is not empty`), `conditionAbsence`
+// what failing it says (`x is empty` failing): both the parameters they
+// prove present. `and` proves what any part proves, `or` only what
+// every part does – and the reverse when the condition fails.
+function presentWhen(leaf, holds) {
+  if (!leaf || operandSource(leaf.leftHandSide) !== 'parameter' || leaf.leftHandSide.property !== undefined) return [];
+  const notEmpty = leaf.predicate === 'isNotEmpty' ? !leaf.negate
+    : leaf.predicate === 'isEmpty' ? !!leaf.negate : null;
+  if (notEmpty === null) return [];
+  return notEmpty === holds ? [leaf.leftHandSide.parameterName] : [];
+}
+
+function conditionPresence(condition, holds = true) {
+  if (!isCompoundCondition(condition)) return new Set(presentWhen(condition, holds));
+  const parts = conditionMembers(condition).map((part) => conditionPresence(part, holds));
+  // and-holds and or-fails: every part did; or-holds and and-fails: one did.
+  const every = Array.isArray(condition.all) === holds;
+  if (every) return new Set(parts.flatMap((set) => [...set]));
+  if (!parts.length) return new Set();
+  return new Set([...parts[0]].filter((name) => parts.every((set) => set.has(name))));
+}
+
+// Each predicate of a condition with what is present when it is
+// checked: an `and` checks its parts in order and stops at the first
+// that fails, so a later part leans on what the earlier ones proved.
+function forEachLeafPresence(condition, present, visit) {
+  if (!isCompoundCondition(condition)) { if (condition) visit(condition, present); return; }
+  let now = new Set(present);
+  for (const part of conditionMembers(condition)) {
+    forEachLeafPresence(part, now, visit);
+    if (Array.isArray(condition.all)) now = new Set([...now, ...conditionPresence(part, true)]);
+    else now = new Set([...now, ...conditionPresence(part, false)]);
+  }
+}
+
+// Walks the steps with what is known present at each one:
+// `visit(step, present, at)`, and `onCondition(condition, present)` for
+// each condition as it is reached. Returns what is present after the
+// steps, or null when every path through them rejects.
+function walkPresence(steps, visit, present = new Set(), onCondition = () => {}, path = []) {
+  let now = new Set(present);
+  for (let index = 0; index < (Array.isArray(steps) ? steps.length : 0); index++) {
+    const step = steps[index];
+    const at = [...path, index];
+    const kind = stepKind(step);
+    visit(step, now, at);
+    if (kind === 'reject') return null;
+    if (kind === 'rule') {
+      onCondition(step.condition, now);
+      // A rule's own `and`: what its earlier parts prove, its later parts
+      // may lean on – checked in written order, and stopped at the first
+      // that fails.
+      for (const name of conditionPresence(step.condition, true)) now.add(name);
+      continue;
+    }
+    if (kind !== 'branch') continue;
+    const outcomes = [];
+    let fallThrough = new Set(now);
+    for (const arm of stepArms(step)) {
+      const entering = new Set(fallThrough);
+      if (arm.condition !== undefined) {
+        onCondition(arm.condition, fallThrough);
+        for (const name of conditionPresence(arm.condition, true)) entering.add(name);
+        for (const name of conditionPresence(arm.condition, false)) fallThrough.add(name);
+      }
+      const after = walkPresence(arm.steps, visit, entering, onCondition, [...at, arm.index]);
+      if (after) outcomes.push(after);
+    }
+    if (step.otherwise === undefined) outcomes.push(fallThrough);
+    if (!outcomes.length) return null;
+    now = new Set([...outcomes[0]].filter((name) => outcomes.every((set) => set.has(name))));
+  }
+  return now;
+}
+
 // Walks every operand inside a command body – and into every inline
 // projection read (8.0), whose tags and arguments are operands in the
 // same scope: `CourseStatus(course.id)` names `course` exactly as a
@@ -1757,16 +2094,27 @@ function forEachCommandOperand(body, outerVisit) {
       for (const operand of rights) visit(operand, { where });
     }
   };
-  for (const condition of body.conditions || []) {
-    if (!condition) continue;
-    visitCondition(condition, `condition "${conditionText(condition)}"`);
-  }
-  for (const emission of body.publishes || []) {
-    if (!emission) continue;
-    for (const [key, operand] of Object.entries(emission.parameters || {})) {
-      visit(operand, { where: `emission "${emission.name}.${key}"` });
+  // The steps, in written order and into every branch: a rule's and an
+  // arm's predicates, an emission's fields.
+  forEachStep(commandSteps(body), (step) => {
+    const kind = stepKind(step);
+    if (kind === 'rule' && step.condition) {
+      const text = conditionText(step.condition);
+      for (const leaf of conditionLeaves(step.condition)) visitCondition(leaf, `condition "${text}"`);
     }
-  }
+    if (kind === 'branch') {
+      for (const arm of step.branches || []) {
+        if (!arm || !arm.condition) continue;
+        const text = conditionText(arm.condition);
+        for (const leaf of conditionLeaves(arm.condition)) visitCondition(leaf, `condition "if ${text}"`);
+      }
+    }
+    if (kind === 'emit') {
+      for (const [key, operand] of Object.entries(step.parameters || {})) {
+        visit(operand, { where: `emission "${step.name}.${key}"` });
+      }
+    }
+  });
 }
 
 // ============================================================
@@ -2241,8 +2589,9 @@ function deriveDcb(model, body) {
     items.push(...readItems(model, body, read, { alias: null, inline: key }));
   }
 
+  // What it writes, over every emission any run might reach.
   const writes = [];
-  for (const emission of body.publishes || []) {
+  for (const emission of commandEmissions(body)) {
     if (!emission) continue;
     const event = model['event-definitions'][emission.name];
     if (!event) continue;
@@ -2371,9 +2720,8 @@ function mapConditionOperands(body, replace) {
     if (Array.isArray(condition.rightHandSide)) condition.rightHandSide = condition.rightHandSide.map(replace);
     else if (condition.rightHandSide !== undefined) condition.rightHandSide = replace(condition.rightHandSide);
   };
-  for (const condition of body.conditions || []) mapCondition(condition);
-  for (const emission of body.publishes || []) {
-    if (!emission) continue;
+  for (const leaf of commandConditionLeaves(body)) mapCondition(leaf);
+  for (const emission of commandEmissions(body)) {
     for (const key of Object.keys(emission.parameters || {})) {
       emission.parameters[key] = replace(emission.parameters[key]);
     }
@@ -2606,9 +2954,9 @@ function bindingReferences(model, body) {
     for (const operand of rights) noteOperand(operand, reason);
   };
 
-  for (const condition of body.conditions || []) noteCondition(condition, 'rule');
-  for (const emission of body.publishes || []) {
-    if (!emission) continue;
+  // A branch's condition decides as a rule's does.
+  for (const leaf of commandConditionLeaves(body)) noteCondition(leaf, 'rule');
+  for (const emission of commandEmissions(body)) {
     for (const operand of Object.values(emission.parameters || {})) {
       noteOperand(operand, 'emission');
     }
@@ -2879,33 +3227,57 @@ function rejectionProblem(text) {
 
 // Required on every rule – but only ever advised, never refused: a rule without one still evaluates, and a
 // refusal by it is what a scenario cannot name (`deriveThen`).
+// A `reject` statement is held to the same.
 function rejectionAdvisories(body) {
   const messages = [];
-  for (const condition of body.conditions || []) {
-    if (!condition) continue;
-    if (condition.rejection === undefined) {
-      messages.push(`The rule "${conditionText(condition)}" has no rejection message – `
+  for (const { step, rejection, text } of commandRejectionSteps(body)) {
+    if (rejection === undefined) {
+      messages.push(`The rule "${text}" has no rejection message – `
         + 'say what the command is refused with when it does not hold.');
       continue;
     }
-    const problem = rejectionProblem(condition.rejection);
-    if (problem) messages.push(`The rejection message of "${conditionText(condition)}" ${problem}.`);
+    const problem = rejectionProblem(rejection);
+    if (problem) messages.push(`The rejection message of "${stepKind(step) === 'reject' ? 'reject' : text}" ${problem}.`);
   }
   return messages;
 }
 
-// The messages a command can be refused with, in rule order, each once,
-// with the rules that lead to it. Rules sharing a message are one
-// outcome. A rule without a message is left out – it is an advisory.
+// The messages a command can be refused with, in written order, each
+// once, with the steps that lead to it – rules, and `reject`s in
+// branches (`{index, condition}` for a rule, `index` its place among
+// the rules; `{reject}` for a statement). Steps sharing a message are
+// one outcome. One without a message is left out – it is an advisory.
 function commandRejections(body) {
   const outcomes = [];
-  ((body && body.conditions) || []).forEach((condition, index) => {
-    if (!condition || rejectionProblem(condition.rejection)) return;
-    let outcome = outcomes.find((o) => o.rejection === condition.rejection);
-    if (!outcome) outcomes.push(outcome = { rejection: condition.rejection, rules: [] });
-    outcome.rules.push({ index, condition });
-  });
+  let ruleIndex = -1;
+  for (const { step, rejection } of commandRejectionSteps(body)) {
+    const isRule = stepKind(step) === 'rule';
+    if (isRule) ruleIndex += 1;
+    if (rejectionProblem(rejection)) continue;
+    let outcome = outcomes.find((o) => o.rejection === rejection);
+    if (!outcome) outcomes.push(outcome = { rejection, rules: [] });
+    outcome.rules.push(isRule ? { index: ruleIndex, condition: step.condition } : { reject: step });
+  }
   return outcomes;
+}
+
+// What a command's scenarios owe it (11.0): one scenario per refusal –
+// each rejection message, `commandRejections` – and one per way it
+// succeeds. A command without branches succeeds one way; with them,
+// each arm that emits is a way of its own (`{arm, events}`, `arm` the
+// key evaluation reports it under, `armKey`), and so is getting through
+// with no arm emitting when emissions stand outside every branch.
+function commandSuccessesOwed(body) {
+  const arms = [];
+  forEachStep(commandSteps(body), (step, at) => {
+    if (stepKind(step) !== 'branch') return;
+    for (const arm of stepArms(step)) {
+      const events = arm.steps.filter((inner) => stepKind(inner) === 'emit').map((inner) => inner.name);
+      if (events.length) arms.push({ arm: armKey(at.path, arm.index), events, condition: arm.condition });
+    }
+  });
+  if (!arms.length) return [{ arm: null, events: topLevelSteps(body, 'emit').map((e) => e.name) }];
+  return arms;
 }
 
 // A grouped projection is advised under its qualified name, as the body
@@ -3871,13 +4243,35 @@ function validateCommandBody(model, body) {
     throw new DomainError(`Boundary binding "${binding.alias}" reads neither a projection nor a group.`);
   }
 
-  const allConditions = body.conditions || [];
+  // The steps are what the language can say: rules, emissions, branches
+  // whose arms each have a condition, and `reject`s – and a `reject`
+  // only inside a branch, since one standing at the top refuses always.
+  let stepProblem = null;
+  forEachStep(commandSteps(body), (step, at) => {
+    if (stepProblem) return;
+    const kind = stepKind(step);
+    if (!kind) stepProblem = `Step ${at.path.join('.')} is neither a rule, an emission, a branch nor a reject.`;
+    else if (kind === 'reject' && at.depth === 0) {
+      stepProblem = `"reject ${JSON.stringify(step.reject)}" stands outside any branch, so the command is always refused.`;
+    } else if (kind === 'reject' && rejectionProblem(step.reject)) {
+      stepProblem = `The rejection message of "reject" ${rejectionProblem(step.reject)}.`;
+    } else if (kind === 'branch' && (!Array.isArray(step.branches) || !step.branches.length)) {
+      stepProblem = 'A branch step has no "if" arm.';
+    } else if (kind === 'branch' && step.branches.some((arm) => !arm || !arm.condition)) {
+      stepProblem = 'A branch arm has no condition – only "else" goes without one.';
+    }
+  });
+  if (stepProblem) throw new DomainError(stepProblem);
+
+  // Every predicate, wherever it decides – a rule, or an arm of a
+  // branch. Each is quantified on its own.
+  const allConditions = commandConditionLeaves(body);
 
   // A plural alias cannot supply a single value, so it may be read by a
   // condition – which quantifies over it – but never emitted. Nor may a
   // read in place that fans out.
-  for (const emission of body.publishes || []) {
-    if (!emission || !emission.parameters) continue;
+  for (const emission of commandEmissions(body)) {
+    if (!emission.parameters) continue;
     for (const [key, operand] of Object.entries(emission.parameters)) {
       if (operandSource(operand) === 'projection-read' && readFanTag(operand)) {
         throw new DomainError(
@@ -4119,37 +4513,55 @@ function validateCommandBody(model, body) {
   // Optional-parameter hazards. Neither is a structural fault – the
   // model loads and evaluates – but each is a surprise waiting on the
   // first unset value, and this (an advisory, like every semantic
-  // finding) is where it gets said before that value arrives.
-  const readsOptionalParameter = (operand) =>
+  // finding) is where it gets said before that value arrives. Where a
+  // branch or an earlier rule has made sure of the value – inside `if x
+  // is not empty`, after `require x is not empty` – there is none
+  // (`walkPresence`).
+  const readsOptionalParameter = (operand, present = new Set()) =>
     operandSource(operand) === 'parameter'
+    && !present.has(operand.parameterName)
     && (body.properties || []).some(
       (p) => p.name === operand.parameterName && p.isOptional && !p.isList
     );
-  for (const emission of body.publishes || []) {
-    if (!emission) continue;
-    const event = model['event-definitions'][emission.name];
-    if (!event) continue;
+  // Where each alias is used, and what is present there: a read made
+  // lazily is made only where it is used, so it is safe from an unset
+  // tag wherever every use is.
+  const usedWith = new Map();
+  const noteUses = (operand, present) => {
+    for (const alias of operandAliases(operand)) {
+      if (!usedWith.has(alias)) usedWith.set(alias, []);
+      usedWith.get(alias).push(present);
+    }
+  };
+  let emissionHazard = null;
+  walkPresence(commandSteps(body), (step, present) => {
+    if (stepKind(step) !== 'emit') return;
+    for (const operand of Object.values(step.parameters || {})) noteUses(operand, present);
+    const event = model['event-definitions'][step.name];
+    if (!event || emissionHazard) return;
     for (const property of event.properties || []) {
       if (property.isOptional) continue;
-      const operand = (emission.parameters || {})[property.name];
-      if (operand !== undefined && readsOptionalParameter(operand)) {
-        throw new DomainError(
-          `"${emission.name}.${property.name}" is required, but takes its value from optional ` +
+      const operand = (step.parameters || {})[property.name];
+      if (operand !== undefined && readsOptionalParameter(operand, present)) {
+        emissionHazard =
+          `"${step.name}.${property.name}" is required, but takes its value from optional ` +
           `parameter "${operand.parameterName}" – when that is unset, this publishes null into ` +
-          `a property every reader may assume present. Mark the event property optional too, ` +
-          `or make the parameter required.`
-        );
+          `a property every reader may assume present. Emit it inside "if ${operand.parameterName} ` +
+          `is not empty", mark the event property optional too, or make the parameter required.`;
+        return;
       }
     }
-  }
+  }, new Set(), (condition, present) => forEachLeafPresence(condition, present, (leaf, here) => {
+    for (const operand of conditionOperands(leaf)) noteUses(operand, here);
+  }));
+  if (emissionHazard) throw new DomainError(emissionHazard);
   // What an emission writes into a field has to be what the event
   // declares there. Nothing converts on the way: an emission copies the
   // value it reads, so a `CartLine[]` mapped into an `Item[]` field
   // publishes cart lines under the item type's name, and every reader of
   // the event folds a shape it was never told about. Operands whose type
   // cannot be worked out (literals, dangling references) are left alone.
-  for (const emission of body.publishes || []) {
-    if (!emission) continue;
+  for (const emission of commandEmissions(body)) {
     const event = model['event-definitions'][emission.name];
     if (!event) continue;
     for (const property of event.properties || []) {
@@ -4171,9 +4583,19 @@ function validateCommandBody(model, body) {
   // Arguments are deliberately exempt: they reach a derivation as
   // ordinary values, and null is one. A read's tag becomes
   // a tag, and null has no tag – evaluation errors when it is unset, and
-  // this says so first.
+  // this says so first, unless every use of the read is where the value
+  // is present. A read another read is reached through is used where
+  // that one is.
+  for (const binding of [...boundary].reverse()) {
+    for (const alias of bindingDependsOn(body, binding)) {
+      if (!usedWith.has(alias)) usedWith.set(alias, []);
+      usedWith.get(alias).push(...(usedWith.get(binding.alias) || [new Set()]));
+    }
+  }
   for (const binding of boundary) {
-    const feed = readTagEntries(binding).find(([, operand]) => readsOptionalParameter(operand));
+    const uses = usedWith.get(binding.alias) || [];
+    const feed = readTagEntries(binding).find(([, operand]) => (uses.length
+      ? uses.some((present) => readsOptionalParameter(operand, present)) : readsOptionalParameter(operand)));
     if (feed) {
       const [name, operand] = feed;
       throw new DomainError(
@@ -4211,7 +4633,7 @@ function validateCommandBody(model, body) {
     }
   }
 
-  if (!body.publishes || body.publishes.length === 0) {
+  if (!commandEmissions(body).length) {
     throw new DomainError('A command must publish at least one event.');
   }
 }
@@ -4399,7 +4821,7 @@ function validateProjectionScenarioBody(model, body) {
 // 11.0 removed (`removedConstructIn`). Everything semantic – what the
 // containers *say* – is an advisory now, never a refusal.
 const STORABLE_LIST_FIELDS = [
-  'properties', 'handlers', 'boundary', 'conditions', 'publishes', 'parameters', 'given', 'projections',
+  'properties', 'handlers', 'boundary', 'steps', 'parameters', 'given', 'projections',
 ];
 
 // What 11.0 removed, where a body still says it: the first such
@@ -4438,7 +4860,8 @@ function removedConstructIn(kind, body) {
     }
   }
   if (kind === 'command-definition') {
-    const guarded = list(body.publishes).find((e) => e && e.when !== undefined
+    // In a document from before steps, or in a step.
+    const guarded = [...list(body.publishes), ...commandEmissions(body)].find((e) => e && e.when !== undefined
       && !(Array.isArray(e.when) && !e.when.length));
     if (guarded) return { construct: 'guard', what: `guards its emission of "${guarded.name}" (when …)`, emission: guarded.name };
     const optional = list(body.boundary).find((b) => b && b.isOptional === true);
@@ -4475,6 +4898,31 @@ function assertStorableBody(kind, body, name = null) {
         );
       }
     }
+  }
+  // A command says what it does as one list, `steps` (11.0): the two
+  // lists it had before are a shape this build no longer means. Inside
+  // a branch, each arm's steps and `otherwise` are lists of objects too.
+  if (kind === 'command-definition') {
+    for (const field of ['conditions', 'publishes']) {
+      if (body[field] !== undefined) {
+        throw new DomainError(`A command's "${field}" is gone – 11.0 says its rules and emissions in order, as "steps".`);
+      }
+    }
+    const steps = (list, where) => {
+      if (!Array.isArray(list)) throw new DomainError(`A command's ${where} must be a list.`);
+      for (const step of list) {
+        if (step === null || typeof step !== 'object' || Array.isArray(step)) {
+          throw new DomainError(`A command's ${where} must hold objects – got ${JSON.stringify(step)}.`);
+        }
+        if (step.branches === undefined) continue;
+        if (!Array.isArray(step.branches) || step.branches.some((arm) => arm === null || typeof arm !== 'object')) {
+          throw new DomainError('A branch step\'s "branches" must be a list of {condition, steps}.');
+        }
+        for (const arm of step.branches) steps(arm.steps === undefined ? [] : arm.steps, 'branch arm\'s "steps"');
+        if (step.otherwise !== undefined) steps(step.otherwise, 'branch\'s "otherwise"');
+      }
+    };
+    if (body.steps !== undefined) steps(body.steps, '"steps"');
   }
   // An event's tags are paths, not objects – the one list of strings.
   if (kind === 'event-definition' && body.tags !== undefined) {
@@ -5070,8 +5518,7 @@ const MEMBER_REWRITES = {
     // assumed, since what is read is whichever the alias names.
     out.push(...rewriteCommands(model, (command) => {
       let touched = false;
-      for (const condition of command.conditions || []) {
-        if (!condition) continue;
+      for (const condition of commandConditionLeaves(command)) {
         // In an `equalsAny` list every entry sits opposite the left-hand
         // side; the entry objects are mutated in place like any operand.
         const sides = Array.isArray(condition.rightHandSide)
@@ -5122,8 +5569,8 @@ const MEMBER_REWRITES = {
     // an operand rewrite.
     out.push(...rewriteCommands(model, (command) => {
       let touched = false;
-      for (const emission of command.publishes || []) {
-        if (!emission || emission.name !== eventName) continue;
+      for (const emission of commandEmissions(command)) {
+        if (emission.name !== eventName) continue;
         if (emission.parameters && previous in emission.parameters) {
           emission.parameters = renameKey(emission.parameters, previous, next);
           touched = true;
@@ -6431,8 +6878,7 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
         tags: { [shape.tag.name]: convert(binding.id) },
       };
     }).filter((binding) => binding !== null);
-    if (Array.isArray(command.conditions)) command.conditions = convert(command.conditions);
-    if (Array.isArray(command.publishes)) command.publishes = convert(command.publishes);
+    if (Array.isArray(command.steps)) command.steps = convert(command.steps);
     for (const binding of command.boundary) if (binding && binding.projection !== undefined) movedRead(binding);
     forEachCommandOperand(command, (operand) => { if (operandSource(operand) === 'projection-read') movedRead(operand); });
     // Before 11.0 nothing was grouped, so every qualified read here is
@@ -6466,6 +6912,18 @@ function refuseRemovedConstructs({ groups, projections, commands }) {
     delete commands[name];
   }
   return notes;
+}
+
+// A command as a document before steps wrote it, lifted in place: its
+// `conditions` and `publishes` become `steps` (`stepsFrom`). One that
+// has `steps` already is left as it is.
+function liftCommandSteps(command) {
+  if (!command || typeof command !== 'object') return command;
+  if (command.conditions === undefined && command.publishes === undefined) return command;
+  if (command.steps === undefined) command.steps = stepsFrom(command.conditions, command.publishes);
+  delete command.conditions;
+  delete command.publishes;
+  return command;
 }
 
 const REMOVED_COMMAND_NOTES = {
@@ -6514,6 +6972,10 @@ function importModelFromEnvelope(envelope) {
     'projection-scenario-definition', envelope.projectionScenarioDefinitions
   );
   let converted = refuseRemovedConstructs({ groups, projections, commands });
+  // Before this revision of 11.0 a command held `conditions` and
+  // `publishes`; it evaluated them as the rules, then the emissions, and
+  // that is the order its steps take (`stepsFrom`) – nothing changes.
+  for (const command of Object.values(commands)) liftCommandSteps(command);
   if (legacy) {
     const lifted = groupsFromEntities({
       customTypes,
@@ -6651,12 +7113,32 @@ function seedProjectionScenario(modelId, id, body) {
   addDefinition('projection-scenario-definition', modelId, id, body);
 }
 
+// A seed states a command the way it reads – its rules, then what it
+// emits – and stores it as the steps that are (`liftCommandSteps`).
+// None of them branches, so nothing is lost either way.
+function seedCommand(modelId, name, body) {
+  addDefinition('command-definition', modelId, name, liftCommandSteps(deepClone(body)));
+}
+
 // Reads a definition back and writes the modified copy, so a later
 // layer never has to restate the shape an earlier one produced.
 function seedPatch(kind, modelId, name, mutate) {
   const body = deepClone(getCtxOrThrow(modelId)[DEF_COLLECTIONS[kind]][name]);
   mutate(body);
   updateDefinition(kind, modelId, name, body);
+}
+
+// A later layer's change to a seed command, made to the same two lists.
+function seedPatchCommand(modelId, name, mutate) {
+  seedPatch('command-definition', modelId, name, (body) => {
+    const steps = commandSteps(body);
+    body.conditions = steps.filter((step) => stepKind(step) === 'rule')
+      .map((rule) => ({ ...rule.condition, rejection: rule.rejection }));
+    body.publishes = steps.filter((step) => stepKind(step) === 'emit');
+    delete body.steps;
+    mutate(body);
+    liftCommandSteps(body);
+  });
 }
 
 function seedBase(modelId) {
@@ -6720,7 +7202,7 @@ function seedBase(modelId) {
 
   // 4. Commands. Every rule reads what it is about in place; those reads
   //    are the DCB.
-  const command = (name, body) => addDefinition('command-definition', modelId, name, body);
+  const command = (name, body) => seedCommand(modelId, name, body);
 
   command('DefineCourse', {
     properties: [prop('courseId', 'CourseId'), prop('capacity', 'integer')],
@@ -6841,7 +7323,7 @@ function seedAddSequence(modelId) {
     ],
   });
 
-  updateDefinition('command-definition', modelId, 'DefineCourse', {
+  updateDefinition('command-definition', modelId, 'DefineCourse', liftCommandSteps({
     properties: [seedProp('capacity', 'integer')],
     boundary: [seedReadProjection('courseNumbering', 'CourseNumbering')],
     conditions: [],
@@ -6852,7 +7334,7 @@ function seedAddSequence(modelId) {
         capacity: seedParam('capacity'),
       },
     }],
-  });
+  }));
 
 }
 
@@ -6938,7 +7420,7 @@ function seedAddTenancy(modelId) {
   });
 
   const tenantExists = seedRead('TenantExists', { tenantId: seedParam('tenantId') });
-  addDefinition('command-definition', modelId, 'RegisterTenant', {
+  seedCommand(modelId, 'RegisterTenant', {
     properties: [seedProp('tenantId', 'TenantId')],
     boundary: [],
     conditions: [
@@ -6951,7 +7433,7 @@ function seedAddTenancy(modelId) {
   // Two reads and a rule, all in one query: none of them names another,
   // so they come back together. This is why queries are counted by the
   // depth of the dependency graph and not by the number of reads.
-  seedPatch('command-definition', modelId, 'DefineCourse', (define) => {
+  seedPatchCommand(modelId, 'DefineCourse', (define) => {
     define.properties.unshift(seedProp('tenantId', 'TenantId'));
     define.boundary.push(seedReadProjection('tenantCourseNumbering', 'TenantCourseNumbering',
       { tenantId: seedParam('tenantId') }));
@@ -7040,7 +7522,7 @@ function seedProductPricing(modelId) {
   // 4. Commands defining and repricing a single product, so the
   //    example can be exercised before anything is ordered.
   const one = (projection) => seedRead(projection, { productId: param('productId') });
-  addDefinition('command-definition', modelId, 'DefineProduct', {
+  seedCommand(modelId, 'DefineProduct', {
     properties: [prop('productId', 'ProductId'), prop('price', 'Money')],
     boundary: [],
     conditions: [{
@@ -7053,7 +7535,7 @@ function seedProductPricing(modelId) {
       parameters: { productId: param('productId'), price: param('price') },
     }],
   });
-  addDefinition('command-definition', modelId, 'ChangeProductPrice', {
+  seedCommand(modelId, 'ChangeProductPrice', {
     properties: [prop('productId', 'ProductId'), prop('newPrice', 'Money')],
     boundary: [],
     conditions: [
@@ -7083,7 +7565,7 @@ function seedProductPricing(modelId) {
   });
 
   // 5. The command the example exists for.
-  addDefinition('command-definition', modelId, 'OrderProducts', {
+  seedCommand(modelId, 'OrderProducts', {
     properties: [prop('orderId', 'OrderId'), seedListProp('items', 'Item')],
     boundary: [],
     conditions: [
@@ -7185,7 +7667,7 @@ function seedDocumentAuthoring(modelId) {
     handler('DocumentPublished', 'set', { eventProperty: 'text' }),
   ]));
 
-  const command = (name, body) => addDefinition('command-definition', modelId, name, body);
+  const command = (name, body) => seedCommand(modelId, name, body);
 
   command('AddDocument', {
     properties: [prop('id', 'DocumentId')],
@@ -7259,7 +7741,7 @@ function seedDocumentAuthoring(modelId) {
 // the current text; the pending-changes comparison stays, restated
 // against the proven value.
 function seedVerifiedPublish(modelId) {
-  updateDefinition('command-definition', modelId, 'PublishDocument', {
+  updateDefinition('command-definition', modelId, 'PublishDocument', liftCommandSteps({
     properties: [seedProp('docId', 'DocumentId'), seedProp('text', 'string')],
     boundary: [],
     conditions: [
@@ -7280,7 +7762,7 @@ function seedVerifiedPublish(modelId) {
       name: 'DocumentPublished',
       parameters: { docId: seedParam('docId'), text: seedParam('text') },
     }],
-  });
+  }));
 }
 
 // Layer: the comparison declared once. `DocumentHasPendingChanges` is
@@ -7305,7 +7787,7 @@ function seedDerivedPending(modelId) {
     },
   });
 
-  seedPatch('command-definition', modelId, 'PublishDocument', (publish) => {
+  seedPatchCommand(modelId, 'PublishDocument', (publish) => {
     publish.conditions = [
       publish.conditions[0],
       { leftHandSide: seedDocument('DocumentHasPendingChanges'), predicate: 'isTrue',
@@ -7393,7 +7875,7 @@ function seedDeveloperHours(modelId) {
     },
   });
 
-  addDefinition('command-definition', modelId, 'AddProject', {
+  seedCommand(modelId, 'AddProject', {
     feature: 'Projects',
     properties: [prop('projectId', 'ProjectId'), prop('requiredSeniorityLevel', 'integer')],
     boundary: [],
@@ -7407,7 +7889,7 @@ function seedDeveloperHours(modelId) {
       parameters: { projectId: param('projectId'), requiredSeniorityLevel: param('requiredSeniorityLevel') },
     }],
   });
-  addDefinition('command-definition', modelId, 'ArchiveProject', {
+  seedCommand(modelId, 'ArchiveProject', {
     feature: 'Projects',
     properties: [prop('projectId', 'ProjectId')],
     boundary: [],
@@ -7418,7 +7900,7 @@ function seedDeveloperHours(modelId) {
     }],
     publishes: [{ name: 'ProjectArchived', parameters: { projectId: param('projectId') } }],
   });
-  addDefinition('command-definition', modelId, 'RegisterDeveloper', {
+  seedCommand(modelId, 'RegisterDeveloper', {
     feature: 'Developers',
     properties: [
       prop('developerId', 'DeveloperId'), prop('seniorityLevel', 'integer'), prop('availableHoursPerWeek', 'integer'),
@@ -7437,7 +7919,7 @@ function seedDeveloperHours(modelId) {
       },
     }],
   });
-  addDefinition('command-definition', modelId, 'AllocateHours', {
+  seedCommand(modelId, 'AllocateHours', {
     feature: 'Projects',
     properties: [
       prop('projectId', 'ProjectId'), prop('developerId', 'DeveloperId'), prop('week', 'WeekNumber'),

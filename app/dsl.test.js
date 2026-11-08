@@ -35,9 +35,27 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js'], {
 const { check, eq, finish } = makeChecker();
 const {
   loadPredefinedModel, projectState, modelToSource, parseModelSource, applyModelSource,
-  importModelFromEnvelope, sameDefinition, loadEvents, onAppend, addDefinition, updateDefinition,
+  importModelFromEnvelope, sameDefinition, loadEvents, onAppend,
   sourceAdvisories, sourceSpanAt, PREDEFINED_MODELS, SOURCE_KINDS, DEF_COLLECTIONS, deepClone,
 } = sandbox;
+
+// Many fixtures here state a command the way it reads without branches
+// – its rules, then what it emits. `lists` gives a stored or parsed
+// command that way (a copy, its `steps` kept), and `unlists` and the
+// writers below put the two lists back into the steps they came from
+// (`withCommandLists`).
+function lists(body) {
+  const copy = deepClone(body);
+  return Object.assign(copy, sandbox.commandLists(copy));
+}
+function unlists(kind, body) {
+  if (kind !== 'command-definition' || !body || (body.conditions === undefined && body.publishes === undefined)) return body;
+  const { conditions, publishes, ...rest } = body;
+  const kept = sandbox.commandLists(rest);
+  return { ...rest, steps: sandbox.withCommandLists(rest.steps, conditions || kept.conditions, publishes || kept.publishes) };
+}
+const addDefinition = (kind, id, name, body) => sandbox.addDefinition(kind, id, name, unlists(kind, body));
+const updateDefinition = (kind, id, name, body) => sandbox.updateDefinition(kind, id, name, unlists(kind, body));
 
 function fresh() {
   store.clear();
@@ -536,7 +554,7 @@ check('every rule shape reads back as the rule it was', () => {
     const source = `command C(a: integer, b: integer) {\n  require ${text}\n    else reject "No"\n}`;
     const parsed = parseModelSource(source);
     eq(parsed.diagnostics, [], text);
-    const rule = parsed.collections['command-definition'].C.conditions[0];
+    const rule = lists(parsed.collections['command-definition'].C).conditions[0];
     const want = { leftHandSide: { parameterName: 'a' }, ...expected, rejection: 'No' };
     if (want.rightHandSide === undefined && !['isEmpty', 'isNotEmpty', 'isTrue', 'isFalse'].includes(want.predicate)) {
       want.rightHandSide = { parameterName: 'b' };
@@ -550,7 +568,7 @@ check('every rule shape reads back as the rule it was', () => {
 check('every rule says what it is refused with, on its line or the next', () => {
   const ruleOf = (text) => {
     const parsed = parseModelSource(`command C(a: integer) {\n${text}\n}`);
-    return { diagnostics: parsed.diagnostics.map((d) => d.message), rule: (parsed.collections['command-definition'].C || {}).conditions };
+    return { diagnostics: parsed.diagnostics.map((d) => d.message), rule: lists(parsed.collections['command-definition'].C || {}).conditions };
   };
   const next = ruleOf('  require a > 1\n    else reject "Too small"');
   eq(next.diagnostics, [], 'on the next line');
@@ -569,7 +587,7 @@ check('every rule says what it is refused with, on its line or the next', () => 
     + '  scenarios {\n    scenario {\n      when C { a: 0 }\n      then rejected "No" saw 0, 1\n    }\n  }\n}').diagnostics.map((d) => d.message),
     ['A refusal is named by its message alone – what the rule read is not asserted.'], 'and by nothing else');
   const bare = { name: 'm', ...emptyCollections({ 'command-definition': { C: {
-    properties: [], boundary: [], publishes: [], conditions: [{ leftHandSide: { parameterName: 'a' }, predicate: 'isTrue' }],
+    properties: [], boundary: [], steps: [{ condition: { leftHandSide: { parameterName: 'a' }, predicate: 'isTrue' } }],
   } } }) };
   eq(modelToSource(bare).includes('// Written as JSON: a rule has no rejection message.\ncommand C json {'), true,
     'a stored rule without one is written as JSON');
@@ -580,14 +598,14 @@ check('membership in data reads either way round, and prints as contains', () =>
   const ruleOf = (rule) => {
     const parsed = parseModelSource(source(rule));
     eq(parsed.diagnostics, [], rule);
-    return parsed.collections['command-definition'].C.conditions[0];
+    return lists(parsed.collections['command-definition'].C).conditions[0];
   };
   const contains = { leftHandSide: { parameterName: 'b' }, predicate: 'contains', rightHandSide: { parameterName: 'a' }, rejection: 'No' };
   eq(sameDefinition(ruleOf('a in b'), contains), true, 'a in b');
   eq(sameDefinition(ruleOf('a not in b'), { ...contains, negate: true }), true, 'a not in b');
   eq(sameDefinition(ruleOf('not a in b'), { ...contains, negate: true }), true, 'not a in b');
   eq(sameDefinition(ruleOf('3 in b'), { ...contains, rightHandSide: 3 }), true, 'a literal in b');
-  const printed = modelToSource({ name: 'm', ...emptyCollections({ 'command-definition': { C: { properties: [], conditions: [ruleOf('a not in b')] } } }) });
+  const printed = modelToSource({ name: 'm', ...emptyCollections({ 'command-definition': { C: unlists('command-definition', { properties: [], conditions: [ruleOf('a not in b')] }) } }) });
   eq(printed.includes('require b not contains a'), true, `printed as\n${printed}`);
 
   // A rule written the other way round still resolves and renames: the
@@ -624,7 +642,7 @@ check('a name resolves to a read when one declares it, and to the payload otherw
     '  require ghost.status is true else reject "c"',
     '}',
   ].join('\n'));
-  const body = parsed.collections['command-definition'].C;
+  const body = lists(parsed.collections['command-definition'].C);
   eq(body.conditions[0].leftHandSide, { alias: 'course', property: 'status' }, 'read property');
   eq(body.conditions[0].rightHandSide, { parameterName: 'items', property: 'price' }, 'payload field');
   eq(body.conditions[1].leftHandSide, { alias: 'numbering' }, 'projection read');
@@ -638,10 +656,10 @@ check('a name resolves to a read when one declares it, and to the payload otherw
 
 check('what the grammar cannot say is written as JSON, says why, and still round-trips', () => {
   const { id, model } = buildText();
-  const body = JSON.parse(JSON.stringify(model()['command-definitions'].ArchiveCourse));
+  const body = lists((model()['command-definitions'].ArchiveCourse));
   body.conditions.push({ leftHandSide: { parameterName: 'courseId' }, predicate: 'resemblesStrongly', rightHandSide: 1, rejection: 'No' });
   updateDefinition('command-definition', id, 'ArchiveCourse', body);
-  const shadowed = JSON.parse(JSON.stringify(model()['command-definitions'].DefineCourse));
+  const shadowed = lists((model()['command-definitions'].DefineCourse));
   shadowed.boundary[0].alias = 'courseId';
   shadowed.conditions[0].leftHandSide.alias = 'courseId';
   updateDefinition('command-definition', id, 'DefineCourse', shadowed);
@@ -664,7 +682,7 @@ check('a fallback\'s reason stays a comment, whatever the stored strings it quot
   // smuggle in a projection nobody declared, added the moment the
   // untouched text was applied.
   const { id, model } = buildText();
-  const body = JSON.parse(JSON.stringify(model()['command-definitions'].ArchiveCourse));
+  const body = lists((model()['command-definitions'].ArchiveCourse));
   body.conditions.push({
     leftHandSide: 1, rejection: 'No', // no right-hand side: the reason quotes the predicate raw
     predicate: 'x\nuntagged projection Smuggled: integer = 0 {\n'
@@ -697,7 +715,7 @@ check('an edit is written as exactly the definitions it changed, in one append',
   eq(appends - before, 1, 'one append');
   eq(loadEvents().length - log, 1, 'one event');
   eq(summary.updated, [{ kind: 'command-definition', name: 'SubscribeStudentToCourse' }], 'updated');
-  eq(model()['command-definitions'].SubscribeStudentToCourse.conditions[4].rightHandSide, 12, 'the new limit');
+  eq(lists(model()['command-definitions'].SubscribeStudentToCourse).conditions[4].rightHandSide, 12, 'the new limit');
 });
 
 check('adding, removing, reordering and renaming the model are one append together', () => {
@@ -1159,7 +1177,7 @@ check('a group owns its projections, and they read as the stored shape', () => {
   const line = GROUPS_MORE.split('\n').findIndex((l) => l.includes('capacity - subscriptionCount')) + 1;
   eq(sourceSpanAt(parsed, line).name, 'Course.remaining', 'found before its group\'s');
 
-  const subscribe = parsed.collections['command-definition'].SubscribeStudentToCourse;
+  const subscribe = lists(parsed.collections['command-definition'].SubscribeStudentToCourse);
   eq(subscribe.boundary, [
     { alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } },
     { alias: 'student', group: 'Student', tags: { studentId: { parameterName: 'studentId' } } },
@@ -1168,7 +1186,7 @@ check('a group owns its projections, and they read as the stored shape', () => {
   ], 'a group read, fanned out, and a grouped projection bound on its own');
   eq(subscribe.conditions[2].leftHandSide, { alias: 'course', property: 'hasRoomFor', arguments: { seats: 1 } },
     'its arguments on the projection, by name');
-  eq(parsed.collections['command-definition'].DefineCourse.conditions[0].leftHandSide,
+  eq(lists(parsed.collections['command-definition'].DefineCourse).conditions[0].leftHandSide,
     { projection: 'Course.status', tags: { courseId: { parameterName: 'courseId' } } }, 'read in place');
   const scenario = parsed.scenarios.find((r) => r.kind === 'projection-scenario-definition');
   eq([scenario.block.name, scenario.body.projection, scenario.body.tags],
@@ -1235,7 +1253,7 @@ check('what 11.0 removed is an error where it is written, saying so', () => {
   eq(errors('projection P (tag courseId: CourseId): integer = 0 {\n  on E => set currentValue\n}\n'),
     ['"currentValue" is gone – a handler\'s value comes from the event (event.data.x), a literal or successor(…).'], 'currentValue');
   eq(errors('command C(courseId: CourseId) {\n  emit E { courseId }\n    when courseId == "c1"\n}\n'),
-    ['"when" on an emission is gone – 11.0 has no guarded emissions: an emission is published whenever its command is.'],
+    ['"when" on an emission is gone – 11.0 has no guarded emissions: "if … => emit …" emits under a condition.'],
     'a guarded emission');
   eq(errors('projection P (tag courseId: CourseId): integer = 0 {}\ncommand C(courseId: CourseId) {\n  alias p? = P(courseId)\n  emit E { courseId }\n}\n'),
     ['"p?" is gone – 11.0 has no optional reads: a read needs a value for each of its tags.'], 'an optional read');
@@ -1519,11 +1537,11 @@ check('a rule reads a projection in place – no alias needed', () => {
   ].join('\n');
   const parsed = parseModelSource(text);
   eq(parsed.diagnostics, [], 'it reads');
-  const check = parsed.collections['command-definition'].Check;
+  const check = lists(parsed.collections['command-definition'].Check);
   eq(check.conditions[0].leftHandSide, { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } }, 'a read in place');
   eq(check.conditions[0].rightHandSide, { enumMember: 'Existent' }, 'beside an enum member, which is not a projection');
   eq(check.conditions[1].leftHandSide.tags.ownerId, { projection: 'CourseOwner', tags: { courseId: { parameterName: 'courseId' } } }, 'nested');
-  eq(parsed.collections['command-definition'].Define.publishes[0].parameters.courseId, { projection: 'CourseNumbering' },
+  eq(lists(parsed.collections['command-definition'].Define).publishes[0].parameters.courseId, { projection: 'CourseNumbering' },
     'an untagged read');
   eq(parseModelSource(swap(text, 'courseId: CourseNumbering()', 'courseId: CourseNumbering')).diagnostics.map((d) => d.message),
     ['CourseNumbering is a projection – read it as CourseNumbering(…).'], 'a projection bare is an error, with its fix');
@@ -1782,7 +1800,7 @@ check('a read in place becomes an alias, every equal read in the command with it
   eq(out.text.includes('require courseStatus != NonExistent'), true, 'and in the other rule');
   const parsed = parseModelSource(out.text);
   eq(parsed.diagnostics, [], 'it reads');
-  const body = parsed.collections['command-definition'].Change;
+  const body = lists(parsed.collections['command-definition'].Change);
   eq(body.boundary, [{ alias: 'courseStatus', projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } }],
     'one binding');
   eq(body.conditions[0].leftHandSide, { alias: 'courseStatus' }, 'read through it');
@@ -1854,7 +1872,7 @@ check('a group and its projections are renamed wherever they are named', () => {
   const tag = renameAt(more, 'group Course (tag courseId', 'group Course (tag '.length, 'id').text;
   eq(tag.includes('group Course (tag id: CourseId) {'), true, 'a group\'s tag');
   eq(tag.includes('StudentSubscriptionTotal(id) > 100'), true, 'passed on by a derived projection');
-  eq(parseModelSource(tag).collections['command-definition'].DefineCourse.conditions[0].leftHandSide.tags,
+  eq(lists(parseModelSource(tag).collections['command-definition'].DefineCourse).conditions[0].leftHandSide.tags,
     { id: { parameterName: 'courseId' } }, 'and a read gives its value anew');
   const argument = renameAt(more, 'hasRoomFor (seats', 'hasRoomFor ('.length, 'places').text;
   eq(argument.includes('require course.hasRoomFor(places: 1) is true'), true, 'an argument, where it is given');
@@ -1944,7 +1962,7 @@ check('completion knows a command\'s reads and payload', () => {
   eq(rule('emit CourseCapacityChanged { courseId, |}').labels, ['newCapacity'], 'an event\'s remaining properties');
   eq(rule('emit CourseCapacityChanged { |}').items.map((i) => i.insert), ['courseId', 'newCapacity'], 'as shorthands');
   const start = rule('|');
-  eq([start.labels, start.slot], [['alias', 'require', 'emit', 'scenarios'], false], 'a statement, not on a space');
+  eq([start.labels, start.slot], [['alias', 'require', 'emit', 'if', 'scenarios'], false], 'a statement, not on a space');
 });
 
 check('completion knows scenarios, declarations, and when to stay quiet', () => {
@@ -2290,11 +2308,11 @@ command ClaimUsername(username: Username) {
     eq(status, 1, 'exit');
     eq(stderr.includes('"when" on an emission is gone'), true, stderr);
     const json = JSON.parse(run('json', write('plain.dcb', MODEL)).stdout);
-    json.commandDefinitions[0].publishes[0].when = [{ leftHandSide: { parameterName: 'username' }, predicate: 'isNotEmpty' }];
+    json.commandDefinitions[0].steps.find((step) => step.name)['when'] = [{ leftHandSide: { parameterName: 'username' }, predicate: 'isNotEmpty' }];
     const guarded = run('print', write('guarded.json', JSON.stringify(json)));
     eq(guarded.stderr.includes('converted on import: ClaimUsername:') && guarded.stderr.includes('not imported'), true,
       'a command left out is said, even where the model still prints: ' + guarded.stderr);
-    delete json.commandDefinitions[0].publishes[0].when;
+    delete json.commandDefinitions[0].steps.find((step) => step.name)['when'];
     json.projectionDefinitions[0].script = { initialState: false };
     const scripted = run('check', write('scripted.json', JSON.stringify(json)));
     eq([scripted.status, scripted.stderr.trim()],
@@ -2369,6 +2387,216 @@ projection Taken (tag courseId: CourseId): integer = 0 {
     const printed = run('print', file);
     eq(printed.stderr.includes('1 sandbox step(s) not printed'), true, 'print says it leaves it');
     eq(printed.stdout, run('print', notation).stdout, 'the same notation back');
+  });
+}
+
+
+// ---------------------------------------------------------------
+// Commands run top-down (11.0): branches, `reject`, `or`, lazy reads.
+// ---------------------------------------------------------------
+{
+  const SHARES = `model "Shares"
+
+// Types
+enum EndReason { OwnerEnded, InviteeEnded }
+tag type CustomerId = string
+tag type ShareId = string
+
+// Events
+event ShareOpened { tag shareId: ShareId, tag owner: CustomerId }
+event ShareInvited { tag shareId: ShareId, tag invitee: CustomerId }
+event ContractShareEnded { tag shareId: ShareId, reason: EndReason }
+event ShareNoted { tag shareId: ShareId, note: string }
+
+// Projections
+projection ShareActive (tag shareId: ShareId): boolean = false {
+  on ShareOpened => set true
+  on ContractShareEnded => set false
+}
+
+projection ShareOwner (tag shareId: ShareId): CustomerId = null {
+  on ShareOpened => set event.data.owner
+}
+
+projection ShareInvitee (tag shareId: ShareId): CustomerId = null {
+  on ShareInvited => set event.data.invitee
+}
+
+// Commands
+command EndContractShare(shareId: ShareId, actor: CustomerId, note?: string) {
+  require ShareActive(shareId) is true
+    else reject "Share is not active"
+
+  if ShareOwner(shareId) == actor => emit ContractShareEnded { shareId, reason: OwnerEnded }
+  else if ShareInvitee(shareId) == actor => {
+    require note is not empty
+      else reject "An invitee says why"
+    emit ContractShareEnded { shareId, reason: InviteeEnded }
+    emit ShareNoted { shareId, note }
+  }
+  else => reject "Customer is not owner or invitee of this share"
+}
+
+command NoteShare(shareId: ShareId, actor: CustomerId) {
+  if ShareActive(shareId) is true and (ShareOwner(shareId) == actor or ShareInvitee(shareId) == actor) => emit ShareNoted { shareId, note: "seen" }
+  if ShareActive(shareId) is true => emit ShareNoted { shareId, note: "active" }
+}
+
+command RenameShare(shareId?: ShareId, note: string) {
+  alias active = ShareActive(shareId)
+
+  require shareId is not empty
+    else reject "No share"
+  require active is true
+    else reject "Share is not active"
+
+  emit ShareNoted { shareId, note }
+}
+`;
+  const shares = () => buildText(SHARES).model();
+  const opened = [
+    { type: 'ShareOpened', data: { shareId: 's1', owner: 'alice' } },
+    { type: 'ShareInvited', data: { shareId: 's1', invitee: 'bob' } },
+  ];
+  const run = (model, command, args, log = opened) => sandbox.evaluateCommand(model, log, command, args);
+
+  check('a command with branches prints as written and parses back equal', () => {
+    const { model } = buildText(SHARES);
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const text = modelToSource(model());
+    eq(text.includes('// Written as JSON'), false, text);
+    eq(text.slice(text.indexOf('// Commands')), SHARES.slice(SHARES.indexOf('// Commands')), 'printed as written');
+    const parsed = parseModelSource(text);
+    eq(parsed.diagnostics, [], 'it reads');
+    assertSameModel(model(), parsed, 'branches');
+    const branch = model()['command-definitions'].EndContractShare.steps[1];
+    eq([branch.branches.length, branch.otherwise], [2, [{ reject: 'Customer is not owner or invitee of this share' }]],
+      'two arms and an else that rejects');
+    eq(model()['command-definitions'].NoteShare.steps[0].branches[0].condition.all[1].any.length, 2,
+      '`and` binds tighter, brackets group');
+  });
+
+  check('an else chain runs its first arm that holds; the else arm rejects', () => {
+    const model = shares();
+    const byOwner = run(model, 'EndContractShare', { shareId: 's1', actor: 'alice' });
+    eq([byOwner.outcome, byOwner.events.map((e) => e.data.reason)], ['published', ['OwnerEnded']], 'the owner');
+    eq(byOwner.arms, ['1/0'], 'the arm it took');
+    const byInvitee = run(model, 'EndContractShare', { shareId: 's1', actor: 'bob', note: 'moving out' });
+    eq(byInvitee.events.map((e) => e.type), ['ContractShareEnded', 'ShareNoted'], 'a block: two emits, one append');
+    eq(byInvitee.events[0].data.reason, 'InviteeEnded', 'the invitee');
+    const silent = run(model, 'EndContractShare', { shareId: 's1', actor: 'bob' });
+    eq([silent.outcome, silent.failedRule.rejection], ['rejected', 'An invitee says why'], 'a require inside the block refuses');
+    const stranger = run(model, 'EndContractShare', { shareId: 's1', actor: 'carol' });
+    eq([stranger.outcome, stranger.failedRule.rejection, stranger.events],
+      ['rejected', 'Customer is not owner or invitee of this share', []], 'else => reject');
+    const closed = run(model, 'EndContractShare', { shareId: 's1', actor: 'alice' },
+      [...opened, { type: 'ContractShareEnded', data: { shareId: 's1', reason: 'OwnerEnded' } }]);
+    eq(closed.failedRule.rejection, 'Share is not active', 'the require above every arm');
+  });
+
+  check('separate ifs all run, and or holds when one side does', () => {
+    const model = shares();
+    eq(run(model, 'NoteShare', { shareId: 's1', actor: 'alice' }).events.map((e) => e.data.note), ['seen', 'active'],
+      'both fire, in written order');
+    eq(run(model, 'NoteShare', { shareId: 's1', actor: 'bob' }).events.map((e) => e.data.note), ['seen', 'active'],
+      'the bracketed or holds for the invitee');
+    eq(run(model, 'NoteShare', { shareId: 's1', actor: 'carol' }).events.map((e) => e.data.note), ['active'],
+      'for neither, only the second');
+    const ended = [...opened, { type: 'ContractShareEnded', data: { shareId: 's1', reason: 'OwnerEnded' } }];
+    eq(run(model, 'NoteShare', { shareId: 's1', actor: 'alice' }, ended).events, [], 'neither: nothing emitted');
+    eq(run(model, 'NoteShare', { shareId: 's1', actor: 'alice' }, ended).outcome, 'published', 'then nothing');
+  });
+
+  check('a read behind a rule that refused is never made', () => {
+    const model = shares();
+    // The regression: `alias active = ShareActive(shareId)` with
+    // shareId unset errored, though the rule above it refuses first.
+    const refused = run(model, 'RenameShare', { note: 'x' });
+    eq([refused.outcome, refused.failedRule.rejection], ['rejected', 'No share'], 'refused, not broken');
+    eq(Object.keys(refused.reads), [], 'and nothing was read');
+    eq(run(model, 'RenameShare', { shareId: 's1', note: 'x' }).outcome, 'published', 'with a share, read and decided');
+    // A read reached with a null tag is still an error.
+    const moved = JSON.parse(JSON.stringify(model['command-definitions'].RenameShare));
+    moved.steps = [moved.steps[1], moved.steps[0], moved.steps[2]];
+    const reached = { ...model, 'command-definitions': { ...model['command-definitions'], RenameShare: moved } };
+    let error = '';
+    try { run(reached, 'RenameShare', { note: 'x' }); } catch (e) { error = e.message; }
+    eq(/null/.test(error), true, error);
+  });
+
+  check('a run reports the reads it made; the boundary is every read any run might make', () => {
+    const model = shares();
+    const owner = run(model, 'EndContractShare', { shareId: 's1', actor: 'alice' });
+    eq(Object.keys(owner.reads).map((key) => owner.reads[key].projection).sort(), ['ShareActive', 'ShareOwner'],
+      'the owner arm never read the invitee');
+    const typesOf = (body) => sandbox.deriveDcb(model, body).items.flatMap((item) => item.types);
+    eq(typesOf(model['command-definitions'].EndContractShare).includes('ShareInvited'), true, 'statically, the invitee is read');
+    const trace = [];
+    const seeded = opened.map((event) => ({ ...event, tags: sandbox.tagsOfEvent(model, event.type, event.data) }));
+    const handled = sandbox.handleCommand(model, sandbox.memoryStore(seeded), 'EndContractShare',
+      { shareId: 's1', actor: 'alice' }, { trace });
+    eq(handled.outcome, 'published', 'through a store: ' + JSON.stringify(handled));
+    const { condition } = trace.find((entry) => entry.call === 'append');
+    eq(condition.failIfEventsMatch.flatMap((item) => item.types).includes('ShareInvited'), false,
+      'at runtime the append condition covers only the reads made');
+    eq(condition.failIfEventsMatch.flatMap((item) => item.types).includes('ShareOpened'), true, 'and every read it did make');
+  });
+
+  check('inside if x is not empty, and after require x is not empty, an optional parameter is present', () => {
+    const advised = (text) => sandbox.modelAdvisories(buildText(text).model())
+      .filter((a) => /optional/.test(a.message)).map((a) => `${a.name}: ${a.message}`);
+    eq(advised(SHARES), [], 'narrowed by the require in the arm, and by the require before the read');
+    eq(advised(swap(SHARES, '    require note is not empty\n      else reject "An invitee says why"\n', '')).length, 1,
+      'without it, emitting the optional note into a required field is advised');
+    eq(advised(swap(SHARES, '  require shareId is not empty\n    else reject "No share"\n', '')).length, 1,
+      'and so is reading by it and emitting it, unguarded');
+    const inIf = swap(SHARES, '    require note is not empty\n      else reject "An invitee says why"\n    emit ContractShareEnded { shareId, reason: InviteeEnded }\n    emit ShareNoted { shareId, note }\n',
+      '    emit ContractShareEnded { shareId, reason: InviteeEnded }\n    if note is not empty => emit ShareNoted { shareId, note }\n');
+    eq(advised(inIf), [], 'inside if note is not empty');
+  });
+
+  check('one scenario is owed per arm that emits and per rejection message', () => {
+    const model = shares();
+    eq(sandbox.commandSuccessesOwed(model['command-definitions'].EndContractShare).map((owed) => owed.arm), ['1/0', '1/1'],
+      'two arms emit');
+    eq(sandbox.commandRejections(model['command-definitions'].EndContractShare).map((o) => o.rejection),
+      ['Share is not active', 'An invitee says why', 'Customer is not owner or invitee of this share'], 'three messages');
+    eq(sandbox.commandSuccessesOwed(model['command-definitions'].RenameShare), [{ arm: null, events: ['ShareNoted'] }],
+      'without branches, succeeding once');
+    const scenarios = swap(SHARES, '  else => reject "Customer is not owner or invitee of this share"\n}',
+      '  else => reject "Customer is not owner or invitee of this share"\n\n  scenarios {\n'
+      + '    scenario "the owner ends it" {\n      given ShareOpened { shareId: "s1", owner: "alice" }\n'
+      + '      when EndContractShare { shareId: "s1", actor: "alice", note: null }\n'
+      + '      then ContractShareEnded { shareId: "s1", reason: OwnerEnded }\n    }\n\n'
+      + '    scenario "a stranger cannot" {\n      given ShareOpened { shareId: "s1", owner: "alice" }\n'
+      + '      when EndContractShare { shareId: "s1", actor: "carol", note: null }\n'
+      + '      then rejected "Customer is not owner or invitee of this share"\n    }\n  }\n}');
+    const covered = buildText(scenarios).model();
+    const gaps = sandbox.commandCoverageGaps(covered, 'EndContractShare');
+    eq(gaps.succeeds.map((owed) => sandbox.successOwedText(owed)),
+      [`emit ContractShareEnded, ShareNoted when ${sandbox.conditionText(covered['command-definitions'].EndContractShare.steps[1].branches[1].condition)}`],
+      'the invitee arm is unshown');
+    eq(gaps.rejections, ['Share is not active', 'An invitee says why'], 'and two messages');
+    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'dcb-branches-'));
+    const file = path.join(dir, 'shares.dcb');
+    fs.writeFileSync(file, scenarios);
+    const cli = path.join(APP, '..', 'skills', 'dcb-notation', 'scripts', 'dcb.js');
+    const { status, stderr } = require('child_process').spawnSync(process.execPath, [cli, 'check', file], { encoding: 'utf8' });
+    eq(status, 1, 'the skill\'s check fails on it');
+    eq(stderr.includes('command EndContractShare: no scenario shows it emit ContractShareEnded, ShareNoted when'), true, stderr);
+    eq(stderr.includes('command EndContractShare: no scenario shows "An invitee says why"'), true, stderr);
+    eq(stderr.includes('the owner ends it'), false, 'nothing about the arm that is shown');
+  });
+
+  check('completion offers if, and after its arrow an emit or a reject', () => {
+    const at = (text) => {
+      const lines = text.split('\n');
+      return sandbox.sourceCompletions(text, lines.length, lines[lines.length - 1].length + 1, { model: shares() });
+    };
+    const head = SHARES.slice(0, SHARES.indexOf('command NoteShare'));
+    const labels = (result) => (result.items || result).map((item) => item.label);
+    eq(labels(at(head + 'command X(a: ShareId) {\n  if a == a => ')).includes('emit'), true, 'emit after the arrow');
+    eq(labels(at(head + 'command X(a: ShareId) {\n  if a == a => ')).includes('reject'), true, 'and reject');
   });
 }
 
