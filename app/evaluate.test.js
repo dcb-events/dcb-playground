@@ -4750,4 +4750,247 @@ function modelsWithScenarios() {
   });
 }
 
+
+// ---------------------------------------------------------------
+// Fan-out emits (11.0): `for each x in source` runs its steps once per
+// element of an open read, a list projection or a list parameter, in
+// source order, inside the command's one append.
+// ---------------------------------------------------------------
+{
+  const one = (name, propertyType, extra = {}) => ({ name, propertyType, isOptional: false, isList: false, ...extra });
+  const many = (name, propertyType) => one(name, propertyType, { isList: true });
+  const param = (name) => ({ parameterName: name });
+  const open = { open: true };
+  const tag = (name, tagType) => ({ name, tagType });
+  const activeShares = (customerId = param('customerId')) => ({ projection: 'ShareActiveAsOwner', tags: { ownerId: customerId, shareId: open } });
+  const shareContract = (shareId = param('shareId')) => ({ projection: 'ShareContract', tags: { shareId } });
+  const unread = () => ({ projection: 'UnreadNotificationIds', tags: { customerId: param('customerId') } });
+  const ended = (reason = 'ownerAccountDeleted') => ({ name: 'ContractShareEnded', parameters: {
+    ownerId: param('customerId'), shareId: param('shareId'), contractId: shareContract(), reason } });
+  const markRead = { name: 'NotificationWasMarkedAsRead', parameters: { notificationId: param('notificationId'), customerId: param('customerId') } };
+  const openPortal = () => {
+    const { id, model } = openBlank('Portal');
+    for (const type of ['CustomerId', 'ShareId', 'ContractId', 'NotificationId']) {
+      addDefinition('custom-type-definition', id, type, { schema: { type: 'string' }, isTag: true });
+    }
+    addDefinition('custom-type-definition', id, 'ShareInfo', { properties: [one('contractId', 'ContractId'), one('note', 'string')] });
+    addTaggedEvent(id, 'CustomerRegistered', { properties: [one('customerId', 'CustomerId')] });
+    addTaggedEvent(id, 'CustomerWasDeleted', { properties: [one('customerId', 'CustomerId')] });
+    addTaggedEvent(id, 'ContractShareStarted', { properties: [one('ownerId', 'CustomerId'), one('shareId', 'ShareId'),
+      one('contractId', 'ContractId'), one('note', 'string')] });
+    addTaggedEvent(id, 'ContractShareEnded', { properties: [one('ownerId', 'CustomerId'), one('shareId', 'ShareId'),
+      one('contractId', 'ContractId'), one('reason', 'string')] });
+    addTaggedEvent(id, 'NotificationSent', { properties: [one('customerId', 'CustomerId'), one('notificationId', 'NotificationId')] });
+    addTaggedEvent(id, 'NotificationWasMarkedAsRead', { properties: [one('notificationId', 'NotificationId'), one('customerId', 'CustomerId')] });
+    addDefinition('projection-definition', id, 'CustomerExists', {
+      tags: [tag('customerId', 'CustomerId')], valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'CustomerRegistered', operation: 'set', value: true }, { event: 'CustomerWasDeleted', operation: 'set', value: false }],
+    });
+    addDefinition('projection-definition', id, 'ShareActiveAsOwner', {
+      tags: [tag('ownerId', 'CustomerId'), tag('shareId', 'ShareId')], valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'ContractShareStarted', operation: 'set', value: true }, { event: 'ContractShareEnded', operation: 'set', value: false }],
+    });
+    addDefinition('projection-definition', id, 'ShareContract', {
+      tags: [tag('shareId', 'ShareId')], valueType: 'ContractId', isList: false, initialValue: null,
+      handlers: [{ event: 'ContractShareStarted', operation: 'set', value: { eventProperty: 'contractId' } }],
+    });
+    addDefinition('projection-definition', id, 'ShareDetails', {
+      tags: [tag('ownerId', 'CustomerId'), tag('shareId', 'ShareId')], valueType: 'ShareInfo', isList: false, initialValue: null,
+      handlers: [
+        { event: 'ContractShareStarted', operation: 'set', value: { record: { contractId: { eventProperty: 'contractId' }, note: { eventProperty: 'note' } } } },
+        { event: 'ContractShareEnded', operation: 'set', value: null },
+      ],
+    });
+    addDefinition('projection-definition', id, 'ShareContractOf', {
+      tags: [tag('ownerId', 'CustomerId'), tag('shareId', 'ShareId'), tag('contractId', 'ContractId')],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'ContractShareStarted', operation: 'set', value: true }, { event: 'ContractShareEnded', operation: 'set', value: false }],
+    });
+    addDefinition('projection-definition', id, 'UnreadNotificationIds', {
+      tags: [tag('customerId', 'CustomerId')], valueType: 'NotificationId', isList: true, initialValue: [],
+      handlers: [
+        { event: 'NotificationSent', operation: 'append', value: { eventProperty: 'notificationId' } },
+        { event: 'NotificationWasMarkedAsRead', operation: 'remove', value: { eventProperty: 'notificationId' } },
+      ],
+    });
+    addDefinition('command-definition', id, 'DeleteCustomer', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [
+        { condition: { leftHandSide: { projection: 'CustomerExists', tags: { customerId: param('customerId') } }, predicate: 'isTrue' },
+          rejection: 'Customer not found' },
+        { name: 'CustomerWasDeleted', parameters: { customerId: param('customerId') } },
+        { forEach: ['shareId'], in: activeShares(), steps: [ended()] },
+      ],
+    });
+    addDefinition('command-definition', id, 'MarkNotificationsAsRead', {
+      properties: [one('customerId', 'CustomerId'), many('notificationIds', 'NotificationId')], boundary: [],
+      steps: [
+        { forEach: ['notificationId'], in: param('notificationIds'), steps: [
+          { branches: [{ condition: { leftHandSide: unread(), predicate: 'contains', rightHandSide: param('notificationId') }, steps: [markRead] }] },
+        ] },
+      ],
+    });
+    addDefinition('command-definition', id, 'MarkAllAsRead', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [{ forEach: ['notificationId'], in: unread(), steps: [markRead] }],
+    });
+    return { id, model };
+  };
+  const started = (shareId, contractId, ownerId = 'u1', note = '') =>
+    ({ type: 'ContractShareStarted', data: { ownerId, shareId, contractId, note } });
+  const endedEvent = (shareId, contractId, ownerId = 'u1') =>
+    ({ type: 'ContractShareEnded', data: { ownerId, shareId, contractId, reason: 'ownerEnded' } });
+  const registered = { type: 'CustomerRegistered', data: { customerId: 'u1' } };
+  const sharesLog = [registered, started('s3', 'k3'), started('s1', 'k1'), started('s2', 'k2'), endedEvent('s1', 'k1')];
+  const sent = (notificationId) => ({ type: 'NotificationSent', data: { customerId: 'u1', notificationId } });
+  const sharesOf = (result) => result.events.map((e) => [e.type, e.data.shareId || e.data.customerId, e.data.contractId]);
+
+  check('a fan-out over an open read emits once per present instance, in first-event order', () => {
+    const { model } = openPortal();
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const result = evaluateCommand(model(), sharesLog, 'DeleteCustomer', { customerId: 'u1' });
+    eq(result.outcome, 'published', 'published');
+    eq(sharesOf(result), [['CustomerWasDeleted', 'u1', undefined], ['ContractShareEnded', 's3', 'k3'], ['ContractShareEnded', 's2', 'k2']],
+      'the deletion, then s3 and s2 – s1 ended already');
+    eq(result.events[1].data.reason, 'ownerAccountDeleted', 'the literal');
+  });
+
+  check('a fan-out over no element emits nothing from it, without rejecting', () => {
+    const { model } = openPortal();
+    const result = evaluateCommand(model(), [registered], 'DeleteCustomer', { customerId: 'u1' });
+    eq([result.outcome, result.events.map((e) => e.type)], ['published', ['CustomerWasDeleted']], 'the deletion alone');
+    const none = evaluateCommand(model(), [], 'MarkAllAsRead', { customerId: 'u1' });
+    eq([none.outcome, none.events], ['published', []], 'a command emitting only from a loop publishes nothing');
+  });
+
+  check('a fan-out over a list parameter, filtered by an if reading a projection per element', () => {
+    const { model } = openPortal();
+    const log = [sent('n1'), sent('n2'), sent('n3'), { type: 'NotificationWasMarkedAsRead', data: { notificationId: 'n2', customerId: 'u1' } }];
+    const result = evaluateCommand(model(), log, 'MarkNotificationsAsRead', { customerId: 'u1', notificationIds: ['n3', 'n2', 'n9', 'n1'] });
+    eq(result.outcome, 'published', 'never refused');
+    eq(result.events.map((e) => e.data.notificationId), ['n3', 'n1'], 'the unread ones, in list order');
+    const empty = evaluateCommand(model(), log, 'MarkNotificationsAsRead', { customerId: 'u1', notificationIds: [] });
+    eq([empty.outcome, empty.events], ['published', []], 'an empty list: nothing');
+  });
+
+  check('a fan-out over a list projection', () => {
+    const { model } = openPortal();
+    const result = evaluateCommand(model(), [sent('n2'), sent('n1')], 'MarkAllAsRead', { customerId: 'u1' });
+    eq(result.events.map((e) => e.data.notificationId), ['n2', 'n1'], 'each unread one, in list order');
+  });
+
+  check('two open tags bind two names', () => {
+    const { id, model } = openPortal();
+    addDefinition('command-definition', id, 'EndAll', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [{ forEach: ['shareId', 'contractId'], in: { projection: 'ShareContractOf', tags: { ownerId: param('customerId'), shareId: open, contractId: open } },
+        steps: [{ name: 'ContractShareEnded', parameters: { ownerId: param('customerId'), shareId: param('shareId'), contractId: param('contractId'), reason: 'all' } }] }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'EndAll'), [], 'advisory-clean');
+    const result = evaluateCommand(model(), sharesLog, 'EndAll', { customerId: 'u1' });
+    eq(sharesOf(result), [['ContractShareEnded', 's3', 'k3'], ['ContractShareEnded', 's2', 'k2']], 'both names, per instance');
+  });
+
+  check('value and value.field are the instance\'s value inside the loop', () => {
+    const { id, model } = openPortal();
+    addDefinition('command-definition', id, 'EndByDetails', {
+      properties: [one('customerId', 'CustomerId'), one('note', 'string')], boundary: [],
+      steps: [{ forEach: ['shareId'], in: { projection: 'ShareDetails', tags: { ownerId: param('customerId'), shareId: open } }, steps: [
+        { branches: [{ condition: { leftHandSide: { instanceValue: true, field: 'note' }, predicate: 'equals', rightHandSide: param('note') },
+          steps: [{ name: 'ContractShareEnded', parameters: { ownerId: param('customerId'), shareId: param('shareId'),
+            contractId: { instanceValue: true, field: 'contractId' }, reason: 'byNote' } }] }] },
+      ] }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'EndByDetails'), [], 'advisory-clean');
+    const log = [started('s1', 'k1', 'u1', 'a'), started('s2', 'k2', 'u1', 'b'), started('s3', 'k3', 'u1', 'a')];
+    const result = evaluateCommand(model(), log, 'EndByDetails', { customerId: 'u1', note: 'a' });
+    eq(sharesOf(result), [['ContractShareEnded', 's1', 'k1'], ['ContractShareEnded', 's3', 'k3']], 'value.note filters, value.contractId emits');
+    addDefinition('command-definition', id, 'Echo', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [{ forEach: ['shareId'], in: activeShares(), steps: [
+        { branches: [{ condition: { leftHandSide: { instanceValue: true }, predicate: 'isTrue' },
+          steps: [{ name: 'CustomerRegistered', parameters: { customerId: param('customerId') } }] }] }] }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Echo'), [], 'advisory-clean too');
+    eq(evaluateCommand(model(), log, 'Echo', { customerId: 'u1' }).events.length, 3, 'value whole, on a boolean');
+  });
+
+  check('a reject inside a loop aborts the whole command', () => {
+    const { id, model } = openPortal();
+    addDefinition('command-definition', id, 'EndUnlessLocked', {
+      properties: [one('customerId', 'CustomerId'), one('locked', 'ContractId')], boundary: [],
+      steps: [
+        { name: 'CustomerWasDeleted', parameters: { customerId: param('customerId') } },
+        { forEach: ['shareId'], in: activeShares(), steps: [
+          { branches: [{ condition: { leftHandSide: shareContract(), predicate: 'equals', rightHandSide: param('locked') },
+            steps: [{ reject: 'A share is locked' }] }], otherwise: [ended('locked')] },
+        ] },
+      ],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'EndUnlessLocked'), [], 'advisory-clean');
+    const refused = evaluateCommand(model(), sharesLog, 'EndUnlessLocked', { customerId: 'u1', locked: 'k2' });
+    eq([refused.outcome, refused.failedRule.rejection, refused.events], ['rejected', 'A share is locked', []], 'nothing published');
+    const fine = evaluateCommand(model(), sharesLog, 'EndUnlessLocked', { customerId: 'u1', locked: 'k9' });
+    eq(fine.events.length, 3, 'otherwise each share ends');
+    eq(fine.arms, ['1/each/0/otherwise'], 'the arm taken, once');
+  });
+
+  check('the append condition holds the reads each element made; the static boundary shows them per element', () => {
+    const { model } = openPortal();
+    const port = (query) => sharesLog.filter((e) => query.some((item) =>
+      item.types.includes(e.type) && item.tags.every((t) => tagsOfEvent(model(), e.type, e.data).includes(t))));
+    const result = evaluateCommand(model(), port, 'DeleteCustomer', { customerId: 'u1' });
+    eq(result.events.length, 3, 'decided through the port');
+    eq(result.query.map((item) => item.tags.join(' ')).sort(),
+      ['CustomerId:u1', 'ShareId:s2', 'ShareId:s3'], 'the customer, then each share the loop read');
+    const items = sandbox.deriveDcb(model(), model()['command-definitions'].DeleteCustomer).items;
+    eq(items.map((item) => [item.tags, item.fannedOut]),
+      [[['CustomerId:{customerId}'], false], [['CustomerId:{customerId}'], false], [['ShareId:{each shareId}'], true]],
+      'the existence read, the open read by its bound tag, and the contract per element');
+    const reads = evaluateCommand(model(), sharesLog, 'DeleteCustomer', { customerId: 'u1' }).reads;
+    eq(Object.keys(reads).filter((key) => /ShareContract/.test(key)).sort(),
+      ['ShareContract(ShareId("s2"))', 'ShareContract(ShareId("s3"))'], 'the sandbox shows each read made');
+  });
+
+  check('a fan-out inside a fan-out is refused when stored', () => {
+    const { id, model } = openPortal();
+    let error = '';
+    try {
+      addDefinition('command-definition', id, 'Nested', {
+        properties: [one('customerId', 'CustomerId')], boundary: [],
+        steps: [{ forEach: ['shareId'], in: activeShares(), steps: [{ forEach: ['other'], in: activeShares(), steps: [ended()] }] }],
+      });
+    } catch (e) { error = e.message; }
+    eq(/inside another/.test(error), true, error);
+    eq(model()['command-definitions'].Nested, undefined, 'not stored');
+  });
+
+  check('a loop\'s names and source are checked', () => {
+    const { id, model } = openPortal();
+    const advised = (steps, properties = [one('customerId', 'CustomerId')]) => {
+      updateDefinition('command-definition', id, 'MarkAllAsRead', { properties, boundary: [], steps });
+      return sandbox.modelAdvisories(model()).filter((a) => a.name === 'MarkAllAsRead').map((a) => a.message).join('; ');
+    };
+    eq(/is not a list/.test(advised([{ forEach: ['x'], in: param('customerId'), steps: [] }])), true, 'a single value is no source');
+    eq(/two names/.test(advised([{ forEach: ['a', 'b'], in: unread(), steps: [] }])), true, 'a list binds one name');
+    eq(/leaves 1 tag open but names 2/.test(advised([{ forEach: ['a', 'b'], in: activeShares(), steps: [] }])), true, 'one per open tag');
+    eq(/already names a payload property/.test(advised([{ forEach: ['customerId'], in: unread(), steps: [] }])), true, 'no shadowing');
+    eq(/is declared CustomerId, but takes its value from "notificationId", which is NotificationId/.test(
+      advised([{ forEach: ['notificationId'], in: unread(), steps: [{ name: 'CustomerWasDeleted', parameters: { customerId: param('notificationId') } }] }])),
+    true, 'an emission inside is typed by the element');
+    eq(/value.*only .*open read/.test(advised([{ forEach: ['n'], in: unread(), steps: [{ name: 'CustomerWasDeleted', parameters: { customerId: { instanceValue: true } } }] }])),
+      true, 'value only inside a loop over an open read');
+  });
+
+  check('a loop\'s emitting arms are owed scenarios, like a command\'s', () => {
+    const { model } = openPortal();
+    const owed = sandbox.commandSuccessesOwed(model()['command-definitions'].MarkNotificationsAsRead);
+    eq(owed.map((o) => [o.arm, o.events]), [['0/each/0/0', ['NotificationWasMarkedAsRead']]], 'the one emitting arm');
+    const plain = sandbox.commandSuccessesOwed(model()['command-definitions'].DeleteCustomer);
+    eq(plain.map((o) => o.events), [['CustomerWasDeleted', 'ContractShareEnded']], 'a loop\'s emission is part of the one success');
+    eq(sandbox.commandEmissions(model()['command-definitions'].DeleteCustomer).map((e) => e.name),
+      ['CustomerWasDeleted', 'ContractShareEnded'], 'and among the command\'s emissions');
+  });
+}
+
 finish();

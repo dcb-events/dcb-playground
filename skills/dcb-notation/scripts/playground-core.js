@@ -1848,6 +1848,9 @@ function offersSuccessor(model, valueType) {
 //   {branches: [{condition, steps}], otherwise?: steps}
 //                                     `if c => … else if c => … else => …`
 //   {reject: "m"}                     `reject "m"`, inside a branch
+//   {forEach: [names], in: source, steps}
+//                                     `for each x in source => …` – a
+//                                     fan-out emit, below
 //
 // Any rejection – a rule that does not hold, or a `reject` reached –
 // aborts the command with no events; the emissions reached on the way
@@ -1866,12 +1869,27 @@ function offersSuccessor(model, valueType) {
 // and `publishes` (every emission, published together); `stepsFrom`
 // writes that as steps – the rules in order, then the emissions in
 // order – which is exactly how it evaluated.
+//
+// **A fan-out emit** (`{forEach, in, steps}`, a *loop*) runs its steps
+// once per element of its source – an open read `P(x, *)`, a list
+// projection or a list parameter – in source order: list order, or
+// the order of each instance's first event. `forEach` names the
+// element, one name per open tag of an open read and one for a list;
+// inside, each name is in scope as a parameter is (`{parameterName}`),
+// and over an open read `value` (`{instanceValue}`) is the instance's
+// value. Its steps are emissions and branches whose arms each hold one
+// emission or one `reject` – which refuses the whole command, as any
+// does. Zero elements emit nothing, and a loop never nests in another.
+// A read inside reads by the element, so each element adds its own
+// reads to the run's boundary; walkers see the loop's steps as the
+// steps of an arm keyed `each` (`[2, 'each', 0]`).
 // ============================================================
 
 // What a step is, by the key that tells it apart – the way a binding is
 // told apart by `group` or `projection`. Null for anything else.
 function stepKind(step) {
   if (!step || typeof step !== 'object' || Array.isArray(step)) return null;
+  if (step.forEach !== undefined) return 'loop';
   if (step.branches !== undefined) return 'branch';
   if (step.reject !== undefined) return 'reject';
   if (step.condition !== undefined) return 'rule';
@@ -1894,15 +1912,26 @@ function stepArms(step) {
   return arms;
 }
 
+// A loop's parts: the names it binds, its source and its steps.
+function loopNames(step) {
+  return (step && Array.isArray(step.forEach) ? step.forEach : []).filter((name) => typeof name === 'string');
+}
+function loopSteps(step) {
+  return (step && Array.isArray(step.steps)) ? step.steps : [];
+}
+
 // Every step, depth first in written order: `visit(step, at)`, `at` the
 // step's path (`[2, 0, 1]`: the first arm of step 2, its step 1 –
-// `'otherwise'` for the else arm) and `depth`, 0 at the top.
-function forEachStep(steps, visit, path = []) {
+// `'otherwise'` for the else arm, `'each'` for a loop's steps), `depth`,
+// 0 at the top, and `loop`, the loop it runs in, or null.
+function forEachStep(steps, visit, path = [], loop = null) {
   (Array.isArray(steps) ? steps : []).forEach((step, index) => {
     const at = [...path, index];
-    visit(step, { path: at, depth: path.length / 2 });
-    if (stepKind(step) !== 'branch') return;
-    for (const arm of stepArms(step)) forEachStep(arm.steps, visit, [...at, arm.index]);
+    visit(step, { path: at, depth: path.length / 2, loop });
+    const kind = stepKind(step);
+    if (kind === 'loop') { forEachStep(loopSteps(step), visit, [...at, 'each'], step); return; }
+    if (kind !== 'branch') return;
+    for (const arm of stepArms(step)) forEachStep(arm.steps, visit, [...at, arm.index], loop);
   });
 }
 
@@ -1916,6 +1945,55 @@ function stepsOfKind(body, kind) {
 function commandRules(body) { return stepsOfKind(body, 'rule'); }
 function commandEmissions(body) { return stepsOfKind(body, 'emit'); }
 function commandBranchSteps(body) { return stepsOfKind(body, 'branch'); }
+function commandLoops(body) { return stepsOfKind(body, 'loop'); }
+
+// What a loop's names hold, `[{name, propertyType, isOptional: false,
+// isList: false}]` – a payload property's shape, since inside the loop
+// each is read as one: the tag type of each open tag of an open read,
+// in the projection's order, or the element type of a list. A name
+// whose type cannot be worked out is left out.
+function loopVariables(model, body, loop) {
+  const names = loopNames(loop);
+  const source = loop && loop.in;
+  const as = (name, propertyType) => ({ name, propertyType, isOptional: false, isList: false });
+  if (operandSource(source) === 'projection-read' && openTagNames(source).length) {
+    const projection = projectionsOf(model)[source.projection];
+    const open = projectionTagParams(projection).filter((tag) => openTagNames(source).includes(tag.name));
+    return names.map((name, i) => (open[i] ? as(name, open[i].tagType) : null)).filter(Boolean);
+  }
+  const resolved = resolveOperandType(source, { boundary: (body && body.boundary) || [], commandProperties: (body && body.properties) || [], model });
+  if (!resolved || !resolved.isList || names.length !== 1) return [];
+  return [as(names[0], resolved.propertyType)];
+}
+
+// The type `value` holds inside a loop over an open read – the
+// projection's value type – or null where there is no `value`.
+function loopValueType(model, loop) {
+  const source = loop && loop.in;
+  if (operandSource(source) !== 'projection-read' || !openTagNames(source).length) return null;
+  const projection = projectionsOf(model)[source.projection];
+  return projection ? { propertyType: projection.valueType, isList: !!projection.isList } : null;
+}
+
+// The names a command's operands may read as parameters: its payload,
+// and inside `loop` that loop's names too. Without a loop, every
+// loop's – for a caller that types an operand without knowing where it
+// sits; a name is one loop's only (an advisory says so otherwise).
+function commandScopeProperties(model, body, loop) {
+  const own = (body && Array.isArray(body.properties)) ? body.properties : [];
+  const loops = loop === undefined ? commandLoops(body) : loop ? [loop] : [];
+  const extra = loops.flatMap((one) => loopVariables(model, body, one))
+    .filter((variable) => !own.some((p) => p && p.name === variable.name));
+  return extra.length ? [...own, ...extra] : own;
+}
+
+// Whether a parameter operand names a loop's element rather than the
+// payload.
+function namesLoopVariable(body, operand) {
+  if (operandSource(operand) !== 'parameter') return false;
+  if ((body && body.properties || []).some((p) => p && p.name === operand.parameterName)) return false;
+  return commandLoops(body).some((loop) => loopNames(loop).includes(operand.parameterName));
+}
 
 // The steps written at the top, of one kind – what the pages edit.
 function topLevelSteps(body, kind) {
@@ -2058,6 +2136,7 @@ function commandRejectionSteps(body) {
 // branch is never left behind.
 function mapSteps(steps, map) {
   return (Array.isArray(steps) ? steps : []).map((step) => {
+    if (stepKind(step) === 'loop') return map({ ...step, steps: mapSteps(loopSteps(step), map) });
     if (stepKind(step) !== 'branch') return map(step);
     const out = { ...step };
     if (Array.isArray(step.branches)) {
@@ -2227,6 +2306,8 @@ function walkPresence(steps, visit, present = new Set(), onCondition = () => {},
       for (const name of conditionPresence(step.condition, true)) now.add(name);
       continue;
     }
+    // A loop may run no time at all: what it proves stays inside it.
+    if (kind === 'loop') { walkPresence(loopSteps(step), visit, now, onCondition, [...at, 'each']); continue; }
     if (kind !== 'branch') continue;
     const outcomes = [];
     let fallThrough = new Set(now);
@@ -2294,35 +2375,41 @@ function forEachCommandOperand(body, outerVisit) {
       visit(operand, { where: `binding "${binding.alias || '?'}" (argument ${key})` });
     }
   }
-  const visitCondition = (condition, where) => {
-    visit(condition.leftHandSide, { where });
+  // `loop` (11.0): the loop an operand sits in, whose names it may
+  // read; `loopSource`: the loop whose source it is.
+  const visitCondition = (condition, where, loop) => {
+    visit(condition.leftHandSide, { where, loop });
     if (condition.rightHandSide !== undefined) {
       // `equalsAny` spells its right-hand side as a literal list. The
       // entries are the operands; the array is only their container.
       const rights = Array.isArray(condition.rightHandSide)
         ? condition.rightHandSide : [condition.rightHandSide];
-      for (const operand of rights) visit(operand, { where });
+      for (const operand of rights) visit(operand, { where, loop });
     }
   };
-  // The steps, in written order and into every branch: a rule's and an
-  // arm's predicates, an emission's fields.
-  forEachStep(commandSteps(body), (step) => {
+  // The steps, in written order and into every branch and loop: a
+  // rule's and an arm's predicates, an emission's fields, a loop's
+  // source.
+  forEachStep(commandSteps(body), (step, { loop }) => {
     const kind = stepKind(step);
     if (kind === 'rule' && step.condition) {
       const text = conditionText(step.condition);
-      for (const leaf of conditionLeaves(step.condition)) visitCondition(leaf, `condition "${text}"`);
+      for (const leaf of conditionLeaves(step.condition)) visitCondition(leaf, `condition "${text}"`, loop);
     }
     if (kind === 'branch') {
       for (const arm of step.branches || []) {
         if (!arm || !arm.condition) continue;
         const text = conditionText(arm.condition);
-        for (const leaf of conditionLeaves(arm.condition)) visitCondition(leaf, `condition "if ${text}"`);
+        for (const leaf of conditionLeaves(arm.condition)) visitCondition(leaf, `condition "if ${text}"`, loop);
       }
     }
     if (kind === 'emit') {
       for (const [key, operand] of Object.entries(step.parameters || {})) {
-        visit(operand, { where: `emission "${step.name}.${key}"` });
+        visit(operand, { where: `emission "${step.name}.${key}"`, loop });
       }
+    }
+    if (kind === 'loop' && step.in !== undefined) {
+      visit(step.in, { where: `for each ${loopNames(step).join(', ')}`, loop, loopSource: step });
     }
   });
 }
@@ -2354,6 +2441,12 @@ function resolveOperandType(operand, scope) {
     return resolved.isList ? null : recordFieldType(scope.model, resolved.propertyType, operand.field);
   }
   if (operandSource(operand) === 'collection') return collectionResultType(scope.model, operand);
+  // `value` inside a loop over an open read (11.0), given its type.
+  if (operandSource(operand) === 'instance-value') {
+    const held = scope.instanceValue;
+    if (!held || operand.field === undefined) return held || null;
+    return held.isList ? null : recordFieldType(scope.model, held.propertyType, operand.field);
+  }
   return resolved;
 }
 
@@ -2476,7 +2569,7 @@ function readFanTag(read) {
 // or a property read off a binding that fans out (one per instance).
 function operandIsPlural(model, body, operand) {
   const resolved = resolveOperandType(operand, {
-    boundary: body.boundary || [], commandProperties: body.properties || [], model,
+    boundary: body.boundary || [], commandProperties: commandScopeProperties(model, body), model,
   });
   if (resolved && resolved.isList) return true;
   if (operandSource(operand) !== 'alias-property') return false;
@@ -2530,7 +2623,7 @@ function fanRootOf(model, body, operand) {
   if (source === 'projection-read') {
     const fan = readFanTag(operand);
     if (!fan) return null;
-    const over = resolveOperandType(fan.each, { boundary: body.boundary || [], commandProperties: body.properties || [], model });
+    const over = resolveOperandType(fan.each, { boundary: body.boundary || [], commandProperties: commandScopeProperties(model, body), model });
     if (over && !over.isList && operandSource(fan.each) !== 'alias-property') return null;
     if (operandSource(fan.each) === 'parameter') return `parameter:${fan.each.parameterName}`;
     if (operandSource(fan.each) === 'alias-property') {
@@ -2590,7 +2683,7 @@ function isZipped(model, body, condition, operand) {
 function conditionOperandType(model, body, condition, operand) {
   const resolved = resolveOperandType(operand, {
     boundary: body.boundary || [],
-    commandProperties: body.properties || [],
+    commandProperties: commandScopeProperties(model, body),
     model,
   });
   if (!resolved) return null;
@@ -2656,7 +2749,7 @@ function tagOperandType(model, body, operand) {
   // `each` is resolved through `resolveOperandType` too: one element.
   return resolveOperandType(operand, {
     boundary: (body && body.boundary) || [],
-    commandProperties: (body && body.properties) || [],
+    commandProperties: commandScopeProperties(model, body),
     model,
   });
 }
@@ -2674,8 +2767,15 @@ function readTagTexts(model, body, read) {
     if (operandSource(operand) === 'each') {
       return tagsForIdentifierValue(model, tag.tagType, operand.each, { each: true });
     }
-    return tagsForIdentifierValue(model, tag.tagType, operand);
+    // A loop's element (11.0) is read once per element, as `each` is.
+    return tagsForIdentifierValue(model, tag.tagType, operand, { each: namesLoopVariable(body, operand) });
   }));
+}
+
+// Whether a read is made once per element of a loop (11.0): one of its
+// tags is a loop's name.
+function readsPerElement(body, read) {
+  return readTagOperands(read).some((operand) => namesLoopVariable(body, operand));
 }
 
 // The tag-type sets a projection is read by – one, its own declared
@@ -2772,7 +2872,7 @@ function readItems(model, body, read, base) {
       projection: read.projection,
       ...base,
       ...(via ? { via } : {}),
-      fannedOut: !!readFanTag(folded),
+      fannedOut: !!readFanTag(folded) || readsPerElement(body, folded),
       tags: readTagTexts(model, body, folded),
       types: projectionHandledTypes(model, folded.projection).sort(),
       readProperties: [],
@@ -2820,7 +2920,7 @@ function deriveDcb(model, body) {
     if (!event) continue;
     for (const property of event.properties || []) {
       const operand = (emission.parameters || {})[property.name];
-      const listed = property.isList || (operand !== undefined && operandSource(operand) === 'parameter'
+      const listed = property.isList || namesLoopVariable(body, operand) || (operand !== undefined && operandSource(operand) === 'parameter'
         && (body.properties || []).some((p) => p.name === operand.parameterName && p.isList));
       for (const leaf of eventTagLeaves(model, event).filter((l) => l.property === property.name)) {
         const shown = operand === undefined ? '?' : operandText(operandForLeaf(operand, leaf));
@@ -3189,8 +3289,10 @@ function bindingReferences(model, body) {
     for (const operand of rights) noteOperand(operand, reason);
   };
 
-  // A branch's condition decides as a rule's does.
+  // A branch's condition decides as a rule's does, and so does what a
+  // loop runs over (11.0): it decides how many times it runs.
   for (const leaf of commandConditionLeaves(body)) noteCondition(leaf, 'rule');
+  for (const loop of commandLoops(body)) noteOperand(loop.in, 'rule');
   for (const emission of commandEmissions(body)) {
     for (const operand of Object.values(emission.parameters || {})) {
       noteOperand(operand, 'emission');
@@ -3501,7 +3603,9 @@ function commandRejections(body) {
 // succeeds. A command without branches succeeds one way; with them,
 // each arm that emits is a way of its own (`{arm, events}`, `arm` the
 // key evaluation reports it under, `armKey`), and so is getting through
-// with no arm emitting when emissions stand outside every branch.
+// with no arm emitting when emissions stand outside every branch. An
+// arm inside a loop counts the same; a loop's own emissions are part
+// of the one way a command without arms succeeds.
 function commandSuccessesOwed(body) {
   const arms = [];
   forEachStep(commandSteps(body), (step, at) => {
@@ -3511,7 +3615,11 @@ function commandSuccessesOwed(body) {
       if (events.length) arms.push({ arm: armKey(at.path, arm.index), events, condition: arm.condition });
     }
   });
-  if (!arms.length) return [{ arm: null, events: topLevelSteps(body, 'emit').map((e) => e.name) }];
+  if (!arms.length) {
+    const events = commandSteps(body).flatMap((step) => (stepKind(step) === 'emit' ? [step]
+      : stepKind(step) === 'loop' ? loopSteps(step).filter((inner) => stepKind(inner) === 'emit') : []));
+    return [{ arm: null, events: events.map((e) => e.name) }];
+  }
   return arms;
 }
 
@@ -3655,19 +3763,73 @@ function tagOperandProblem(model, body, operand, tag) {
   return resolved ? mismatch(resolved.propertyType) : null;
 }
 
+// ---------- loops (11.0) ----------
+
+// Why a loop cannot run as written – or null: it runs over an open
+// read, naming each open tag, or over a list, naming its element; and
+// its names are its own, no payload property's or alias's.
+function loopProblem(model, body, loop) {
+  const names = loopNames(loop);
+  const label = `"for each ${names.join(', ')}"`;
+  if (names.length !== (Array.isArray(loop.forEach) ? loop.forEach.length : 0) || !names.length) {
+    return `${label} names nothing – a loop names the element it runs over.`;
+  }
+  for (const name of names) {
+    if ((body.properties || []).some((p) => p && p.name === name)) return `${label} already names a payload property, "${name}" – a loop's name is its own.`;
+    if ((body.boundary || []).some((b) => b && b.alias === name)) return `${label} already names an alias, "${name}" – a loop's name is its own.`;
+  }
+  if (uniq(names).length !== names.length) return `${label} names one thing twice.`;
+  const source = loop.in;
+  const text = `${label} in ${operandText(source)}`;
+  if (operandSource(source) === 'projection-read' && openTagNames(source).length) {
+    const open = openTagNames(source).length;
+    if (open !== names.length) {
+      return `${text} leaves ${open} tag${open === 1 ? '' : 's'} open but names ${names.length} – one name per open tag.`;
+    }
+    return null;
+  }
+  if (!['projection-read', 'parameter', 'alias-property'].includes(operandSource(source))) {
+    return `${text}: a loop runs over an open read P(x, *), a list projection or a list parameter.`;
+  }
+  const resolved = resolveOperandType(source, { boundary: body.boundary || [], commandProperties: body.properties || [], model });
+  if (resolved && !resolved.isList) {
+    return `${text}: ${operandText(source)} is not a list – a loop runs over an open read P(x, *), a list projection or a list parameter.`;
+  }
+  if (names.length !== 1) {
+    return `${text} names ${names.length} – a list's element takes one name; two names are for two open tags.`;
+  }
+  return null;
+}
+
+// Why a step cannot stand inside a loop – or null. A loop emits: its
+// steps are emissions and branches, each arm one emission or one
+// `reject`; a loop never nests.
+function loopStepProblem(step, at) {
+  const kind = stepKind(step);
+  const where = `Inside "for each ${loopNames(at.loop).join(', ')}"`;
+  if (kind === 'loop') return `${where}, another "for each" – a loop does not nest.`;
+  if (kind === 'rule') return `${where}, a rule – a loop emits; "if not … => reject" refuses from inside one.`;
+  if (kind === 'reject' && at.path[at.path.length - 2] === 'each') return `${where}, a "reject" outside any branch refuses whenever there is an element.`;
+  if (kind === 'branch' && stepArms(step).some((arm) => arm.steps.length !== 1 || !['emit', 'reject'].includes(stepKind(arm.steps[0])))) {
+    return `${where}, each branch holds one emit or one reject.`;
+  }
+  return null;
+}
+
 // ---------- open reads, collections, record fields (11.0) ----------
 
 // Why a read's open tags (`*`) cannot be read as written – or null. An
-// open read is read only as a collection function's (`inCollection`),
-// of a folded, top-level projection, with at least one tag left bound;
-// a read inside a collection leaves at least one open.
-function openReadProblem(model, read, inCollection) {
+// open read is read only as a collection function's (`inCollection`)
+// or as what a loop runs over (`inLoop`, 11.0), of a folded, top-level
+// projection, with at least one tag left bound; a read inside a
+// collection leaves at least one open.
+function openReadProblem(model, read, inCollection, inLoop = false) {
   const open = openTagNames(read);
   const text = operandText(read);
   if (!open.length) {
     return inCollection ? `${text} leaves no tag open – a collection function reads every instance of one, ${read.projection}(…, *).` : null;
   }
-  if (!inCollection) return `${text} leaves a tag open – it is read inside count, sum, min, max, average, any or all.`;
+  if (!inCollection && !inLoop) return `${text} leaves a tag open – it is read inside count, sum, min, max, average, any or all, or by a for each.`;
   if (splitQualifiedName(read.projection) || isLocalProjectionName(read.projection)) {
     return `${text} leaves the tag of a group open – a group's projections are read by its one tag, so an open read is of a top-level projection tagged by several.`;
   }
@@ -4835,7 +4997,10 @@ function validateCommandBody(model, body) {
       stepProblem = 'A branch step has no "if" arm.';
     } else if (kind === 'branch' && step.branches.some((arm) => !arm || !arm.condition)) {
       stepProblem = 'A branch arm has no condition – only "else" goes without one.';
+    } else if (at.loop) {
+      stepProblem = loopStepProblem(step, at);
     }
+    if (!stepProblem && kind === 'loop') stepProblem = loopProblem(model, body, step);
   });
   if (stepProblem) throw new DomainError(stepProblem);
 
@@ -4983,18 +5148,19 @@ function validateCommandBody(model, body) {
     }
   }
 
-  const commandProperties = new Set((body.properties || []).map((p) => p.name));
   let failure = null;
   forEachCommandOperand(body, (operand, meta) => {
     if (failure) return;
     assertRecognisedOperand(operand, meta.where);
     const source = operandSource(operand);
-    if (source === 'parameter' && !commandProperties.has(operand.parameterName)) {
+    // Inside a loop its names are in scope beside the payload (11.0).
+    const inScope = commandScopeProperties(model, body, meta.loop || null);
+    if (source === 'parameter' && !inScope.some((p) => p.name === operand.parameterName)) {
       failure = `${meta.where} reads parameter "${operand.parameterName}", which the command does not declare.`;
       return;
     }
     if (source === 'parameter' && operand.property) {
-      const parameter = (body.properties || []).find((p) => p.name === operand.parameterName);
+      const parameter = inScope.find((p) => p.name === operand.parameterName);
       const fields = parameter && compositeFieldsOf(model, parameter.propertyType);
       if (!fields) {
         failure = `${meta.where} reads "${operandText(operand)}", but "${operand.parameterName}" is typed `
@@ -5015,8 +5181,13 @@ function validateCommandBody(model, body) {
       return;
     }
     if (source === 'instance-value' && !meta.inWhere) {
-      failure = `${meta.where} reads ${operandText(operand)}, which only a collection function's where has.`;
-      return;
+      const held = loopValueType(model, meta.loop);
+      if (!held) {
+        failure = `${meta.where} reads ${operandText(operand)}, which only a collection function's where has, or a for each over an open read.`;
+        return;
+      }
+      const field = operand.field === undefined ? null : recordFieldProblem(model, { valueType: held.propertyType, isList: held.isList }, operand);
+      if (field) { failure = `${meta.where} reads ${operandText(operand)}, but ${field}`; return; }
     }
     if (source === 'record') {
       failure = `${meta.where} builds a record – only a handler sets one.`;
@@ -5027,7 +5198,8 @@ function validateCommandBody(model, body) {
       return;
     }
     if (source === 'projection-read') {
-      failure = openReadProblem(model, operand, !!meta.collection && meta.collection.read === operand)
+      failure = openReadProblem(model, operand, !!meta.collection && meta.collection.read === operand,
+        !!meta.loopSource && meta.loopSource.in === operand)
         || readProblem(model, body, operand, meta.where)
         || (() => {
           const problem = recordFieldProblem(model, projectionsOf(model)[operand.projection], operand);
@@ -5168,14 +5340,18 @@ function validateCommandBody(model, body) {
   // publishes cart lines under the item type's name, and every reader of
   // the event folds a shape it was never told about. Operands whose type
   // cannot be worked out (literals, dangling references) are left alone.
-  for (const emission of commandEmissions(body)) {
+  // Inside a loop, what its names and `value` hold (11.0).
+  const emissionsAt = [];
+  forEachStep(commandSteps(body), (step, { loop }) => { if (stepKind(step) === 'emit') emissionsAt.push({ emission: step, loop }); });
+  for (const { emission, loop } of emissionsAt) {
     const event = model['event-definitions'][emission.name];
     if (!event) continue;
     for (const property of event.properties || []) {
       const operand = (emission.parameters || {})[property.name];
       if (operand === undefined) continue;
       const resolved = resolveOperandType(operand, {
-        boundary, commandProperties: body.properties || [], model,
+        boundary, commandProperties: commandScopeProperties(model, body, loop), model,
+        instanceValue: loopValueType(model, loop),
       });
       if (!resolved) continue;
       if (resolved.propertyType !== property.propertyType || resolved.isList !== !!property.isList) {
@@ -5515,18 +5691,31 @@ function assertStorableBody(kind, body, name = null) {
         throw new DomainError(`A command's "${field}" is gone – 11.0 says its rules and emissions in order, as "steps".`);
       }
     }
-    const steps = (list, where) => {
+    const steps = (list, where, inLoop = false) => {
       if (!Array.isArray(list)) throw new DomainError(`A command's ${where} must be a list.`);
       for (const step of list) {
         if (step === null || typeof step !== 'object' || Array.isArray(step)) {
           throw new DomainError(`A command's ${where} must hold objects – got ${JSON.stringify(step)}.`);
         }
+        // A loop (11.0): its names, a source to read and steps – and
+        // never one loop inside another.
+        if (step.forEach !== undefined) {
+          if (inLoop) throw new DomainError('A "for each" stands inside another – a loop does not nest.');
+          if (!Array.isArray(step.forEach) || !step.forEach.length || step.forEach.some((n) => typeof n !== 'string')) {
+            throw new DomainError('A loop\'s "forEach" must be a non-empty list of the names it binds.');
+          }
+          if (step.in === null || typeof step.in !== 'object' || Array.isArray(step.in)) {
+            throw new DomainError('A loop\'s "in" must be the operand it runs over.');
+          }
+          steps(step.steps === undefined ? [] : step.steps, 'loop\'s "steps"', true);
+          continue;
+        }
         if (step.branches === undefined) continue;
         if (!Array.isArray(step.branches) || step.branches.some((arm) => arm === null || typeof arm !== 'object')) {
           throw new DomainError('A branch step\'s "branches" must be a list of {condition, steps}.');
         }
-        for (const arm of step.branches) steps(arm.steps === undefined ? [] : arm.steps, 'branch arm\'s "steps"');
-        if (step.otherwise !== undefined) steps(step.otherwise, 'branch\'s "otherwise"');
+        for (const arm of step.branches) steps(arm.steps === undefined ? [] : arm.steps, 'branch arm\'s "steps"', inLoop);
+        if (step.otherwise !== undefined) steps(step.otherwise, 'branch\'s "otherwise"', inLoop);
       }
     };
     if (body.steps !== undefined) steps(body.steps, '"steps"');
@@ -6181,7 +6370,7 @@ const MEMBER_REWRITES = {
           if (operandSource(other) !== 'alias-property' && operandSource(other) !== 'projection-read') continue;
           const resolved = resolveOperandType(other, {
             boundary: command.boundary || [],
-            commandProperties: command.properties || [],
+            commandProperties: commandScopeProperties(model, command),
             model,
           });
           if (!resolved || resolved.propertyType !== typeName) continue;
@@ -6345,11 +6534,11 @@ const MEMBER_REWRITES = {
       return touched;
     }),
     ...rewriteCommands(model, (command) => {
-      const parameters = new Set((command.properties || [])
+      const parameters = new Set(commandScopeProperties(model, command)
         .filter((p) => p.propertyType === typeName).map((p) => p.name));
       let touched = false;
       const holds = (operand) => {
-        const whole = resolveOperandTypeWhole(operand, { boundary: command.boundary || [], commandProperties: command.properties || [], model });
+        const whole = resolveOperandTypeWhole(operand, { boundary: command.boundary || [], commandProperties: commandScopeProperties(model, command), model });
         return !!whole && whole.propertyType === typeName && !whole.isList;
       };
       forEachCommandOperand(command, (operand) => {
@@ -8958,6 +9147,15 @@ function loadPredefinedModel(index) {
 // not at the initial value (`evOpenRead`). A command folds one open
 // read once per spelling, like any read in place.
 //
+// **A loop runs its steps once per element** (11.0, `for each`): of
+// an open read – one per present instance, in the order of each one's
+// first event – a list projection or a list parameter. Each element is
+// in scope by the loop's names, as a parameter is, and an instance's
+// value as `value`; a read that names an element is made once per
+// element (`evInlineKey`), so the append condition holds the reads
+// each element made. A `reject` reached inside refuses the whole
+// command, as anywhere.
+//
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* – an ordinary, expected outcome
 // this returns. A scenario that cannot be run at all – an event that no
@@ -9758,11 +9956,15 @@ function evReadOperand(operand, scope) {
       const each = binding.instances.map((instance) => evField(instance.read(operand, scope), operand.field));
       return each.some(Array.isArray) ? each.flat() : each;
     }
+    // `value` inside a loop over an open read (11.0).
+    case 'instance-value':
+      if (!scope.loop || !scope.loop.hasValue) fail(`${operandText(operand)} is read outside a for each over an open read.`);
+      return evField(evNormalize(scope.loop.value), operand.field);
     // A collection function (11.0): its open read made once per
     // spelling, like any read in place, and reduced.
     case 'collection': {
       const read = operand.read || {};
-      const key = readKey(read);
+      const key = evInlineKey(read, scope);
       if (!scope.inline.has(key)) scope.inline.set(key, evOpenReadInScope(read, scope));
       return evCollect(operand, scope.inline.get(key).instances, (parameter) => evReadOperand({ parameterName: parameter.parameterName }, scope));
     }
@@ -9773,7 +9975,7 @@ function evReadOperand(operand, scope) {
     // reported beside the aliases, under how it reads.
     case 'projection-read': {
       if (openTagNames(operand).length) evOpenReadOutside(operand);
-      const key = readKey(operand);
+      const key = evInlineKey(operand, scope);
       if (!scope.inline.has(key)) {
         scope.inline.set(key, evProjectionRead(scope.model, scope.events, scope.body, operand, scope,
           `"${operandText(operand)}"`));
@@ -9784,6 +9986,54 @@ function evReadOperand(operand, scope) {
     default:
       return evNormalize(operand);
   }
+}
+
+// What a read in place is cached under: its spelling (`readKey`) –
+// and, inside a loop, the values of the loop's names it reads, so a
+// read by the element is made once per element and one that does not
+// name it once in all.
+function evInlineKey(read, scope) {
+  const key = readKey(read);
+  if (!scope.loop) return key;
+  const named = new Set();
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return; }
+    if (!value || typeof value !== 'object') return;
+    if (typeof value.parameterName === 'string' && scope.loop.names.includes(value.parameterName)) named.add(value.parameterName);
+    if (value.instanceValue === true) named.add('value');
+    Object.values(value).forEach(walk);
+  };
+  walk(read);
+  if (!named.size) return key;
+  return key + JSON.stringify([...named].sort().map((name) => (name === 'value' ? scope.loop.value : scope.args[name])));
+}
+
+// A loop's elements (11.0), in source order, as `[{names, value?}]`:
+// `names` the value each of the loop's names takes. An open read gives
+// one per present instance, each open tag's value to its name in the
+// projection's order of tags, and the instance's `value`; a list – a
+// projection's or a parameter's – one per entry, to the one name.
+function evLoopElements(model, loop, scope) {
+  const names = loopNames(loop);
+  const source = loop.in;
+  const label = `"for each ${names.join(', ')}"`;
+  if (operandSource(source) === 'projection-read' && openTagNames(source).length) {
+    const key = evInlineKey(source, scope);
+    if (!scope.inline.has(key)) scope.inline.set(key, evOpenReadInScope(source, scope));
+    const read = scope.inline.get(key);
+    const open = read.tags.filter((tag) => tag.open).map((tag) => tag.name);
+    if (open.length !== names.length) fail(`${label} names ${names.length}, but ${operandText(source)} leaves ${open.length} open.`);
+    return read.instances.map((instance) => ({
+      names: Object.fromEntries(names.map((name, i) => [name, instance.tags[open[i]]])),
+      value: instance.value,
+      hasValue: true,
+    }));
+  }
+  const held = evNormalize(evReadOperand(source, scope));
+  if (held === null || held === undefined) return [];
+  if (!Array.isArray(held)) fail(`${label} runs over ${operandText(source)}, which is no list.`);
+  if (names.length !== 1) fail(`${label} names ${names.length}, but a list's element takes one.`);
+  return held.map((element) => ({ names: { [names[0]]: element }, hasValue: false }));
 }
 
 // ============================================================
@@ -10073,7 +10323,7 @@ function evCheckCondition(model, body, condition, scope) {
   const fannedReads = conditionOperands(condition)
     .filter((operand) => operandSource(operand) === 'projection-read' && readFanTag(operand));
   for (const read of fannedReads) evReadOperand(read, scope);
-  const inlineOf = (read) => scope.inline.get(readKey(read));
+  const inlineOf = (read) => scope.inline.get(evInlineKey(read, scope));
   const fannedSources = [
     ...fannedAliases.map((alias) => scope.bound[alias]),
     ...fannedReads.map(inlineOf),
@@ -10207,7 +10457,7 @@ function evDecide(model, events, commandName, args, collect) {
   // have no prototype (see evOwn).
   const scope = {
     args: Object.create(null), bound: Object.create(null), inline: new Map(), resolving: new Set(),
-    model, body, events: log, collect,
+    model, body, events: log, collect, loop: null,
   };
   // In the dry run a step that fails is stepped over, not reported.
   const attempt = (step) => {
@@ -10311,10 +10561,29 @@ function evDecide(model, events, commandName, args, collect) {
               continue;
             }
             if (arm.condition !== undefined && !evCheck(model, body, arm.condition, scope).held) continue;
-            arms.push(armKey(at, arm.index));
+            if (!arms.includes(armKey(at, arm.index))) arms.push(armKey(at, arm.index));
             const refused = run(arm.steps, [...at, arm.index]);
             if (refused) return refused;
             break;
+          }
+          break;
+        }
+        // Once per element, each in scope by the loop's names; the
+        // payload and an enclosing scope come back after.
+        case 'loop': {
+          const elements = attempt(() => evLoopElements(model, step, scope)) || [];
+          const outer = { args: scope.args, loop: scope.loop };
+          for (const element of elements) {
+            scope.args = Object.assign(Object.create(null), outer.args, element.names);
+            scope.loop = { names: Object.keys(element.names), value: element.value, hasValue: element.hasValue };
+            let refused;
+            try {
+              refused = run(loopSteps(step), [...at, 'each']);
+            } finally {
+              scope.args = outer.args;
+              scope.loop = outer.loop;
+            }
+            if (refused) return refused;
           }
           break;
         }

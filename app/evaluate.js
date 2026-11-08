@@ -55,6 +55,15 @@
 // not at the initial value (`evOpenRead`). A command folds one open
 // read once per spelling, like any read in place.
 //
+// **A loop runs its steps once per element** (11.0, `for each`): of
+// an open read – one per present instance, in the order of each one's
+// first event – a list projection or a list parameter. Each element is
+// in scope by the loop's names, as a parameter is, and an instance's
+// value as `value`; a read that names an element is made once per
+// element (`evInlineKey`), so the append condition holds the reads
+// each element made. A `reject` reached inside refuses the whole
+// command, as anywhere.
+//
 // **Failure has two kinds and they are not the same.** A command whose
 // conditions do not hold is *rejected* – an ordinary, expected outcome
 // this returns. A scenario that cannot be run at all – an event that no
@@ -855,11 +864,15 @@ function evReadOperand(operand, scope) {
       const each = binding.instances.map((instance) => evField(instance.read(operand, scope), operand.field));
       return each.some(Array.isArray) ? each.flat() : each;
     }
+    // `value` inside a loop over an open read (11.0).
+    case 'instance-value':
+      if (!scope.loop || !scope.loop.hasValue) fail(`${operandText(operand)} is read outside a for each over an open read.`);
+      return evField(evNormalize(scope.loop.value), operand.field);
     // A collection function (11.0): its open read made once per
     // spelling, like any read in place, and reduced.
     case 'collection': {
       const read = operand.read || {};
-      const key = readKey(read);
+      const key = evInlineKey(read, scope);
       if (!scope.inline.has(key)) scope.inline.set(key, evOpenReadInScope(read, scope));
       return evCollect(operand, scope.inline.get(key).instances, (parameter) => evReadOperand({ parameterName: parameter.parameterName }, scope));
     }
@@ -870,7 +883,7 @@ function evReadOperand(operand, scope) {
     // reported beside the aliases, under how it reads.
     case 'projection-read': {
       if (openTagNames(operand).length) evOpenReadOutside(operand);
-      const key = readKey(operand);
+      const key = evInlineKey(operand, scope);
       if (!scope.inline.has(key)) {
         scope.inline.set(key, evProjectionRead(scope.model, scope.events, scope.body, operand, scope,
           `"${operandText(operand)}"`));
@@ -881,6 +894,54 @@ function evReadOperand(operand, scope) {
     default:
       return evNormalize(operand);
   }
+}
+
+// What a read in place is cached under: its spelling (`readKey`) –
+// and, inside a loop, the values of the loop's names it reads, so a
+// read by the element is made once per element and one that does not
+// name it once in all.
+function evInlineKey(read, scope) {
+  const key = readKey(read);
+  if (!scope.loop) return key;
+  const named = new Set();
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return; }
+    if (!value || typeof value !== 'object') return;
+    if (typeof value.parameterName === 'string' && scope.loop.names.includes(value.parameterName)) named.add(value.parameterName);
+    if (value.instanceValue === true) named.add('value');
+    Object.values(value).forEach(walk);
+  };
+  walk(read);
+  if (!named.size) return key;
+  return key + JSON.stringify([...named].sort().map((name) => (name === 'value' ? scope.loop.value : scope.args[name])));
+}
+
+// A loop's elements (11.0), in source order, as `[{names, value?}]`:
+// `names` the value each of the loop's names takes. An open read gives
+// one per present instance, each open tag's value to its name in the
+// projection's order of tags, and the instance's `value`; a list – a
+// projection's or a parameter's – one per entry, to the one name.
+function evLoopElements(model, loop, scope) {
+  const names = loopNames(loop);
+  const source = loop.in;
+  const label = `"for each ${names.join(', ')}"`;
+  if (operandSource(source) === 'projection-read' && openTagNames(source).length) {
+    const key = evInlineKey(source, scope);
+    if (!scope.inline.has(key)) scope.inline.set(key, evOpenReadInScope(source, scope));
+    const read = scope.inline.get(key);
+    const open = read.tags.filter((tag) => tag.open).map((tag) => tag.name);
+    if (open.length !== names.length) fail(`${label} names ${names.length}, but ${operandText(source)} leaves ${open.length} open.`);
+    return read.instances.map((instance) => ({
+      names: Object.fromEntries(names.map((name, i) => [name, instance.tags[open[i]]])),
+      value: instance.value,
+      hasValue: true,
+    }));
+  }
+  const held = evNormalize(evReadOperand(source, scope));
+  if (held === null || held === undefined) return [];
+  if (!Array.isArray(held)) fail(`${label} runs over ${operandText(source)}, which is no list.`);
+  if (names.length !== 1) fail(`${label} names ${names.length}, but a list's element takes one.`);
+  return held.map((element) => ({ names: { [names[0]]: element }, hasValue: false }));
 }
 
 // ============================================================
@@ -1170,7 +1231,7 @@ function evCheckCondition(model, body, condition, scope) {
   const fannedReads = conditionOperands(condition)
     .filter((operand) => operandSource(operand) === 'projection-read' && readFanTag(operand));
   for (const read of fannedReads) evReadOperand(read, scope);
-  const inlineOf = (read) => scope.inline.get(readKey(read));
+  const inlineOf = (read) => scope.inline.get(evInlineKey(read, scope));
   const fannedSources = [
     ...fannedAliases.map((alias) => scope.bound[alias]),
     ...fannedReads.map(inlineOf),
@@ -1304,7 +1365,7 @@ function evDecide(model, events, commandName, args, collect) {
   // have no prototype (see evOwn).
   const scope = {
     args: Object.create(null), bound: Object.create(null), inline: new Map(), resolving: new Set(),
-    model, body, events: log, collect,
+    model, body, events: log, collect, loop: null,
   };
   // In the dry run a step that fails is stepped over, not reported.
   const attempt = (step) => {
@@ -1408,10 +1469,29 @@ function evDecide(model, events, commandName, args, collect) {
               continue;
             }
             if (arm.condition !== undefined && !evCheck(model, body, arm.condition, scope).held) continue;
-            arms.push(armKey(at, arm.index));
+            if (!arms.includes(armKey(at, arm.index))) arms.push(armKey(at, arm.index));
             const refused = run(arm.steps, [...at, arm.index]);
             if (refused) return refused;
             break;
+          }
+          break;
+        }
+        // Once per element, each in scope by the loop's names; the
+        // payload and an enclosing scope come back after.
+        case 'loop': {
+          const elements = attempt(() => evLoopElements(model, step, scope)) || [];
+          const outer = { args: scope.args, loop: scope.loop };
+          for (const element of elements) {
+            scope.args = Object.assign(Object.create(null), outer.args, element.names);
+            scope.loop = { names: Object.keys(element.names), value: element.value, hasValue: element.hasValue };
+            let refused;
+            try {
+              refused = run(loopSteps(step), [...at, 'each']);
+            } finally {
+              scope.args = outer.args;
+              scope.loop = outer.loop;
+            }
+            if (refused) return refused;
           }
           break;
         }
