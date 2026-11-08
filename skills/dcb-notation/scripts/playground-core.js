@@ -5948,6 +5948,51 @@ const MEMBER_REWRITES = {
     renameProjectionParameter(model, projectionName, 'tags', previous, next),
   'projection-definition:argument': (model, projectionName, previous, next) =>
     renameProjectionParameter(model, projectionName, 'arguments', previous, next),
+
+  // A group's tag is every one of its projections' tag: each read of
+  // one keys its value by it – a group binding, a read in place, a
+  // derived operand, a projection scenario – and each names it inside,
+  // in a branched handler's conditions and in what a derived one
+  // compares or passes on (`forEachOwnParameterRefOf`). A sibling read
+  // gives no tag, so it has nothing to move.
+  'group-definition:tag': (model, groupName, previous, next) => {
+    const ours = (name) => {
+      const split = typeof name === 'string' ? splitQualifiedName(name) : null;
+      return !!split && split.group === groupName;
+    };
+    const rekey = (read) => {
+      if (!read || !read.tags || typeof read.tags !== 'object' || Array.isArray(read.tags) || !(previous in read.tags)) return false;
+      read.tags = renameKey(read.tags, previous, next);
+      return true;
+    };
+    const out = rewriteCommands(model, (command) => {
+      let touched = false;
+      for (const binding of command.boundary || []) {
+        if (binding && (binding.group === groupName || ours(binding.projection)) && rekey(binding)) touched = true;
+      }
+      forEachCommandOperand(command, (operand) => {
+        if (operandSource(operand) === 'projection-read' && ours(operand.projection) && rekey(operand)) touched = true;
+      });
+      return touched;
+    });
+    out.push(...rewriteProjections(model, (body, name, owner) => {
+      let touched = false;
+      for (const operand of derivedOperands(body.derived)) {
+        if (operandSource(operand) === 'projection-read' && ours(operand.projection) && rekey(operand)) touched = true;
+      }
+      if (owner === groupName) {
+        forEachOwnParameterRefOf(body, (ref) => {
+          if (ref.parameterName === previous) { ref.parameterName = next; touched = true; }
+        });
+      }
+      return touched;
+    }));
+    for (const [key, scenario] of Object.entries(model['projection-scenario-definitions'] || {})) {
+      const body = deepClone(scenario);
+      if (ours(body.projection) && rekey(body)) out.push({ kind: 'projection-scenario-definition', name: key, body });
+    }
+    return out;
+  },
 };
 
 // Every `{parameterName}` a projection names one of its own
@@ -6134,10 +6179,13 @@ const MEMBER_SHAPE = {
   tag: { list: 'tags', named: true, label: 'Tag' },
   argument: { list: 'arguments', named: true, label: 'Argument' },
 };
+const GROUP_TAG_SHAPE = { list: 'tag', named: true, single: true, label: 'Tag' };
 
 // A grouped projection's parameters are renamed by its qualified name,
 // like any projection's; what lands is its group, the entry renamed in
-// place. Its tag is its group's, and is not its own to rename.
+// place. Its tag is its group's, renamed on the group
+// (`group-definition` + `tag`), which moves it for every projection
+// the group owns at once.
 function renameMember(kind, modelId, definitionName, memberKind, previousName, newName) {
   const model = getCtxOrThrow(modelId);
   const entry = kind === 'projection-definition' ? groupProjectionEntry(model, definitionName) : null;
@@ -6146,9 +6194,10 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
     throw new DomainError(`No ${humanize(kind)} named "${definitionName}" exists in this model.`);
   }
   if (entry && memberKind === 'tag') {
-    throw new DomainError(`${definitionName} is read by its group's tag – it has none of its own to rename.`);
+    throw new DomainError(`${definitionName} is read by its group's tag – it has none of its own; rename the group's.`);
   }
-  const shape = MEMBER_SHAPE[memberKind];
+  // A group has one tag, held whole rather than in a list.
+  const shape = kind === 'group-definition' && memberKind === 'tag' ? GROUP_TAG_SHAPE : MEMBER_SHAPE[memberKind];
   const rewrite = MEMBER_REWRITES[`${kind}:${memberKind}`];
   if (!shape || !rewrite) {
     throw new DomainError(`A ${humanize(kind)} has no ${memberKind} to rename.`);
@@ -6163,7 +6212,7 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
   }
   if (trimmed === previousName) return;
 
-  const members = getAtDottedPath(body, shape.list) || [];
+  const members = shape.single ? [getAtDottedPath(body, shape.list)].filter(Boolean) : getAtDottedPath(body, shape.list) || [];
   const nameOf = (m) => (shape.named ? m && m.name : m);
   if (!members.some((m) => nameOf(m) === previousName)) {
     throw new DomainError(
@@ -6180,6 +6229,11 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
     && projectionParameters(projectionsOf(model)[definitionName]).some((p) => p.name === trimmed)) {
     throw new DomainError(`Projection "${definitionName}" already has a parameter named "${trimmed}".`);
   }
+  // And a group's tag is one of each of its projections' parameters.
+  if (kind === 'group-definition' && memberKind === 'tag') {
+    const clash = groupProjections(body).find((inner) => projectionParameters(inner).some((p) => p.name === trimmed));
+    if (clash) throw new DomainError(`${definitionName}.${clash.name} already has a parameter named "${trimmed}".`);
+  }
 
   // A rewrite fixes *references*; the member list itself is renamed
   // here, uniformly, so each rewrite has one job. When a rewrite also
@@ -6191,7 +6245,8 @@ function renameMember(kind, modelId, definitionName, memberKind, previousName, n
   const ownerRewrite = rewrites.find((r) => r.kind === ownerKind && r.name === ownerName);
   const ownerBody = deepClone(ownerRewrite ? ownerRewrite.body : (entry ? entry.group : body));
   const listOwner = entry ? ownerBody.projections[entry.index] : ownerBody;
-  setAtDottedPath(listOwner, shape.list, (getAtDottedPath(listOwner, shape.list) || []).map((m) => {
+  if (shape.single) setAtDottedPath(listOwner, shape.list, { ...getAtDottedPath(listOwner, shape.list), name: trimmed });
+  else setAtDottedPath(listOwner, shape.list, (getAtDottedPath(listOwner, shape.list) || []).map((m) => {
     if (!shape.named) return m === previousName ? trimmed : m;
     return m && m.name === previousName ? { ...m, name: trimmed } : m;
   }));

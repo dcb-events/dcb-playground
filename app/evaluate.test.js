@@ -4464,6 +4464,39 @@ function modelsWithScenarios() {
       { tags: { account: 'a1' } }), -7, 'and still folds');
   });
 
+  check('renaming a group\'s tag moves its projections\' conditions, derived reads and every read of them', () => {
+    const { id, model } = openBank();
+    sandbox.createGroup(id, 'Account', { name: 'accountId', tagType: 'AccountId' });
+    sandbox.addGroupProjection(id, 'Account', 'net', { valueType: 'integer', isList: false, initialValue: 0, handlers: [balanceHandler] });
+    sandbox.addGroupProjection(id, 'Account', 'mirrors', { valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'Balance', tags: { accountId: tag('accountId') } }, predicate: 'equals',
+        rightHandSide: { projection: 'net' } } });
+    addDefinition('command-definition', id, 'Probe', {
+      properties: [one('accountId', 'AccountId')],
+      boundary: [{ alias: 'account', group: 'Account', tags: { accountId: tag('accountId') } }],
+      steps: [
+        { condition: is({ alias: 'account', property: 'net' }, 0, true), rejection: 'Empty' },
+        { condition: is({ projection: 'Account.mirrors', tags: { accountId: tag('accountId') } }, true), rejection: 'Odd' },
+        { name: 'MoneyTransferred', parameters: { from: tag('accountId'), to: tag('accountId'), amount: 0 } },
+      ],
+    });
+    addDefinition('projection-scenario-definition', id, 'net-1', { projection: 'Account.net',
+      tags: { accountId: 'a1' }, given: [], then: 0 });
+    renameMember('group-definition', id, 'Account', 'tag', 'accountId', 'account');
+    const group = model()['group-definitions'].Account;
+    eq(group.tag, { name: 'account', tagType: 'AccountId' }, 'declared');
+    const [net, mirrors] = group.projections;
+    eq(net.handlers[0].steps.map((s) => s.branches[0].condition.rightHandSide), [tag('account'), tag('account')],
+      'a branched handler\'s conditions');
+    eq(mirrors.derived.leftHandSide.tags, { accountId: tag('account') }, 'what a derived one passes on');
+    const probe = model()['command-definitions'].Probe;
+    eq(probe.boundary[0].tags, { account: tag('accountId') }, 'a group binding');
+    eq(probe.steps[1].condition.leftHandSide.tags, { account: tag('accountId') }, 'a read in place');
+    eq(model()['projection-scenario-definitions']['net-1'].tags, { account: 'a1' }, 'a projection scenario');
+    eq(sandbox.modelAdvisories(model()), [], 'nothing left dangling');
+    eq(foldProjection(model(), [transfer('a1', 'a2', 7)], 'Account.net', { tags: { account: 'a1' } }), -7, 'and it still folds');
+  });
+
   check('two independent ifs that both set may both match – advised', () => {
     const { id, model } = openBank();
     addDefinition('projection-definition', id, 'LastSide', {
