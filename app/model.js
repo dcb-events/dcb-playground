@@ -6354,7 +6354,15 @@ const MEMBER_REWRITES = {
     // assumed, since what is read is whichever the alias names.
     out.push(...rewriteCommands(model, (command) => {
       let touched = false;
-      for (const condition of commandConditionLeaves(command)) {
+      // Each comparison with the loop it sits in: inside one over an
+      // open read (11.0), `value` is the instance's, of its projection's type.
+      const leaves = [];
+      forEachStep(commandSteps(command), (step, { loop }) => {
+        const stated = stepKind(step) === 'rule' ? [step.condition]
+          : stepKind(step) === 'branch' ? (step.branches || []).map((arm) => arm && arm.condition) : [];
+        for (const one of stated) for (const leaf of conditionLeaves(one)) leaves.push({ condition: leaf, loop });
+      });
+      for (const { condition, loop } of leaves) {
         // In an `equalsAny` list every entry sits opposite the left-hand
         // side; the entry objects are mutated in place like any operand.
         const sides = Array.isArray(condition.rightHandSide)
@@ -6365,11 +6373,12 @@ const MEMBER_REWRITES = {
           ];
         for (const [maybeEnum, other] of sides) {
           if (operandSource(maybeEnum) !== 'enum-member' || maybeEnum.enumMember !== previous) continue;
-          if (operandSource(other) !== 'alias-property' && operandSource(other) !== 'projection-read') continue;
+          if (!['alias-property', 'projection-read', 'instance-value'].includes(operandSource(other))) continue;
           const resolved = resolveOperandType(other, {
             boundary: command.boundary || [],
             commandProperties: commandScopeProperties(model, command),
             model,
+            instanceValue: loopValueType(model, loop),
           });
           if (!resolved || resolved.propertyType !== typeName) continue;
           maybeEnum.enumMember = next;
@@ -6539,11 +6548,17 @@ const MEMBER_REWRITES = {
         const whole = resolveOperandTypeWhole(operand, { boundary: command.boundary || [], commandProperties: commandScopeProperties(model, command), model });
         return !!whole && whole.propertyType === typeName && !whole.isList;
       };
-      forEachCommandOperand(command, (operand) => {
+      forEachCommandOperand(command, (operand, meta) => {
         const source = operandSource(operand);
         if (source === 'parameter'
             && parameters.has(operand.parameterName) && operand.property === previous) {
           operand.property = next;
+          touched = true;
+        }
+        // `value.field` inside a loop over an open read (11.0).
+        const held = source === 'instance-value' && !meta.inWhere ? loopValueType(model, meta.loop) : null;
+        if (held && !held.isList && held.propertyType === typeName && operand.field === previous) {
+          operand.field = next;
           touched = true;
         }
         if ((source === 'projection-read' || source === 'alias-property') && operand.field === previous && holds(operand)) {

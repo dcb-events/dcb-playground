@@ -4913,6 +4913,27 @@ function modelsWithScenarios() {
     });
     eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Echo'), [], 'advisory-clean too');
     eq(evaluateCommand(model(), log, 'Echo', { customerId: 'u1' }).events.length, 3, 'value whole, on a boolean');
+    sandbox.renameMember('custom-type-definition', id, 'ShareInfo', 'field', 'note', 'remark');
+    eq(model()['command-definitions'].EndByDetails.steps[0].steps[0].branches[0].condition.leftHandSide,
+      { instanceValue: true, field: 'remark' }, 'a field rename follows value.field');
+  });
+
+  check('renaming an enum member follows value compared inside a loop', () => {
+    const { id, model } = openPortal();
+    addDefinition('custom-type-definition', id, 'Role', { schema: { type: 'string', enum: ['Owner', 'Viewer'] } });
+    addDefinition('projection-definition', id, 'ShareRole', {
+      tags: [tag('ownerId', 'CustomerId'), tag('shareId', 'ShareId')], valueType: 'Role', isList: false, initialValue: null,
+      handlers: [{ event: 'ContractShareStarted', operation: 'set', value: { enumMember: 'Owner' } }],
+    });
+    addDefinition('command-definition', id, 'EndOwned', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [{ forEach: ['shareId'], in: { projection: 'ShareRole', tags: { ownerId: param('customerId'), shareId: open } }, steps: [
+        { branches: [{ condition: { leftHandSide: { instanceValue: true }, predicate: 'equals', rightHandSide: { enumMember: 'Owner' } },
+          steps: [ended('owned')] }] }] }],
+    });
+    eq(evaluateCommand(model(), sharesLog, 'EndOwned', { customerId: 'u1' }).events.length, 3, 'value == Owner, for each share started');
+    sandbox.renameMember('custom-type-definition', id, 'Role', 'member', 'Owner', 'Holder');
+    eq(model()['command-definitions'].EndOwned.steps[0].steps[0].branches[0].condition.rightHandSide, { enumMember: 'Holder' }, 'the member follows');
   });
 
   check('a reject inside a loop aborts the whole command', () => {
