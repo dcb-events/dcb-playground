@@ -435,6 +435,20 @@ and prune what no longer holds.
   boundary*, since a condition filters the fold and never the query —
   a read of `Balance(a1)` still conflicts with every transfer naming
   `a1`, either side. The editors offer only unhandled events.
+- **What a handler writes is nominal** (11.0, dcb-events.github.io#105).
+  `set`, `append` and `remove` take an event field only of the type the
+  projection holds – a list its element type, a record's field its
+  declared one – exactly as an emission and a read's tag do; a literal
+  fits any type of its base (`nominalProblem` in `validateHandlers`, an
+  advisory like every semantic finding). Until 11.0 a handler could
+  copy a `CustomerId` into a projection typed `ShareInviteeId`: the
+  loophole existed only for role-casting projections, which
+  conditional handlers made unnecessary. No cast (should one ever be
+  needed, `T(value)` is its spelling), no tag conversions, no `ref`:
+  an event property of a tag type stays a tag, and a migration
+  backfills the tag (`@untagged` is the revisit, if more migrations hit
+  it). `increment` / `decrement` are arithmetic and mix number types,
+  as a command's `+` and `-` do.
 - **A branched handler's conditions read the event and the
   projection's own tags, nothing else** (11.0). A leaf is an event
   field — a record's field one hop in, `event.data.address.city`,

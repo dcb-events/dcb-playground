@@ -3191,4 +3191,75 @@ command ConfirmSignUp(token: OptInToken, now: datetime) {
   });
 }
 
+// ---------------------------------------------------------------
+// Strict handler assignments (11.0, package 8): what a handler writes
+// is held to nominal types, as an emission and a read's tag are. A
+// CustomerId does not fill a ShareInviteeId; a literal fits any type of
+// its base. Advised, never refused.
+// ---------------------------------------------------------------
+{
+  const STRICT = `model "Strict"
+
+tag type CustomerId = string
+tag type ShareId = string
+tag type ShareInviteeId = string
+type Seats = integer
+record Hold { seats: Seats, note: string }
+
+event ShareStarted { tag shareId: ShareId, tag owner: CustomerId, tag invitee: CustomerId, seats: integer, note: string, held: Hold }
+event InviteeNamed { tag shareId: ShareId, tag invitee: ShareInviteeId }
+
+projection Invitee (tag shareId: ShareId): ShareInviteeId = null {
+  on InviteeNamed => set event.data.invitee
+}
+
+projection Seated (tag shareId: ShareId): Seats = 0 {
+  on ShareStarted => set 3
+}
+
+projection Owners (tag shareId: ShareId): CustomerId[] = [] {
+  on ShareStarted => append event.data.owner
+}
+
+projection Held (tag shareId: ShareId): Hold = null {
+  on ShareStarted => set event.data.held
+}
+
+command Start(shareId: ShareId, owner: CustomerId, invitee: CustomerId, held: Hold) {
+  emit ShareStarted { shareId, owner, invitee, seats: 1, note: "", held }
+}
+`;
+  const advised = (text) => {
+    const { model } = buildText(text);
+    return sandbox.modelAdvisories(model()).map((a) => `${a.name}: ${a.message}`);
+  };
+
+  check('a handler writing its own type, or a literal, is advisory-clean', () => {
+    eq(advised(STRICT), [], 'clean');
+  });
+
+  check('a handler setting another nominal type is advised, not refused', () => {
+    const found = advised(swap(STRICT, 'on InviteeNamed => set event.data.invitee', 'on ShareStarted => set event.data.invitee'));
+    eq(found.length, 1, found.join('; '));
+    eq(found[0], 'Invitee: The handler for "ShareStarted" on projection "Invitee" sets it to "event.data.invitee", a CustomerId '
+      + '– but it holds a ShareInviteeId. Nothing converts one into the other: tag the event by a ShareInviteeId, '
+      + 'or hold a CustomerId.', 'the message');
+  });
+
+  check('an integer does not fill a Seats, a list takes its element type, a record field its declared type', () => {
+    eq(advised(swap(STRICT, 'on ShareStarted => set 3', 'on ShareStarted => set event.data.seats')).length, 1, 'integer into Seats');
+    eq(advised(swap(STRICT, 'append event.data.owner', 'append event.data.shareId')).length, 1, 'a ShareId into CustomerId[]');
+    eq(advised(swap(STRICT, 'on ShareStarted => set event.data.held', 'on ShareStarted => set { seats: event.data.seats, note: event.data.note }')).length,
+      1, 'an integer into a Seats field');
+    eq(advised(swap(STRICT, 'on ShareStarted => set event.data.held', 'on ShareStarted => set { seats: 2, note: event.data.note }')), [],
+      'a literal and a matching field');
+  });
+
+  check('a branched handler is held to the same', () => {
+    const found = advised(swap(STRICT, 'on InviteeNamed => set event.data.invitee',
+      'on ShareStarted {\n    if event.data.shareId == shareId => set event.data.owner\n  }'));
+    eq(found.some((m) => /a CustomerId – but it holds a ShareInviteeId/.test(m)), true, found.join('; '));
+  });
+}
+
 finish();

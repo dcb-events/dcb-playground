@@ -74,7 +74,9 @@ such as `from` and `to` of `MoneyTransferred`.
 
 **Role tag type**:
 A tag type that exists only to name one role of an identifier (`ShareInviteeId`
-for a `CustomerId`), so that a query can select that role.
+for a `CustomerId`), so that a query can select that role. Since 11.0 a
+conditional handler tells roles apart, so one is needed only for a narrower
+boundary; a value never converts from one type into another (no cast).
 
 **now**:
 The time a command acts at, an ordinary `datetime` parameter the layer around

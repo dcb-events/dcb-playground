@@ -4524,6 +4524,50 @@ function validateHandlers(model, label, target, handlers) {
       );
     }
     recordValueProblem(arm, event, where);
+    nominalProblem(arm, event, where);
+  };
+
+  // What a handler writes is held to nominal types (11.0, package 8),
+  // as an emission and a read's tag are: an event field fills a
+  // projection – or a record's field, or a list's element – only of
+  // the type it is declared as. A CustomerId does not fill a
+  // ShareInviteeId, an integer does not fill a Seats. A literal fits
+  // any type of its base, and is checked elsewhere. There is no cast:
+  // the leniency served only the role-casting projections, which
+  // conditional handlers made unnecessary. `increment` and `decrement`
+  // are arithmetic, which mixes number types as a command's does.
+  const nominalProblem = (arm, event, where) => {
+    if (!['set', 'append', 'remove'].includes(arm.operation)) return;
+    const unwrapped = operandSource(arm.value) === 'successor' ? arm.value.successor : arm.value;
+    const mismatch = (operand, declared, declaredList, holder) => {
+      if (operandSource(operand) !== 'event-property') return null;
+      const property = (event.properties || []).find((p) => p && p.name === operand.eventProperty);
+      if (!property) return null;
+      const type = handlerFieldType(model, arm.event || event.name, operand)
+        || (operand.property === undefined ? property.propertyType : null);
+      if (!type) return null;
+      const isList = operand.property === undefined ? !!property.isList : false;
+      const listFits = declaredList === null || isList === declaredList;
+      if (type === declared && listFits) return null;
+      const held = `${typeArticle(type)} ${type}${isList ? '[]' : ''}`;
+      return `${where} sets ${holder} to "${operandText(operand)}", ${held} – but it holds `
+        + `${typeArticle(declared)} ${declared}${declaredList ? '[]' : ''}. Nothing converts one into the other: `
+        + `tag the event by ${typeArticle(declared)} ${declared}, or hold ${typeArticle(type)} ${type}.`;
+    };
+    let problem = null;
+    if (operandSource(unwrapped) === 'record') {
+      const fields = compositeFieldsOf(model, target.valueType) || [];
+      for (const [key, operand] of Object.entries((unwrapped.record && typeof unwrapped.record === 'object') ? unwrapped.record : {})) {
+        const field = fields.find((f) => f && f.name === key);
+        problem = problem || (field ? mismatch(operand, field.propertyType, !!field.isList, `"${key}"`) : null);
+      }
+    } else if (arm.operation === 'set') {
+      problem = mismatch(unwrapped, target.valueType, !!target.isList, 'it');
+    } else {
+      // A list takes its element type; append also takes a list of it.
+      problem = mismatch(unwrapped, target.valueType, arm.operation === 'append' ? null : false, 'an element');
+    }
+    if (problem) throw new DomainError(problem);
   };
 
   // A record value (11.0) is replaced whole: by an event field holding

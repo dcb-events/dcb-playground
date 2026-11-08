@@ -4526,6 +4526,50 @@ function validateHandlers(model, label, target, handlers) {
       );
     }
     recordValueProblem(arm, event, where);
+    nominalProblem(arm, event, where);
+  };
+
+  // What a handler writes is held to nominal types (11.0, package 8),
+  // as an emission and a read's tag are: an event field fills a
+  // projection – or a record's field, or a list's element – only of
+  // the type it is declared as. A CustomerId does not fill a
+  // ShareInviteeId, an integer does not fill a Seats. A literal fits
+  // any type of its base, and is checked elsewhere. There is no cast:
+  // the leniency served only the role-casting projections, which
+  // conditional handlers made unnecessary. `increment` and `decrement`
+  // are arithmetic, which mixes number types as a command's does.
+  const nominalProblem = (arm, event, where) => {
+    if (!['set', 'append', 'remove'].includes(arm.operation)) return;
+    const unwrapped = operandSource(arm.value) === 'successor' ? arm.value.successor : arm.value;
+    const mismatch = (operand, declared, declaredList, holder) => {
+      if (operandSource(operand) !== 'event-property') return null;
+      const property = (event.properties || []).find((p) => p && p.name === operand.eventProperty);
+      if (!property) return null;
+      const type = handlerFieldType(model, arm.event || event.name, operand)
+        || (operand.property === undefined ? property.propertyType : null);
+      if (!type) return null;
+      const isList = operand.property === undefined ? !!property.isList : false;
+      const listFits = declaredList === null || isList === declaredList;
+      if (type === declared && listFits) return null;
+      const held = `${typeArticle(type)} ${type}${isList ? '[]' : ''}`;
+      return `${where} sets ${holder} to "${operandText(operand)}", ${held} – but it holds `
+        + `${typeArticle(declared)} ${declared}${declaredList ? '[]' : ''}. Nothing converts one into the other: `
+        + `tag the event by ${typeArticle(declared)} ${declared}, or hold ${typeArticle(type)} ${type}.`;
+    };
+    let problem = null;
+    if (operandSource(unwrapped) === 'record') {
+      const fields = compositeFieldsOf(model, target.valueType) || [];
+      for (const [key, operand] of Object.entries((unwrapped.record && typeof unwrapped.record === 'object') ? unwrapped.record : {})) {
+        const field = fields.find((f) => f && f.name === key);
+        problem = problem || (field ? mismatch(operand, field.propertyType, !!field.isList, `"${key}"`) : null);
+      }
+    } else if (arm.operation === 'set') {
+      problem = mismatch(unwrapped, target.valueType, !!target.isList, 'it');
+    } else {
+      // A list takes its element type; append also takes a list of it.
+      problem = mismatch(unwrapped, target.valueType, arm.operation === 'append' ? null : false, 'an element');
+    }
+    if (problem) throw new DomainError(problem);
   };
 
   // A record value (11.0) is replaced whole: by an event field holding
@@ -18196,7 +18240,7 @@ const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
 
 const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 
-- Value types are nominal. An emitted value and a read's tag take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, and an integer does not fill a Seats property. Literals fit any matching base type. A read gives the type its projection declares, so declare the type the read's value goes on to fill.
+- Value types are nominal. An emitted value, a read's tag and what a handler sets take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, an integer does not fill a Seats property, and set event.data.customerId does not fill a projection holding a ShareInviteeId. Literals fit any matching base type. There is no cast. A read gives the type its projection declares, so declare the type the read's value goes on to fill. Role tag types (ShareOwnerId, ShareInviteeId) are not needed: tag the event by CustomerId twice and let the handler pick the role with if event.data.invitee == customerId.
 - An event property of a tag type must be one of the event's tags. So a command that reads by an identifier and stores it on an event needs that event tagged by it.
 - A handler runs for every event of its type that carries the projection's tags; its conditions only choose what it does with one. An event naming two values of a projection's tag type (from and to, owner and invitee) reaches both instances, so its handler says which side it is on: on MoneyTransferred { if event.data.from == accountId => decrement event.data.amount  if event.data.to == accountId => increment event.data.amount }. A condition reads only the event and the projection's tags – what depends on another projection's value is the command's to decide, onto the event.
 - A read needs a value for each tag, and is made only when a step reached needs it. So read by an optional parameter, or emit it into a required property, inside if x is not empty => … or after require x is not empty – not in a command of its own.
