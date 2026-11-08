@@ -2516,6 +2516,56 @@ function setBranchOtherwise(body, path, present) {
   if (!present) delete branch.otherwise;
 }
 
+// A step moved into an arm, or out of one, everything else staying
+// where it was (11.0). The lists are found before the step leaves its
+// own, so a path that shifts as it leaves still names the same list,
+// and a step is never moved into itself. Into an arm, a step from
+// before the branch goes first in the arm and one from after it last –
+// in and back out again, it lands where it was; out of one, the arm's
+// first step goes just before the branch and any other just after it
+// (a lone one by its kind: a rule before, the rest after), so moving
+// several out one by one keeps their order.
+function moveStepIntoArm(body, fromPath, armListPath) {
+  const from = fromPath.slice(0, -1);
+  const at = fromPath[fromPath.length - 1];
+  if (armListPath.length >= fromPath.length && fromPath.every((index, k) => armListPath[k] === index)) return;
+  const target = stepListAt(body, armListPath);
+  const source = stepListAt(body, from);
+  if (!target || !source || source[at] === undefined) return;
+  const holds = armListPath.length > from.length && from.every((index, k) => armListPath[k] === index);
+  const first = holds && at < armListPath[from.length];
+  const [step] = source.splice(at, 1);
+  if (first) target.unshift(step); else target.push(step);
+}
+
+function moveStepOutOfArm(body, fromPath) {
+  const branchPath = fromPath.slice(0, -2);
+  if (!branchPath.length || stepKind(stepAtPath(body, branchPath)) !== 'branch') return;
+  const arm = stepListAt(body, fromPath.slice(0, -1));
+  const outer = stepListAt(body, branchPath.slice(0, -1));
+  const at = fromPath[fromPath.length - 1];
+  if (!arm || !outer || arm[at] === undefined) return;
+  const branch = stepAtPath(body, branchPath);
+  const before = arm.length === 1 ? stepKind(arm[at]) === 'rule' : at === 0;
+  const [step] = arm.splice(at, 1);
+  outer.splice(outer.indexOf(branch) + (before ? 0 : 1), 0, step);
+}
+
+// The arms a top-level step may move into: every arm of a branch not
+// inside a loop – a loop's arms hold one emit or one reject – as the
+// path of its list and its words.
+function armTargets(body) {
+  const out = [];
+  forEachStep(commandSteps(body), (step, { path, loop }) => {
+    if (loop || stepKind(step) !== 'branch') return;
+    for (const arm of stepArms(step)) {
+      const words = arm.index === 'otherwise' ? 'else' : `${arm.index ? 'else if' : 'if'} ${conditionText(arm.condition)}`;
+      out.push({ listPath: [...path, arm.index], words, depth: path.length / 2 });
+    }
+  });
+  return out;
+}
+
 // A loop's head changed where it stands (11.0): its source, its names,
 // or both. Each element is stored as a parameter reference
 // (`{parameterName}`), so a name renamed is the command property's

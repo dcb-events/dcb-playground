@@ -7352,7 +7352,7 @@ function ruleRow(model, slice, condition, i, draggable) {
       draggable ? ruleGrip(slice, i) : null,
       h('div', { class: 'rule-lines' }, ...conditionRows(model, slice, {
         condition: bare, key: 'rule:' + i, lead: 'require', rejection: message || '',
-        after: rejectionMark(condition),
+        after: rejectionMark(condition), extra: [moveIntoPicker(slice, 'rule', i, 'rule:' + i + ':m0')],
         write: (b, c) => {
           const { rejection, ...next } = c;
           b.conditions[i] = { ...next, rejection: rejection === undefined ? message : rejection };
@@ -7370,6 +7370,7 @@ function ruleRow(model, slice, condition, i, draggable) {
         rejectionMark(condition),
         h('span', { class: 'grow' }),
         reveal(
+          moveIntoPicker(slice, 'rule', i, 'rule:' + i),
           codeViewButton('Edit this rule in the code view – the rule editor writes no collection function or record field'),
           h('button', {
             class: 'btn tiny danger',
@@ -7394,6 +7395,7 @@ function ruleRow(model, slice, condition, i, draggable) {
       h('span', { class: 'grow' }),
       reveal(
         ...addAliasButtons(condition, 'rule:' + i),
+        moveIntoPicker(slice, 'rule', i, 'rule:' + i),
         h('button', {
           class: 'btn tiny',
           onclick: () => {
@@ -7626,7 +7628,7 @@ function conditionLines(condition) {
 }
 
 // One branch, its arms in order, each with the steps it runs.
-function branchEditor(model, slice, branch, path, { loop = null, count = 1 } = {}) {
+function branchEditor(model, slice, branch, path, { loop = null, count = 1, extra = [] } = {}) {
   const key = 'br:' + stepPathKey(path);
   const arms = stepArms(branch);
   const conditional = arms.filter((arm) => arm.index !== 'otherwise');
@@ -7634,6 +7636,7 @@ function branchEditor(model, slice, branch, path, { loop = null, count = 1 } = {
     h('span', { class: 'muted tiny' }, loop ? 'Branch – per element, the first arm that holds runs' : 'Branch – the first arm that holds runs'),
     h('span', { class: 'grow' }),
     ...stepMoveButtons(path[path.length - 1], count, (b, d) => moveStepAt(b, path, d), 'branch'),
+    ...extra,
     h('button', {
       class: 'btn tiny danger', title: 'Remove this branch, every arm with it',
       onclick: () => patchSlice((b) => removeStepAt(b, path)),
@@ -7704,9 +7707,18 @@ function stepsEditor(model, slice, steps, listPath, { loop = null, inArm = false
   const rows = steps.map((step, j) => {
     const path = [...listPath, j];
     const rowKey = 'step:' + stepPathKey(path);
-    const moves = stepMoveButtons(j, steps.length, (b, d) => moveStepAt(b, path, d), 'step');
+    // Out of the arm, beside its branch – where the list the branch is
+    // in takes this kind of step: a loop's body only emits, and a
+    // `reject` stays inside some arm.
+    const kind = stepKind(step);
+    const movesOut = inArm && (loop ? kind === 'emit' : (kind !== 'reject' || listPath.length > 2));
+    const moveOut = movesOut ? h('button', {
+      class: 'btn tiny', title: 'Move this out of the arm, beside its branch – it then runs whichever arm holds',
+      onclick: () => patchSlice((b) => moveStepOutOfArm(b, path)),
+    }, 'Move out') : null;
+    const moves = [...stepMoveButtons(j, steps.length, (b, d) => moveStepAt(b, path, d), 'step'), moveOut];
     const removeButton = h('button', { class: 'btn tiny danger', onclick: () => patchSlice((b) => removeStepAt(b, path)) }, '×');
-    switch (stepKind(step)) {
+    switch (kind) {
       case 'rule':
         return h('div', {}, ...conditionRows(model, slice, {
           condition: step.condition,
@@ -7750,7 +7762,7 @@ function stepsEditor(model, slice, steps, listPath, { loop = null, inArm = false
           open ? eventFields(model, step, event, { loop, edit: (b, fn) => fn(stepAtPath(b, path)) }) : null);
       }
       case 'branch':
-        return h('div', { class: 'nested-branch' }, ...branchEditor(model, slice, step, path, { loop, count: steps.length }));
+        return h('div', { class: 'nested-branch' }, ...branchEditor(model, slice, step, path, { loop, count: steps.length, extra: [moveOut] }));
       case 'loop':
         return h('div', { class: 'nested-branch' }, ...loopEditor(model, slice, step, path, { count: steps.length }));
       default:
@@ -7984,6 +7996,32 @@ function loopAdder(model, slice, edit = null) {
       source ? h('button', { class: 'btn primary', onclick: submit }, edit ? 'Save' : 'Add for each')
         : h('span', { class: 'muted tiny' }, 'Pick one to go on.'),
       h('button', { class: 'btn ghost tiny', onclick: close }, 'Cancel')));
+}
+
+// "Move into…" on a top-level rule or emission (`kind`, the `n`th of
+// it): the arms of the command's branches, outside loops, listed by
+// their conditions – the step moves, never a copy (`moveStepIntoArm`).
+// Null with no arm to move into.
+// A button until pressed, so a row is not one more picker to read.
+function moveIntoPicker(slice, kind, n, rowKey) {
+  const steps = commandSteps(slice.body);
+  const at = steps.map((step, i) => [step, i]).filter(([step]) => stepKind(step) === kind)[n];
+  const targets = armTargets(slice.body);
+  if (!at || !targets.length) return null;
+  const key = 'move:' + kind + ':' + n;
+  if (state.adder !== key) {
+    return h('button', {
+      class: 'btn tiny', title: 'Move this into an arm of a branch – it then runs only when that arm does',
+      onclick: () => { closeForms(); state.adder = key; state.sel = rowKey; render(); },
+    }, 'Move into…');
+  }
+  const clip = (text) => (text.length > 48 ? text.slice(0, 47) + '…' : text);
+  return pick(targets.map((target) => [JSON.stringify(target.listPath), '\u00a0\u00a0'.repeat(target.depth) + clip(target.words)]), '',
+    (v) => {
+      if (!v) return;
+      state.adder = null;
+      patchSlice((b) => moveStepIntoArm(b, [at[1]], JSON.parse(v)));
+    }, 'into which arm?');
 }
 
 // A top-level branch or loop, as a card of its own.
@@ -8868,6 +8906,7 @@ function stepEmits(model, slice) {
         h('span', { class: 'grow' }),
         reveal(
           h('span', { class: 'tech' }, emission.name),
+          moveIntoPicker(slice, 'emit', i, 'emit:' + emission.name),
           h('button', {
             class: 'btn tiny',
             onclick: () => { state.openEvent = open ? null : emission.name; render(); },

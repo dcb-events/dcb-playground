@@ -2883,6 +2883,60 @@ check('importing an older model with entities says what became of them', () => {
     roundTrips();
   });
 
+  check('a top-level rule and emission move into an arm and back out, in order, nothing lost', () => {
+    sandbox.closeForms();
+    sandbox.addDefinition('command-definition', id, 'CloseCourse', {
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }], boundary: [],
+      steps: [
+        { condition: status('Existent'), rejection: 'Course is not active' },
+        { branches: [{ condition: status('Archived'), steps: [{ reject: 'Gone' }] }], otherwise: [] },
+        { name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } },
+      ],
+    });
+    sandbox.state.slice = 'CloseCourse';
+    const original = sandbox.deepClone(cmd('CloseCourse').steps);
+    const offers = () => findAll(paintAll('CloseCourse'), (n) => n.tag === 'button' && textOf(n) === 'Move into…');
+    const picker = () => findAll(paintAll('CloseCourse'), (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option').some((o) => textOf(o) === 'into which arm?'))[0];
+    eq(offers().length, 2, 'the rule and the emission each offer it');
+    offers()[0].onclick();
+    const arms = findAll(picker(), (o) => o.tag === 'option').map((o) => [o.value, textOf(o)]).filter(([v]) => v);
+    eq(arms.map(([, text]) => text.trim()), ['if CourseStatus(courseId) == Archived', 'else'], 'the arms, by their conditions');
+    // The rule into the if arm: before the branch, so first in the arm.
+    picker().onchange({ target: { value: JSON.stringify([1, 0]) } });
+    eq(cmd('CloseCourse').steps.map((s) => sandbox.stepKind(s)), ['branch', 'emit'], 'out of the top');
+    eq(cmd('CloseCourse').steps[0].branches[0].steps, [original[0], { reject: 'Gone' }], 'first in the arm');
+    // The emission into else: after the branch, so last there.
+    offers()[0].onclick();
+    picker().onchange({ target: { value: JSON.stringify([0, 'otherwise']) } });
+    eq(cmd('CloseCourse').steps, [{ branches: [{ condition: status('Archived'), steps: [original[0], { reject: 'Gone' }] }], otherwise: [original[2]] }],
+      'the emission in else');
+    eq(printed('CloseCourse').includes('else => emit CourseArchived { courseId }'), true, printed('CloseCourse'));
+    roundTrips();
+    // And back out: the rule before the branch, the emission after it.
+    const outs = () => findAll(paintAll('CloseCourse'), (n) => n.tag === 'button' && textOf(n) === 'Move out');
+    eq(outs().length, 2, 'the rule and the emission move out; a reject has nowhere to go at the top');
+    outs()[0].onclick();
+    outs()[0].onclick();
+    eq(cmd('CloseCourse').steps, original, 'as it was');
+    roundTrips();
+  });
+
+  check('moving out of a nested arm lands in the outer arm, and a step never moves into itself', () => {
+    const body = {
+      steps: [{ branches: [{ condition: status('Archived'), steps: [
+        { reject: 'A' },
+        { branches: [{ condition: status('Existent'), steps: [{ reject: 'B' }] }] },
+      ] }] }],
+    };
+    sandbox.moveStepOutOfArm(body, [0, 0, 1, 0, 0]);
+    eq(body.steps[0].branches[0].steps.map((s) => s.reject || sandbox.stepKind(s)), ['A', 'branch', 'B'], 'beside the inner branch, in the outer arm');
+    const before = JSON.stringify(body);
+    sandbox.moveStepIntoArm(body, [0], [0, 0]);
+    eq(JSON.stringify(body), before, 'a branch is not moved into its own arm');
+    eq(sandbox.armTargets(body).map((t) => t.listPath), [[0, 0], [0, 0, 1, 0]], 'nested arms are targets too');
+  });
+
   check('a top-level rule joined with and is edited a comparison at a time', () => {
     sandbox.closeForms();
     sandbox.state.slice = 'ArchiveCourse';

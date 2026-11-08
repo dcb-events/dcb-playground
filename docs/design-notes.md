@@ -277,10 +277,20 @@ and prune what no longer holds.
   outside a loop `require` and a nested `if`; `↑` / `↓` order steps,
   arms and branches. `+ branch` (Rules) starts one by its first
   condition and puts it after the rules, before what is recorded
-  (`newStepIndex`); `+ else` adds an empty `else`. Moving an existing
-  top-level rule or emission into an arm was left out: removing it and
-  adding it in the arm is two gestures, and a drag between lists would
-  need a drop target per arm.
+  (`newStepIndex`); `+ else` adds an empty `else`. **A step moves in
+  and out**: a top-level rule or emission offers `Move into…`, then a
+  picker of the arms of the command's branches outside loops, by their
+  conditions (`armTargets`, `moveStepIntoArm`); a step in an arm offers
+  `Move out`, beside its branch (`moveStepOutOfArm`) – where the list
+  the branch is in takes it: a loop's body only emits, a `reject`
+  stays inside some arm. The step itself moves, never a copy, the
+  lists found before it leaves its own. Order is kept both ways: into
+  an arm, a step from before the branch goes first and one from after
+  it last; out of one, the arm's first step goes just before the branch
+  and any other just after (a lone one by its kind, a rule before), so
+  in and back out lands a step where it was. A drag between lists was
+  the other candidate; it would need a drop target per arm, and a
+  phone has no drag.
 - **No write coverage** (gone with entities, 11.0). It flagged an
   emitted tag whose value was read off an entity instance the command
   had not bound; a group names no instance an event writes, so there is
