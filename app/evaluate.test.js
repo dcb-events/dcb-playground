@@ -4497,6 +4497,21 @@ function modelsWithScenarios() {
     eq(foldProjection(model(), [transfer('a1', 'a2', 7)], 'Account.net', { tags: { account: 'a1' } }), -7, 'and it still folds');
   });
 
+  check('renaming an enum member rewrites a condition comparing a field of that enum', () => {
+    const { id, model } = openBank();
+    addTaggedEvent(id, 'StateSet', { properties: [one('accountId', 'AccountId'), one('state', 'State')] });
+    addDefinition('projection-definition', id, 'Booked', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'StateSet', steps: [{ branches: [arm(is(eventField('state'), { enumMember: 'booked' }), 'increment', 1)] }] }],
+    });
+    renameMember('custom-type-definition', id, 'State', 'member', 'booked', 'taken');
+    eq(model()['projection-definitions'].Booked.handlers[0].steps[0].branches[0].condition.rightHandSide,
+      { enumMember: 'taken' }, 'the member follows');
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(foldProjection(model(), [{ type: 'StateSet', data: { accountId: 'a1', state: 'taken' } }], 'Booked',
+      { tags: { accountId: 'a1' } }), 1, 'and it still matches');
+  });
+
   check('two independent ifs that both set may both match – advised', () => {
     const { id, model } = openBank();
     addDefinition('projection-definition', id, 'LastSide', {
