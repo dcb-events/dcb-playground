@@ -6749,6 +6749,28 @@ command ChangeHold(courseId: CourseId, hold: duration) {
     sandbox.applyModelSource(id, TIME);
   });
 
+  // A derived computation over a datetime parameter and a duration
+  // parameter has no literal to give it away, and the editors here
+  // write numbers: it is shown as written, edited in the code view, and
+  // its type survives an edit on the page.
+  check('a derived time computation from parameters is shown read-only and keeps its type', () => {
+    sandbox.applyModelSource(id, swap(TIME, 'command ReserveSeats',
+      'derived projection Ends (tag courseId: CourseId, start: datetime, hold: duration): datetime {\n  start + hold\n}\n\ncommand ReserveSeats'));
+    const derived = model()['projection-definitions'].Ends;
+    eq(derived.valueType, 'datetime', 'parsed as a datetime');
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name: 'Ends', body: projectionDraftFrom(derived) };
+    sandbox.state.projTab = 'definition';
+    sandbox.renderProjections(model(), main);
+    const text = textOf(main);
+    eq(text.includes('start + hold') && text.includes('Edit in code'), true, text.slice(0, 600));
+    sandbox.state.projDraft = null;
+    sandbox.updateDefinition('projection-definition', id, 'Ends', cleanProjectionBody(projectionDraftFrom(derived)));
+    eq(model()['projection-definitions'].Ends, derived, 'kept whole');
+    sandbox.applyModelSource(id, TIME);
+  });
+
   sandbox.clearActiveModelId();
 }
 

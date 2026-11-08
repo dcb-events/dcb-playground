@@ -10661,10 +10661,16 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
   };
 
   // What the side editors cannot write (11.0) – one operand held as it
-  // is, a collection function, a record's field – is shown as the code
-  // view writes it and edited there.
+  // is, a collection function, a record's field, time arithmetic – is
+  // shown as the code view writes it and edited there. Time arithmetic
+  // needs no literal to be there (`start + hold` over two parameters),
+  // and the operator picker here computes numbers: it would retype it.
   const derivedInCode = !!draft.derived && (derivedHolds(draft.derived)
-    || derivedOperands(draft.derived).some(operandBeyondEditors));
+    || derivedOperands(draft.derived).some(operandBeyondEditors)
+    || (computes && (!!timeBaseOf(model, draft.valueType) || derivedOperands(draft.derived).some((o) => {
+      const own = operandSource(o) === 'parameter' && (draft.arguments || []).find((a) => a && a.name === o.parameterName);
+      return !!own && !!timeBaseOf(model, own.propertyType);
+    }))));
   const derivedSection = !draft.derived ? null : derivedInCode ? projectionSection('derived',
     hint('proj-derived', 'Derived', [
       'One value over other projections – a comparison, a computation, a collection function over an open read, a record\'s field.',
