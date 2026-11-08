@@ -3000,6 +3000,28 @@ command EndShares(customerId: CustomerId, note: string, locked: ContractId) {
     eq(renamed.text.includes('contractId: ShareContract(share)') && renamed.text.includes('    shareId: share,'), true, 'and follows its uses');
   });
 
+  check('a scenario lists the events a loop emits, in order, with then … and …', () => {
+    const scenario = (first, second) => swap(PORTAL, '    reason: "ownerAccountDeleted",\n  }\n}',
+      '    reason: "ownerAccountDeleted",\n  }\n\n  scenarios {\n'
+      + '    scenario "each active share ends" {\n'
+      + '      given CustomerRegistered { customerId: "u1" }\n'
+      + '      and ContractShareStarted { ownerId: "u1", shareId: "s1", contractId: "k1", note: "" }\n'
+      + '      and ContractShareStarted { ownerId: "u1", shareId: "s2", contractId: "k2", note: "" }\n'
+      + '      when DeleteCustomer { customerId: "u1" }\n'
+      + '      then CustomerWasDeleted { customerId: "u1" }\n'
+      + `      and ContractShareEnded { ownerId: "u1", shareId: "${first}", contractId: "k${first.slice(1)}", reason: "ownerAccountDeleted" }\n`
+      + `      and ContractShareEnded { ownerId: "u1", shareId: "${second}", contractId: "k${second.slice(1)}", reason: "ownerAccountDeleted" }\n`
+      + '    }\n  }\n}');
+    const statusOf = (text) => {
+      const model = buildText(text).model();
+      return Object.values(model['scenario-definitions']).map((body) => sandbox.runScenario(model, body).status);
+    };
+    eq(statusOf(scenario('s1', 's2')), ['current'], 'in first-event order');
+    eq(statusOf(scenario('s2', 's1')), ['drifted'], 'compared in that order');
+    const gaps = sandbox.commandCoverageGaps(buildText(scenario('s1', 's2')).model(), 'DeleteCustomer');
+    eq([gaps.succeeds, gaps.rejections], [[], ['Customer not found']], 'its success shown');
+  });
+
   check('completion offers for each and in', () => {
     const head = PORTAL.slice(0, PORTAL.indexOf('// Commands')) + 'command X(customerId: CustomerId, ids: NotificationId[]) {\n  ';
     const labels = (text) => completeAt(text + '|\n}').labels;
