@@ -1930,8 +1930,13 @@ Artboards: `design/dcb-queries/` (2026-10).
 - **The pages show them** (`definitionNotes`, index.html): the markers,
   the description – edited in place as plain text on the command page,
   an event, a type, a group, the projection editor's draft and the
-  Overview for the model – and each note, read-only; the code view
-  writes notes. An editor that rebuilds a body carries them over
+  Overview for the model – and each note, a field of its own edited
+  the same way: emptied it is removed, `+ note` adds one of a kind
+  (`@assumption`, `@external`, `@unresolved`). The markers a kind takes
+  are checkboxes: `@deprecated` on an open event, `@sensitive` on a
+  scalar type – never a record or an enum, since a value is personal
+  data because of what it is. The model's own carries a description
+  only, as the language does. An editor that rebuilds a body carries them over
   (`DEFINITION_NOTE_FIELDS`, `cleanProjectionBody`).
 
 ## The metro map

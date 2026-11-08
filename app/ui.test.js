@@ -7204,18 +7204,20 @@ command SignUp(customerId: CustomerId, email: EmailAddress) {
   };
 
   check('every page shows a definition\'s description, notes and markers', () => {
-    const command = textOf(page('slice', () => { sandbox.state.slice = 'SignUp'; sandbox.state.tab = 'definition'; }));
-    for (const text of ['The domain is not blocked', 'Sign-up after deletion?']) eq(command.includes(text), true, `${text}: ${command.slice(0, 500)}`);
+    const commandPage = page('slice', () => { sandbox.state.slice = 'SignUp'; sandbox.state.tab = 'definition'; });
+    const noteValues = findAll(commandPage, (n) => n.tag === 'input' && n.attributes.title === 'Empty it to remove the note').map((n) => n.value);
+    eq(noteValues, ['The domain is not blocked', 'Sign-up after deletion?'], 'each note, a field of its own');
     const events = textOf(page('events', () => { sandbox.state.openEvent = null; }));
     for (const text of ['A sign-up.', 'Stored before 2024.', 'deprecated']) eq(events.includes(text), true, text);
     const types = textOf(page('types'));
     eq(types.includes('sensitive'), true, types.slice(0, 400));
-    const projections = textOf(page('projections', () => {
+    const withFields = (tree) => textOf(tree) + ' ' + findAll(tree, (n) => n.tag === 'input').map((n) => n.value).join(' ');
+    const projections = withFields(page('projections', () => {
       sandbox.state.projDraft = { name: 'EmailTaken', body: projectionDraftFrom(sandbox.projectionsOf(model()).EmailTaken) };
       sandbox.state.projTab = 'definition';
     }));
     eq(projections.includes('Case does not matter'), true, projections.slice(0, 500));
-    const grouped = textOf(page('projections', () => {
+    const grouped = withFields(page('projections', () => {
       sandbox.state.groupOpen = { Customer: true };
       sandbox.state.projDraft = { name: 'Customer.exists', body: projectionDraftFrom(sandbox.projectionsOf(model())['Customer.exists']) };
     }));
@@ -7227,6 +7229,29 @@ command SignUp(customerId: CustomerId, email: EmailAddress) {
     eq(onCommand.map((n) => n.value), ['A customer signs up.'], 'a command\'s, editable');
     onCommand[0].onchange({ target: { value: 'Signs a customer up.' } });
     eq(model()['command-definitions'].SignUp.description, 'Signs a customer up.', 'edited from the page');
+    sandbox.applyModelSource(id, NOTED);
+  });
+
+  check('notes and markers are edited in place, one append each', () => {
+    const notesOf = () => findAll(page('slice', () => { sandbox.state.slice = 'SignUp'; sandbox.state.tab = 'definition'; }),
+      (n) => n.tag === 'input' && n.attributes.title === 'Empty it to remove the note');
+    notesOf()[0].onchange({ target: { value: 'The domain is not on the block list' } });
+    eq(model()['command-definitions'].SignUp.externalRules, ['The domain is not on the block list'], 'edited');
+    notesOf()[1].onchange({ target: { value: '' } });
+    eq(model()['command-definitions'].SignUp.unresolved, undefined, 'emptied, removed');
+    const adder = findAll(page('slice', () => { sandbox.state.slice = 'SignUp'; }), (n) => /note-adder/.test(n.className || ''))[0];
+    findAll(adder, (n) => n.tag === 'select')[0].onchange({ target: { value: 'unresolved' } });
+    findAll(adder, (n) => n.tag === 'input')[0].oninput({ target: { value: 'What if the email changes?' } });
+    findAll(adder, (n) => n.tag === 'button' && textOf(n) === '+ note')[0].onclick();
+    eq(model()['command-definitions'].SignUp.unresolved, ['What if the email changes?'], 'added');
+    eq(sandbox.modelToSource(model()).includes('@unresolved("What if the email changes?")\ncommand SignUp'), true, 'the code view writes it');
+    const events = page('events', () => { sandbox.state.openEvent = 'EmailRegistered'; });
+    const deprecated = findAll(events, (n) => /note-toggle/.test(n.className || '') && textOf(n).includes('@deprecated'))
+      .map((label) => findAll(label, (n) => n.tag === 'input')[0]);
+    eq(deprecated.length, 1, 'the open event offers @deprecated');
+    deprecated[0].onchange({ target: { checked: false } });
+    eq(model()['event-definitions'].EmailRegistered.isDeprecated, undefined, 'unmarked');
+    sandbox.state.openEvent = null;
     sandbox.applyModelSource(id, NOTED);
   });
 

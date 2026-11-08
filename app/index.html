@@ -1099,6 +1099,10 @@
   }
   textarea.note-description:focus { border-style: solid; border-color: var(--accent); outline: none; }
   .note .pk { color: var(--muted); }
+  .note-edit { display: flex; align-items: center; gap: 6px; }
+  .note-edit > input { flex: 1 1 auto; min-width: 0; border: 1px dashed var(--border); border-radius: 4px; padding: 2px 6px; background: transparent; }
+  .note-adder { flex-wrap: wrap; }
+  .note-adder > input { flex: 1 1 12em; min-width: 0; }
   .note-unresolved .pk { color: var(--danger); }
   .chip.note-mark { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
   body.f-dark .issue, body.f-dark .advisory { border-color: #7f1d1d; color: #fecaca; }
@@ -3848,18 +3852,29 @@ function advisoryBanner(model, kind, name) {
 // A definition's description and notes (11.0), as the pages show
 // them: the markers (@deprecated, @sensitive), the description as plain
 // text – an editable one where `onDescribe` is given – and each note
-// under its kind's word. Documentation only, so read-only past the
-// description: the code view writes the notes. Null when there is
-// nothing to show and nothing to edit.
+// under its kind's word. With `onNotes(mutate)` the notes are edited
+// in place the way the description is – a field per note, emptied to
+// remove it, `+ note` to add one of a kind – and `marks` names the
+// markers the kind takes, each a checkbox. Null when there is nothing
+// to show and nothing to edit.
 const NOTE_WORDS = [['assumptions', 'Assumed'], ['externalRules', 'Checked outside the model'], ['unresolved', 'Unresolved']];
-function definitionNotes(body, { onDescribe } = {}) {
+const NOTE_ANNOTATIONS = { assumptions: '@assumption', externalRules: '@external', unresolved: '@unresolved' };
+const MARK_FIELDS = {
+  deprecated: ['isDeprecated', 'deprecated', 'Still stored, but no longer recorded by any command'],
+  sensitive: ['isSensitive', 'sensitive', 'Personal data – a store never shows the plain value as a tag; the adapter hashes it'],
+};
+function definitionNotes(body, { onDescribe, onNotes, marks: markKinds = [] } = {}) {
   if (!body || typeof body !== 'object') return null;
   const marks = [];
-  if (body.isDeprecated === true) {
-    marks.push(h('span', { class: 'chip note-mark', title: 'Still stored, but no longer recorded by any command' }, 'deprecated'));
-  }
-  if (body.isSensitive === true) {
-    marks.push(h('span', { class: 'chip note-mark', title: 'Personal data – a store never shows the plain value as a tag; the adapter hashes it' }, 'sensitive'));
+  for (const [kind, [field, word, title]] of Object.entries(MARK_FIELDS)) {
+    if (onNotes && markKinds.includes(kind)) {
+      marks.push(h('label', { class: 'tiny muted note-toggle', title }, h('input', {
+        type: 'checkbox', checked: body[field] === true,
+        onchange: (e) => onNotes((b) => { if (e.target.checked) b[field] = true; else delete b[field]; }),
+      }), ' @' + kind));
+    } else if (body[field] === true) {
+      marks.push(h('span', { class: 'chip note-mark', title }, word));
+    }
   }
   const description = typeof body.description === 'string' ? body.description : '';
   const rows = [];
@@ -3873,9 +3888,47 @@ function definitionNotes(body, { onDescribe } = {}) {
     rows.push(h('div', { class: 'note-description' }, description));
   }
   for (const [field, word] of NOTE_WORDS) {
-    for (const note of Array.isArray(body[field]) ? body[field] : []) {
-      rows.push(h('div', { class: 'note note-' + field }, h('span', { class: 'pk' }, word + ' '), String(note)));
-    }
+    (Array.isArray(body[field]) ? body[field] : []).forEach((note, i) => {
+      if (!onNotes) {
+        rows.push(h('div', { class: 'note note-' + field }, h('span', { class: 'pk' }, word + ' '), String(note)));
+        return;
+      }
+      rows.push(h('div', { class: 'note note-' + field + ' note-edit' }, h('span', { class: 'pk' }, word + ' '),
+        h('input', {
+          type: 'text', value: String(note), 'aria-label': word,
+          title: 'Empty it to remove the note',
+          onchange: (e) => onNotes((b) => {
+            const text = e.target.value.trim();
+            const list = Array.isArray(b[field]) ? b[field] : [];
+            if (text) list[i] = text; else list.splice(i, 1);
+            if (list.length) b[field] = list; else delete b[field];
+          }),
+        }),
+        h('button', { class: 'btn tiny ghost', title: 'Remove this note', onclick: () => onNotes((b) => {
+          const list = Array.isArray(b[field]) ? b[field] : [];
+          list.splice(i, 1);
+          if (list.length) b[field] = list; else delete b[field];
+        }) }, '×')));
+    });
+  }
+  if (onNotes) {
+    // A note of a kind, typed and added: Enter or the button.
+    let kind = 'assumptions';
+    let text = '';
+    const add = () => {
+      if (!text.trim()) return toast('Write the note first.', true);
+      const field = kind;
+      const note = text.trim();
+      onNotes((b) => { b[field] = [...(Array.isArray(b[field]) ? b[field] : []), note]; });
+    };
+    rows.push(h('div', { class: 'adder quiet note-adder' },
+      pick(NOTE_WORDS.map(([field, word]) => [field, NOTE_ANNOTATIONS[field] + ' · ' + word.toLowerCase()]), kind, (v) => { kind = v; }),
+      h('input', {
+        type: 'text', placeholder: 'a note – documentation only', 'aria-label': 'New note',
+        oninput: (e) => { text = e.target.value; },
+        onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } },
+      }),
+      h('button', { class: 'btn ghost tiny', onclick: add }, '+ note')));
   }
   if (!marks.length && !rows.length) return null;
   return h('div', { class: 'notes' }, marks.length ? h('div', { class: 'row' }, ...marks) : null, ...rows);
@@ -6498,7 +6551,8 @@ function paintView(model, main) {
   const commandAdvisories = advisoryBanner(model, 'command-definition', slice.name);
   if (commandAdvisories) main.appendChild(commandAdvisories);
   const commandNotes = definitionNotes(model['command-definitions'][slice.name],
-    { onDescribe: (text) => describeDefinition('command-definition', slice.name, text) });
+    { onDescribe: (text) => describeDefinition('command-definition', slice.name, text),
+      onNotes: (mutate) => patch('command-definition', slice.name, mutate) });
   if (commandNotes) main.appendChild(commandNotes);
 
   main.appendChild(scenarioTabs(model, slice));
@@ -10218,7 +10272,11 @@ function customTypeEditor(model, name, { inModal = false, onRenamed = null } = {
             label: 'Remove', title: 'Remove this custom type',
             onRemove: () => run(() => removeDefinition('custom-type-definition', model.id, name)),
           }))));
-    const notes = definitionNotes(body, inModal ? {} : { onDescribe: (text) => describeDefinition('custom-type-definition', name, text) });
+    const notes = definitionNotes(body, inModal ? {} : { onDescribe: (text) => describeDefinition('custom-type-definition', name, text),
+      onNotes: (mutate) => patch('custom-type-definition', name, mutate),
+      // A value is personal data because of what it is: the mark goes
+      // on a scalar type, never a record or an enum.
+      marks: !composite && !enumMembersFor(model, name) ? ['sensitive'] : [] });
     if (notes) card.appendChild(notes);
   }
 
@@ -11930,6 +11988,7 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
         else delete draft.description;
         scheduleProjectionAutosave();
       },
+      onNotes: (mutate) => { mutate(draft); render(); scheduleProjectionAutosave(); },
     } : {}),
     ...wizardSections([
       ['kind', wizard ? projectionKindSection(model, draft) : null],
@@ -12245,7 +12304,8 @@ function groupSection(model, name) {
   const section = h('section', { class: 'pgroup' + (open ? ' open' : '') }, head);
   if (state.groupIconPicker === name) section.appendChild(groupIconPicker(model, name, group));
   if (!open) return section;
-  const notes = definitionNotes(group, { onDescribe: (text) => describeDefinition('group-definition', name, text) });
+  const notes = definitionNotes(group, { onDescribe: (text) => describeDefinition('group-definition', name, text),
+    onNotes: (mutate) => patch('group-definition', name, mutate) });
   if (notes) section.appendChild(notes);
   section.appendChild(projectionLedger(model, {
     owner: name,
@@ -13132,7 +13192,8 @@ function eventCard(model, name) {
       }))));
 
   if (pickingIcon) card.appendChild(eventIconPicker(model, name, event));
-  const notes = definitionNotes(event, open ? { onDescribe: (text) => describeDefinition('event-definition', name, text) } : {});
+  const notes = definitionNotes(event, open ? { onDescribe: (text) => describeDefinition('event-definition', name, text),
+    onNotes: (mutate) => patch('event-definition', name, mutate), marks: ['deprecated'] } : {});
   if (notes) card.appendChild(notes);
 
   if (open) {
