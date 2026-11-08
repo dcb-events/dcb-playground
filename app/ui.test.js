@@ -7630,11 +7630,53 @@ command Return(memberId: MemberId, bookId: BookId) {
     sandbox.state.slice = 'Leave';
     sandbox.state.openEvent = 'MemberLeft';
     const emits = textOf(sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'Leave')));
-    eq(emits.includes('list(Lent(memberId, *))') && emits.includes('count(list(Lent(memberId, *)))') && emits.includes('Edit in code'), true, emits.slice(0, 600));
+    eq(emits.includes('list(Lent(memberId, *))') && emits.includes('count(list(Lent(memberId, *)))') && !emits.includes('Edit in code'), true,
+      'a list and a count of one, edited beside the field: ' + emits.slice(0, 600));
     sandbox.state.openEvent = null;
     for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
       sandbox[fn](model(), sandbox.document.createElement('div'));
     }
+  });
+
+  check('an emission field is set to a collection or a count; a record built whole says why it is not', () => {
+    sandbox.closeForms();
+    const paint = (name) => sandbox.stepEmits(model(), sandbox.sliceOf(model(), name));
+    const buttons = (name, label) => findAll(paint(name), (n) => n.tag === 'button' && textOf(n) === label);
+    const withOption = (name, value) => findAll(paint(name), (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option').some((o) => o.value === value))[0];
+    const emitted = (name, event) => model()['command-definitions'][name].steps.find((s) => s.name === event).parameters;
+    sandbox.state.slice = 'Leave';
+    sandbox.state.openEvent = 'MemberLeft';
+    // Opened again and set, each keeps what it was.
+    const before = emitted('Leave', 'MemberLeft');
+    buttons('Leave', 'Edit')[0].onclick();
+    eq([sandbox.state.fieldArith.kind, sandbox.state.fieldArith.draft.fn], ['collect', 'list'], 'a list opens as a collection');
+    buttons('Leave', 'Set')[0].onclick();
+    buttons('Leave', 'Edit')[1].onclick();
+    eq(sandbox.state.fieldArith.counted, true, 'a count of a list opens as its list, counted');
+    buttons('Leave', 'Set')[0].onclick();
+    eq(emitted('Leave', 'MemberLeft'), before, 'no loss');
+    // A count built afresh.
+    sandbox.patch('command-definition', 'Leave', (b) => { delete b.publishes[0].parameters.lent; });
+    withOption('Leave', ' collect').onchange({ target: { value: ' collect' } });
+    eq(sandbox.state.fieldArith.draft.fn, 'count', 'an integer is counted');
+    withOption('Leave', 'Lent').onchange({ target: { value: 'Lent' } });
+    paint('Leave');
+    buttons('Leave', 'Set')[0].onclick();
+    eq(emitted('Leave', 'MemberLeft').lent, { collect: 'count', read: { projection: 'Lent', tags: { memberId: { parameterName: 'memberId' }, bookId: { open: true } } } }, 'stored');
+    let text = sandbox.modelToSource(model());
+    eq(text.includes('lent: count(Lent(memberId, *))'), true, text.slice(text.indexOf('command Leave'), text.indexOf('command Leave') + 300));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and parses back');
+    // A record built whole is no value a command has: no offer, and one
+    // stored says why rather than sending to the code view.
+    sandbox.state.slice = 'Move';
+    sandbox.state.openEvent = 'BookMoved';
+    eq(!!withOption('Move', ' record'), false, 'no record offered');
+    sandbox.patch('command-definition', 'Move', (b) => { b.publishes[0].parameters.shelf = { record: { room: 'Hall', row: 2 } }; });
+    const moved = textOf(paint('Move'));
+    eq(moved.includes('a command builds no record') && !moved.includes('Edit in code'), true, moved.slice(0, 500));
+    sandbox.state.openEvent = null;
+    sandbox.applyModelSource(id, LISTS);
   });
 
   check('an unrelated edit on the pages keeps list, count and a record\'s field', () => {

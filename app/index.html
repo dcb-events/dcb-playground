@@ -5097,7 +5097,7 @@ function openReadableProjections(model) {
 // what each instance must satisfy. `values` are the operands in scope;
 // a `where` compares with parameters, aliases' values and literals –
 // never a read.
-function collectionStages(model, slice, values, typeScope, collect, stageRow) {
+function collectionStages(model, slice, values, typeScope, collect, stageRow, { fns = COLLECTION_FUNCTIONS } = {}) {
   const changed = () => { collect.touched = true; render(); };
   const projectionRows = openReadableProjections(model).map((name) => [name, readable(name)]);
   if (collect.projection && !projectionRows.some(([v]) => v === collect.projection)) collect.projection = '';
@@ -5164,7 +5164,8 @@ function collectionStages(model, slice, values, typeScope, collect, stageRow) {
     return { left: first ? first[0] : '', predicate: 'equals', negate: false, right: '' };
   };
   const addComparison = (joiner) => { joinDraftTree(collect, 'where', joiner, proposed()); changed(); };
-  const fnRows = COLLECTION_FUNCTIONS.map((fn) => [fn, fn]);
+  if (!fns.includes(collect.fn)) collect.fn = fns[0];
+  const fnRows = fns.map((fn) => [fn, fn]);
   return [
     stageRow('Over which instances?',
       pick(fnRows, collect.fn, (v) => { collect.fn = v; changed(); }),
@@ -9048,32 +9049,48 @@ function eventFields(model, emission, event, { edit, loop = null } = {}) {
       const resolved = resolveOperandType(JSON.parse(v), { boundary, commandProperties, model });
       return resolved && resolved.propertyType === p.propertyType && resolved.isList === !!p.isList;
     });
-    return h('div', { class: 'field', 'data-src': 'evprop:' + emission.name + '.' + p.name },
+    // A sum (11.0) – `now + 15m`, `count(ids) + 1` – and a collection
+    // function – `list(Lent(memberId, *))`, `count(…)`, `sum(…)` – are
+    // built in a card under the field and set as a whole
+    // (`fieldValueEditor`).
+    const typeScope = { boundary, commandProperties, model };
+    const set = (operand) => patchSlice((b) => write(b, (e) => {
+      e.parameters = e.parameters || {};
+      e.parameters[p.name] = operand;
+    }));
+    const key = fieldKey(p);
+    const built = fieldValueEditor(model, { reads: boundary, payload: commandProperties }, p, bound, key, options, typeScope, set);
+    const fns = fieldCollectionFunctions(model, p);
+    const open = (kind, draft) => { state.fieldArith = { key, kind, draft }; render(); };
+    const row = h('div', { class: 'field', 'data-src': 'evprop:' + emission.name + '.' + p.name },
       h('span', { class: 'nm' }, propertyWords(p.name)),
       h('span', { class: 'muted tiny' }, readable(typeLabel(p))),
       h('span', { class: 'muted tiny' }, '←'),
-      // A sum or a difference (11.0) – `now + 15m`, `count(ids) + 1` –
-      // is built beside the field and set as a whole.
-      arithmeticFieldControls(model, p, bound, fieldKey(p), options, { boundary, commandProperties, model },
-        (operand) => patchSlice((b) => write(b, (e) => {
-          e.parameters = e.parameters || {};
-          e.parameters[p.name] = operand;
-        })))
-      // A collection function or a record set whole (11.0) is no choice
-      // the picker has: said as it is, and edited in the code view.
-      || (operandBeyondEditors(bound) ? h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
+      built ? built.summary
+      // A record built whole is a handler's (`set { … }`); a command
+      // passes a record it was given or read – the language has no
+      // record literal there, so one stored is said as it is, with why.
+      : operandSource(bound) === 'record' ? h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
+        h('span', { class: 'muted tiny', title: 'Pass a record the command was given or read instead' }, 'a command builds no record – only a handler sets one'))
+      // What no editor here builds is said as it is, and edited in the
+      // code view.
+      : (operandBeyondEditors(bound) ? h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
         codeViewButton('This value is edited in the code view')) :
-      pick([['', 'unset'], ...fieldOptions, ...(computesField(model, p) ? [[ARITH, 'a sum or difference…']] : [])],
+      pick([['', 'unset'], ...fieldOptions,
+        ...(computesField(model, p) ? [[ARITH, 'a sum or difference…']] : []),
+        ...(fns.length && openReadableProjections(model).length ? [[COLLECT, 'a collection…']] : [])],
         bound === undefined ? '' : JSON.stringify(bound),
-        (v) => v === ARITH ? (() => { state.fieldArith = { key: fieldKey(p), draft: { operator: 'add', left: '', right: '' } }; render(); })()
-          : patchSlice((b) => write(b, (e) => {
+        (v) => (v === ARITH ? open('arith', { operator: 'add', left: '', right: '' })
+          : v === COLLECT ? open('collect', blankCollect(fns[0]))
+            : patchSlice((b) => write(b, (e) => {
           e.parameters = e.parameters || {};
           // '' is unset, not an operand – a choice like any other, so a
           // bound property can be unbound again.
           if (v === '') delete e.parameters[p.name];
           else e.parameters[p.name] = JSON.parse(v);
-        })))));
-  });
+        }))))));
+    return built && built.editor ? [row, built.editor] : row;
+  }).flat();
 
   // What the command was given but this event does not yet carry. A
   // field copied from here is not a guess at what the event should say –
@@ -9128,27 +9145,68 @@ function computesField(model, field) {
   return !field.isList && !!arithmeticBaseOf(model, field.propertyType);
 }
 
-// An emission field's arithmetic: while it is being built (or is
-// opened again), the two sides and the operator, and Set; a stored one
-// as it reads, with Edit. Null where the field holds no arithmetic and
-// none is being built – the picker shows then.
-function arithmeticFieldControls(model, field, bound, key, options, typeScope, set) {
+// The collection functions whose result an event field can hold: a
+// list of the open tag's values for a list, a count or a sum for a
+// number, `any` / `all` for a boolean, the earliest or latest for a
+// time.
+function fieldCollectionFunctions(model, field) {
+  if (field.isList) return ['list'];
+  if (field.propertyType === 'boolean') return ['any', 'all'];
+  if (numericBaseOf(model, field.propertyType)) return ['count', 'sum', 'min', 'max', 'average'];
+  if (timeBaseOf(model, field.propertyType) === 'datetime') return ['min', 'max'];
+  return [];
+}
+
+// An emission field's built value: while it is being built (or is
+// opened again), its editor – a sum's terms or a collection's
+// questions – with Set; a stored one as it reads, with Edit.
+// Null where the field holds none of them and none is being built –
+// the picker shows then. `count(list(P(x, *)))` opens as its list, the
+// count kept around it.
+function fieldValueEditor(model, slice, field, bound, key, options, typeScope, set) {
   const open = state.fieldArith && state.fieldArith.key === key ? state.fieldArith : null;
+  const cancel = h('button', { class: 'btn tiny ghost', onclick: () => { state.fieldArith = null; render(); } }, 'Cancel');
+  const stageRow = (label, ...controls) => h('div', { class: 'rule-stage' },
+    h('div', { class: 'q' }, label), h('div', { class: 'adder' }, ...controls));
   if (open) {
+    const kind = open.kind || 'arith';
+    const built = () => {
+      if (kind === 'arith') return arithmeticFromDraft(open.draft);
+      const collect = collectionFromDraft(open.draft);
+      return collect && open.counted ? { count: collect } : collect;
+    };
     const done = () => {
-      const operand = arithmeticFromDraft(open.draft);
-      if (operand === undefined) return toast('Pick both sides.', true);
+      const operand = built();
+      if (operand === undefined) return toast('Answer every question first.', true);
       state.fieldArith = null;
       set(operand);
     };
-    return h('span', { class: 'adder field-arith' },
-      ...arithmeticControls(model, options, typeScope, open.draft),
-      h('button', { class: 'btn tiny primary', onclick: done }, 'Set'),
-      h('button', { class: 'btn tiny ghost', onclick: () => { state.fieldArith = null; render(); } }, 'Cancel'));
+    let stages;
+    if (kind === 'arith') {
+      stages = [stageRow('Computed as', ...arithmeticControls(model, options, typeScope, open.draft, { collections: true })),
+        ...arithmeticCollectionStages(model, slice, options, typeScope, open.draft, stageRow, 'Computed')];
+    } else {
+      const fns = open.counted ? ['list'] : fieldCollectionFunctions(model, field);
+      stages = [open.counted ? h('div', { class: 'muted tiny' }, 'count(…) of the list below') : null,
+        ...collectionStages(model, slice, options, typeScope, open.draft, stageRow, { fns })];
+    }
+    return {
+      summary: h('span', { class: 'muted tiny' }, kind === 'arith' ? 'a sum…' : 'a collection…'),
+      editor: h('div', { class: 'card arm-editor field-value' }, ...stages.filter(Boolean),
+        h('div', { class: 'adder' }, h('button', { class: 'btn tiny primary', onclick: done }, 'Set'), cancel)),
+    };
   }
-  if (!arithmeticEditable(bound)) return null;
-  return h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
-    h('button', { class: 'btn tiny', onclick: () => { state.fieldArith = { key, draft: arithmeticDraftFrom(bound) }; render(); } }, 'Edit'));
+  const opener = (kind, draft, extra = {}) => h('button', { class: 'btn tiny', onclick: () => {
+    state.fieldArith = { key, kind, draft, ...extra };
+    render();
+  } }, 'Edit');
+  const said = (button) => ({ summary: h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ', button) });
+  if (arithmeticEditable(bound)) return said(opener('arith', arithmeticDraftFrom(bound)));
+  if (collectionEditable(bound)) return said(opener('collect', collectionDraftFrom(bound)));
+  if (operandSource(bound) === 'count' && collectionEditable(bound.count) && bound.count.collect === 'list') {
+    return said(opener('collect', collectionDraftFrom(bound.count), { counted: true }));
+  }
+  return null;
 }
 
 function stepChanges(model, slice) {

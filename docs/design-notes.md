@@ -350,6 +350,18 @@ and prune what no longer holds.
   duration, or a collection whose questions follow as stages named by
   its place (`arithmeticCollectionStages`); `+ / − more` adds a term.
   The read a rule brought is swapped in place inside a sum too.
+  **An emission field** takes `a sum or difference…` and `a
+  collection…` the same way, built in a card under the field and set
+  whole (`fieldValueEditor`, index.html): the functions offered are
+  the ones whose result the field holds (`fieldCollectionFunctions` –
+  `list` for a list, `count` / `sum` / … for a number, `any` / `all`
+  for a boolean), and a stored `count(list(P(x, *)))` opens as its list
+  with the count kept around it. A record built whole is not offered
+  there: the language has none in a command (`builds a record – only a
+  handler sets one`, an advisory), so one stored says that beside it
+  rather than sending to the code view, which prints the command as
+  JSON. Adding a command-side record literal would be a language
+  change, and a record the command was given or read already passes.
   A record value's field and a list's count are rows of the pickers
   beside the value (`valueRowsBeyondReads`), rules and emission fields
   alike. What the editors cannot say – a sum on the right of `+` / `-`,
@@ -1916,8 +1928,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   duration literal (`15m`, `1h30m`) is one (`draftOperand`), in a rule
   and in a derived projection's side. A rule compared with a time or a
   number, and an emission field of one, take `a sum or difference…` –
-  two sides from scope or typed and `+` / `-` (`arithmeticControls`,
-  `arithmeticFieldControls`). A derived projection computing a time
+  terms from scope, typed or collections, `+` / `-` left to right
+  (`arithmeticControls`, `fieldValueEditor`). A derived projection computing a time
   offers `+` and `-` only and keeps its time type when the operator
   changes: retyping it a number was the bug that once made it
   read-only. A derived projection may also hold one read's value
