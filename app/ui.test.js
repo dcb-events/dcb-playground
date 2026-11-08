@@ -1771,7 +1771,7 @@ check('importing an older model with entities says what became of them', () => {
   const imported = sandbox.activeModel();
   eq(Object.keys(imported['group-definitions']), ['Student'], 'the entity became a group');
   eq(said.length, 1, 'said once');
-  eq(/Converted from an older format: Entity Student became the group Student\./.test(said[0][0]), true, said[0][0]);
+  eq(/Read as 11.0 says it: Entity Student became the group Student\./.test(said[0][0]), true, said[0][0]);
   eq(said[0][1], false, 'as news, not as an error – nothing was lost');
 });
 

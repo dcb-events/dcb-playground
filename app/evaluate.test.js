@@ -4144,8 +4144,8 @@ function modelsWithScenarios() {
     const { modelId, converted } = importModelFromEnvelope(envelope);
     const model = sandbox.projectState()[modelId];
     eq(converted.filter((c) => c.name === 'SubscribeStudentToCourse').map((c) => c.note),
-      ['Its emission of "StudentSubscribedToCourse" was guarded (when …), which nothing can say any more – the command '
-        + 'was not imported, since publishing it every time would change what the command decides.'],
+      ['SubscribeStudentToCourse\'s emission of "StudentSubscribedToCourse" was guarded (when …), which nothing can say '
+        + 'any more – the command was not imported, since publishing it every time would change what it decides.'],
       'the note says what was refused, and why');
     eq(model['command-definitions'].SubscribeStudentToCourse, undefined, 'the command stays out');
     eq(!!model['command-definitions'].DefineCourse, true, 'the rest of the model loads');
@@ -4170,8 +4170,8 @@ function modelsWithScenarios() {
     const { modelId, converted } = importModelFromEnvelope(envelope);
     const model = sandbox.projectState()[modelId];
     eq(converted.filter((c) => c.name === 'SubscribeStudentToCourse').map((c) => c.note),
-      [`"${alias}" was an optional read (${alias}?), which nothing can say any more – the command was not imported, `
-        + 'since an unset identifier would now be an error where it used to read nothing.'],
+      [`SubscribeStudentToCourse's "${alias}" was an optional read (${alias}?), which nothing can say any more – the `
+        + 'command was not imported, since an unset identifier would now be an error where it used to read nothing.'],
       'the note says what was refused, and why');
     eq(model['command-definitions'].SubscribeStudentToCourse, undefined, 'the command stays out');
     eq(!!model['group-definitions'].Course && !!model['command-definitions'].DefineCourse, true, 'the rest loads');

@@ -6448,10 +6448,10 @@ function groupsFromEntities({ customTypes = {}, entities = {}, projections = {},
 // read before anything is stored. A projection that is scripted or sets
 // from `currentValue` refuses the whole document: its value decides
 // rules, and no other spelling of it is there to read – nor is a
-// script's code something an import can safely run, or translate. A command that
-// guards an emission or reads optionally is left out, and said – the
-// rest of it is readable, but publishing every time or requiring the
-// read would change what it decides, silently. `commands` loses the
+// script's code something an import can safely run, or translate. A
+// command that guards an emission or reads optionally is left out, and
+// said – the rest of it is readable, but publishing every time or
+// requiring the read would change what it decides, silently. `commands` loses the
 // ones left out; the notes are returned, beside `groupsFromEntities`'.
 function refuseRemovedConstructs({ groups, projections, commands }) {
   for (const [kind, coll] of [['group-definition', groups], ['projection-definition', projections]]) {
@@ -6464,17 +6464,18 @@ function refuseRemovedConstructs({ groups, projections, commands }) {
   for (const [name, body] of Object.entries(commands)) {
     const found = removedConstructIn('command-definition', body);
     if (!found || !REMOVED_COMMAND_NOTES[found.construct]) continue;
-    notes.push({ kind: 'command-definition', name, note: REMOVED_COMMAND_NOTES[found.construct](found) });
+    notes.push({ kind: 'command-definition', name, note: REMOVED_COMMAND_NOTES[found.construct](name, found) });
     delete commands[name];
   }
   return notes;
 }
 
 const REMOVED_COMMAND_NOTES = {
-  guard: ({ emission }) => `Its emission of "${emission}" was guarded (when …), which nothing can say any more – `
-    + 'the command was not imported, since publishing it every time would change what the command decides.',
-  optional: ({ alias }) => `"${alias}" was an optional read (${alias}?), which nothing can say any more – the command `
-    + 'was not imported, since an unset identifier would now be an error where it used to read nothing.',
+  guard: (command, { emission }) => `${command}'s emission of "${emission}" was guarded (when …), which nothing can `
+    + 'say any more – the command was not imported, since publishing it every time would change what it decides.',
+  optional: (command, { alias }) => `${command}'s "${alias}" was an optional read (${alias}?), which nothing can say `
+    + 'any more – the command was not imported, since an unset identifier would now be an error where it used to '
+    + 'read nothing.',
 };
 
 // The synthesizer: rebuilds a shared model into a brand-new one by

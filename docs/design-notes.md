@@ -1134,8 +1134,8 @@ Watched, Decision, Store. Only the panel scrolls.
   inner `derived …` line is gone; the old spelling is an error naming
   the new one. `scripted projection` was the other kind until 11.0; it
   is an error now that says scripts are gone, and so are a ```code```
-  handler, `currentValue`, `emit … when …` and `alias x? = …`. In front, the header knows what the
-  block may hold before reading it, and a derived projection, whose body
+  handler, `currentValue`, `emit … when …` and `alias x? = …`. In
+  front, the header knows what the block may hold before reading it, and a derived projection, whose body
   is one expression and its scenarios, prints with a block like
   every other one. The operators are `+`, `-`, `*` and the calls
   `min(a, b)` / `max(a, b)`; a `-` straight after a value (`)`, `]`, a

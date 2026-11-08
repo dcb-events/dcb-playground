@@ -2174,16 +2174,18 @@ function finishImport(envelope) {
     //
     // A model from before 11.0 had entities, which are gone: each one
     // became a group where that was clean, or plain reads where it was
-    // not (`groupsFromEntities`, model.js). Nothing was lost, but the
-    // model now reads differently from the file – said too, in the same
-    // toast, since a second one would replace the first.
+    // not (`groupsFromEntities`, model.js). And a command saying what
+    // 11.0 removed – an `excluding`, a guard, an optional read – was left
+    // out (`refuseRemovedConstructs`). Either way the model now reads
+    // differently from the file – said too, in the same toast, since a
+    // second one would replace the first.
     const notices = [];
     if (skipped.length) {
       const lines = skipped.map((s) => `${humanize(s.kind)} "${s.name}": ${s.reason}`);
       notices.push(`Skipped on import – the rest of the model loaded. ${lines.join(' · ')}`);
     }
     if (converted && converted.length) {
-      notices.push(`Converted from an older format: ${converted.map((c) => c.note).join(' · ')}`);
+      notices.push(`Read as 11.0 says it: ${converted.map((c) => c.note).join(' · ')}`);
     }
     // A newer minor loaded fine – that is what a minor promises – but
     // whatever it added is being ignored, and saying so beats letting
