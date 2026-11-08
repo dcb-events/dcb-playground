@@ -2663,7 +2663,7 @@ function forEachCommandOperand(body, outerVisit) {
       return;
     }
     // A collection function (11.0): its open read, then its `where`'s
-    // sides – `value`, parameters and literals, never a read.
+    // sides – `value`, parameters, aliases already bound and literals, never a read.
     if (operandSource(operand) === 'collection') {
       visit(operand.read, { ...meta, collection: operand });
       if (operand.where && typeof operand.where === 'object') {
@@ -3492,6 +3492,12 @@ function operandAliases(operand, out = []) {
     operandAliases(operand.each, out);
   } else if (operandSource(operand) === 'collection') {
     operandAliases(operand.read, out);
+    // A where's alias (11.0) is a value compared, consulted as any is.
+    if (operand.where && typeof operand.where === 'object') {
+      for (const leaf of conditionLeaves(operand.where)) {
+        for (const side of conditionOperands(leaf)) for (const one of Array.isArray(side) ? side : [side]) operandAliases(one, out);
+      }
+    }
   } else if (operandSource(operand) === 'arithmetic') {
     operandAliases(operand.leftHandSide, out);
     operandAliases(operand.rightHandSide, out);
@@ -4328,10 +4334,12 @@ function openReadProblem(model, read, inCollection, inLoop = false) {
 
 // Why a collection function cannot be read as written – or null: a
 // function of the set, over a read in place, whose `where` reads
-// `value` (a record's field of it), parameters and literals – never a
-// projection. `parameterSide(operand, where)` checks a parameter in the
-// owner's scope, throwing or returning a problem.
-function collectionProblem(model, operand, where, parameterSide = () => null) {
+// `value` (a record's field of it), parameters, in a command an alias
+// already bound (`aliases`, its value or its record's field – a value,
+// no read) and literals – never a projection. `parameterSide(operand,
+// where)` checks a parameter in the owner's scope, throwing or
+// returning a problem; the command's own walk checks the aliases.
+function collectionProblem(model, operand, where, parameterSide = () => null, aliases = false) {
   if (!COLLECTION_FUNCTIONS.includes(operand.collect)) {
     return `${where}: "${operand.collect}" is not a collection function (${COLLECTION_FUNCTIONS.join(', ')}).`;
   }
@@ -4352,8 +4360,9 @@ function collectionProblem(model, operand, where, parameterSide = () => null) {
   for (const leaf of conditionLeaves(operand.where)) {
     for (const side of conditionOperands(leaf).flatMap((o) => (Array.isArray(o) ? o : [o]))) {
       const source = operandSource(side);
-      if (['projection-read', 'alias-property', 'collection'].includes(source)) {
-        return `${where} has a where that reads ${operandText(side)} – a where reads value, parameters and literals, never a projection.`;
+      const aliasValue = aliases && source === 'alias-property' && side.property === undefined && side.arguments === undefined;
+      if (['projection-read', 'alias-property', 'collection'].includes(source) && !aliasValue) {
+        return `${where} has a where that reads ${operandText(side)} – a where reads value, parameters, aliases and literals, never a projection.`;
       }
       if (source === 'instance-value' && side.field !== undefined && target) {
         const fields = compositeFieldsOf(model, target.valueType);
@@ -4370,8 +4379,8 @@ function collectionProblem(model, operand, where, parameterSide = () => null) {
         const members = found && enumMembersFor(model, found.type);
         if (members && !members.includes(side.enumMember)) return `${where}: "${side.enumMember}" is not a member of ${found.type}.`;
       }
-      if (!['instance-value', 'parameter', 'enum-member', 'static', 'duration'].includes(source)) {
-        return `${where} has a where that reads ${operandText(side)} – a where reads value, parameters and literals.`;
+      if (!['instance-value', 'parameter', 'enum-member', 'static', 'duration'].includes(source) && !aliasValue) {
+        return `${where} has a where that reads ${operandText(side)} – a where reads value, parameters, aliases and literals.`;
       }
     }
     // `value.expiresAt` against a literal (11.0): a time of its kind.
@@ -5750,11 +5759,13 @@ function validateCommandBody(model, body) {
         return;
       }
     }
-    // A where (11.0) reads value, the command's parameters and
-    // literals; `value` means nothing outside one; a record is built
-    // only by a handler.
-    if (meta.inWhere && ['projection-read', 'alias-property', 'collection'].includes(source)) {
-      failure = `${meta.where} reads ${operandText(operand)} – a where reads value, parameters and literals, never a projection.`;
+    // A where (11.0) reads value, the command's parameters, an alias
+    // already bound – its value or a field of its record, a value and
+    // no read made inside the where – and literals; `value` means
+    // nothing outside one; a record is built only by a handler.
+    if (meta.inWhere && (['projection-read', 'collection'].includes(source)
+      || (source === 'alias-property' && (operand.property !== undefined || operand.arguments !== undefined)))) {
+      failure = `${meta.where} reads ${operandText(operand)} – a where reads value, parameters, aliases and literals, never a projection.`;
       return;
     }
     if (source === 'instance-value' && !meta.inWhere) {
@@ -5782,7 +5793,7 @@ function validateCommandBody(model, body) {
       return;
     }
     if (source === 'collection') {
-      failure = collectionProblem(model, operand, `${meta.where} ${operandText(operand)}`);
+      failure = collectionProblem(model, operand, `${meta.where} ${operandText(operand)}`, undefined, true);
       return;
     }
     if (source === 'projection-read') {

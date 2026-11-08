@@ -162,7 +162,8 @@ function inline(value, stack) {
       description: ((siblings.description || '') + ' ' + defs[name].description.trim()
         + ' `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any'
         + ' read\'s. `where`: a condition, as a rule\'s, whose sides are {instanceValue: true} (value),'
-        + ' {instanceValue: true, field} (value.field), a parameter, an enum member or a literal.').trim(),
+        + ' {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or'
+        + ' {alias, field} of a record it holds) in a command, an enum member or a literal.').trim(),
       properties: {
         collect: inline(defs[name].properties.collect, stack),
         read: { type: 'object' },

@@ -2915,7 +2915,7 @@ command SendParcel(customerId: CustomerId, courseId: CourseId, city: string, lea
       [`${lineOf('require address.city')}:38 An open read is no value of its own – ReservationSeats(…, *) goes inside count, sum, min, max, average, any or all.`],
       'in a rule');
     eq(errorOf('where value >= least)', 'where CustomerCity(customerId) == city)'),
-      [`${lineOf('where value >= least)')}:53 A where reads value, parameters and literals – never a projection.`], 'a read in a where');
+      [`${lineOf('where value >= least)')}:53 A where reads value, parameters, aliases and literals – never a projection.`], 'a read in a where');
     eq(errorOf('sum(ReservationSeats(courseId, *))\n}', 'sum(ReservationSeats(*, *))\n}'),
       [`${lineOf('  sum(ReservationSeats(courseId, *))')}:7 ReservationSeats(*, *) leaves every tag open – at least one stays bound.`],
       'every tag open');
@@ -3713,6 +3713,91 @@ command Ship(userId: UserId) {
     eq(model()['command-definitions'].Ship.boundary[1].tags, { city: { alias: 'address', field: 'city' } }, 'stored as a field');
     eq(modelToSource(model()), ADDRESS, 'printed as written');
     assertSameModel(model(), parseModelSource(ADDRESS), 'round trip');
+  });
+
+  // D3: a where may compare with an alias already bound – a value, not
+  // a read made inside the where – and that counts as consulting it.
+  const PARTNERS = `model "Partners"
+
+// Types
+tag type UserId = string
+tag type HolderId = string
+type Person = string
+
+// Events
+event Partnered { tag userId: UserId, partner: Person }
+event Held { tag userId: UserId, tag holderId: HolderId, by: Person }
+event Checked { tag userId: UserId }
+
+// Projections
+projection Partner (tag userId: UserId): Person = null {
+  on Partnered => set event.data.partner
+}
+
+projection Holder (tag userId: UserId, tag holderId: HolderId): Person = null {
+  on Held => set event.data.by
+}
+
+// Commands
+command Pair(userId: UserId, partner: Person) {
+  emit Partnered { userId, partner }
+}
+
+command Hold(userId: UserId, holderId: HolderId, by: Person) {
+  emit Held { userId, holderId, by }
+}
+
+command Check(userId: UserId) {
+  alias partner = Partner(userId)
+
+  require count(Holder(userId, *) where value == partner) > 0
+    else reject "None"
+
+  emit Checked { userId }
+
+  scenarios {
+    scenario "held by the partner" {
+      given Partnered { userId: "u1", partner: "u2" }
+      and Held { userId: "u1", holderId: "h1", by: "u2" }
+      when Check { userId: "u1" }
+      then Checked { userId: "u1" }
+    }
+
+    scenario "held by another" {
+      given Partnered { userId: "u1", partner: "u2" }
+      and Held { userId: "u1", holderId: "h1", by: "u3" }
+      when Check { userId: "u1" }
+      then rejected "None"
+    }
+  }
+}
+`;
+
+  check('D3: a where compares with an alias in scope, which counts as consulting it', () => {
+    eq(runAll(PARTNERS), ['current', 'current'], 'both hold');
+    const { id, model } = buildText(PARTNERS);
+    eq(advisedOtherwise(model()), [], 'advisory-clean: no undeclared parameter, no unused read');
+    const where = model()['command-definitions'].Check.steps[0].condition.leftHandSide.where;
+    eq(where.rightHandSide, { alias: 'partner' }, 'stored as the alias');
+    eq(modelToSource(model()), PARTNERS, 'printed as written');
+    assertSameModel(model(), parseModelSource(PARTNERS), 'round trip');
+    const renamed = renameAt(PARTNERS, 'alias partner', 'alias '.length, 'mate');
+    eq([renamed.text.includes('alias mate = Partner(userId)'), renamed.text.includes('where value == mate')], [true, true], 'a rename follows it into the where');
+    applyModelSource(id, swap(PARTNERS, 'else reject "None"', 'else reject "Nobody"'));
+    eq(model()['command-definitions'].Check.boundary.map((b) => b.alias), ['partner'], 'the next edit keeps the read');
+  });
+
+  check('D3: a where still never reads a projection, nor a group\'s projection through an alias', () => {
+    const errors = (text) => parseModelSource(text).diagnostics.map((d) => d.message);
+    eq(errors(swap(PARTNERS, 'where value == partner', 'where value == Partner(userId)'))[0],
+      'A where reads value, parameters, aliases and literals – never a projection.', 'a read in place');
+    const grouped = swap(PARTNERS, 'projection Partner (tag userId: UserId): Person = null {\n  on Partnered => set event.data.partner\n}',
+      'group Pairing (tag userId: UserId) {\n  projection partner: Person = null {\n    on Partnered => set event.data.partner\n  }\n}');
+    const text = swap(swap(grouped, 'alias partner = Partner(userId)', 'alias pairing = Pairing(userId)'), 'where value == partner', 'where value == pairing.partner');
+    const parsed = parseModelSource(text);
+    eq(parsed.diagnostics, [], 'it reads');
+    eq(advisedOtherwise(buildText(text).model()).map((a) => a.message)
+      .filter((m) => /a where reads value, parameters, aliases and literals, never a projection/.test(m)).length, 1, 'a group\'s projection');
   });
 }
 

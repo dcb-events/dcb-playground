@@ -799,14 +799,14 @@ function evOpenRead(model, events, projectionName, bound, label) {
 
 // A collection function over an open read's instances. `where` keeps
 // the instances it holds for, reading `value` (`value.field` of a
-// record), the parameters in scope – `parameter(operand)` – and
-// literals. Over nothing: count and sum 0; min, max and average null;
+// record), the names in scope – a parameter, and in a command an alias
+// already bound, each through `named(operand)` – and literals. Over nothing: count and sum 0; min, max and average null;
 // any false; all true. Without a `where`, any says whether an instance
 // is present at all and all holds – every present instance is there.
 // A null value holds no number, and the numeric ones skip it.
-function evCollect(operand, instances, parameter) {
+function evCollect(operand, instances, named) {
   const label = `"${operandText(operand)}"`;
-  const holds = operand.where === undefined ? null : evCompileWhere(operand.where, parameter, label);
+  const holds = operand.where === undefined ? null : evCompileWhere(operand.where, named, label);
   const kept = holds ? instances.filter((instance) => holds(instance.value)) : instances;
   // Over a record's field (11.0), `sum(P(x, *).seats)`: that field of each.
   const field = operand.read && operand.read.field;
@@ -826,10 +826,11 @@ function evCollect(operand, instances, parameter) {
   }
 }
 
-// A `where`, as `(value) => boolean`.
-function evCompileWhere(condition, parameter, label) {
+// A `where`, as `(value) => boolean`. An alias is read when first
+// compared, as anywhere: over no instance it is not read at all.
+function evCompileWhere(condition, named, label) {
   if (isCompoundCondition(condition)) {
-    const parts = conditionMembers(condition).map((part) => evCompileWhere(part, parameter, label));
+    const parts = conditionMembers(condition).map((part) => evCompileWhere(part, named, label));
     return Array.isArray(condition.all)
       ? (value) => parts.every((part) => part(value))
       : (value) => parts.some((part) => part(value));
@@ -840,12 +841,15 @@ function evCompileWhere(condition, parameter, label) {
     if (Array.isArray(operand)) return () => operand.map(evNormalize);
     switch (operandSource(operand)) {
       case 'instance-value': return (value) => evField(evNormalize(value), operand.field);
-      case 'parameter': return () => evField(parameter(operand), operand.property);
+      case 'parameter': return () => evField(named({ parameterName: operand.parameterName }), operand.property);
+      case 'alias-property':
+        if (operand.property === undefined) return () => evNormalize(named(operand));
+        return () => fail(`${label} has a where that reads ${operandText(operand)} – a where reads value, parameters, aliases and literals, never a projection.`);
       case 'enum-member': return () => operand.enumMember;
       case 'duration': return () => operand.duration;
       case 'static': return () => evNormalize(operand);
       default:
-        return () => fail(`${label} has a where that reads ${operandText(operand)} – a where reads value, parameters and literals, never a projection.`);
+        return () => fail(`${label} has a where that reads ${operandText(operand)} – a where reads value, parameters, aliases and literals, never a projection.`);
     }
   };
   const left = side(condition.leftHandSide);
@@ -951,7 +955,7 @@ function evReadOperand(operand, scope) {
       const read = operand.read || {};
       const key = evInlineKey(read, scope);
       if (!scope.inline.has(key)) scope.inline.set(key, evOpenReadInScope(read, scope));
-      return evCollect(operand, scope.inline.get(key).instances, (parameter) => evReadOperand({ parameterName: parameter.parameterName }, scope));
+      return evCollect(operand, scope.inline.get(key).instances, (name) => evReadOperand(name, scope));
     }
     case 'enum-member':
       return operand.enumMember;
