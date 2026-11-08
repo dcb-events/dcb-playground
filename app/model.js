@@ -2875,7 +2875,7 @@ function validateReferences(model, kind, name, body) {
     const seen = new Set();
     for (const p of properties || []) {
       if (!CAMEL_RE.test(p.name || '')) {
-        throw new DomainError(`${label} property name "${p.name}" must be camelCase.`);
+        throw new DomainError(`${label} property name "${p.name}" must be camelCase, at least two characters.`);
       }
       if (seen.has(p.name)) throw new DomainError(`${label} declares "${p.name}" twice.`);
       seen.add(p.name);
@@ -3563,7 +3563,7 @@ function validateProjectionTags(model, projectionName, body) {
   const seen = new Set();
   for (const tag of projectionTagParams(body)) {
     if (!CAMEL_RE.test(tag.name || '')) {
-      throw new DomainError(`${label} has a tag named "${tag.name}", which is not a camelCase name.`);
+      throw new DomainError(`${label} has a tag named "${tag.name}", which is not a camelCase name of at least two characters.`);
     }
     if (seen.has(tag.name)) throw new DomainError(`${label} declares the tag "${tag.name}" twice.`);
     seen.add(tag.name);
@@ -3580,7 +3580,7 @@ function validateProjectionTags(model, projectionName, body) {
   const arguments_ = new Set();
   for (const argument of projectionSlots(body)) {
     if (!CAMEL_RE.test(argument.name || '')) {
-      throw new DomainError(`${label} has an argument named "${argument.name}", which is not a camelCase name.`);
+      throw new DomainError(`${label} has an argument named "${argument.name}", which is not a camelCase name of at least two characters.`);
     }
     if (seen.has(argument.name)) {
       throw new DomainError(`${label} names both a tag and an argument "${argument.name}".`);
@@ -3894,7 +3894,7 @@ function validateCustomTypeBody(model, typeName, body) {
     const seen = new Set();
     for (const field of fields) {
       if (!CAMEL_RE.test(field.name || '')) {
-        throw new DomainError(`Field name "${field.name}" on "${typeName}" must be camelCase.`);
+        throw new DomainError(`Field name "${field.name}" on "${typeName}" must be camelCase, at least two characters.`);
       }
       if (seen.has(field.name)) {
         throw new DomainError(`Composite type "${typeName}" declares field "${field.name}" twice.`);
@@ -3949,7 +3949,7 @@ function validateGroupBody(model, groupName, body) {
     throw new DomainError(`${label} declares no tag – its projections are all read by the one it declares.`);
   }
   if (!CAMEL_RE.test(tag.name || '')) {
-    throw new DomainError(`${label}'s tag is named "${tag.name}", which is not a camelCase name.`);
+    throw new DomainError(`${label}'s tag is named "${tag.name}", which is not a camelCase name of at least two characters.`);
   }
   if (classifyType(model, tag.tagType).kind === 'unresolved') {
     throw new DomainError(`${label}'s tag "${tag.name}" is typed "${tag.tagType}", which does not resolve in this model.`);
@@ -3965,7 +3965,7 @@ function validateGroupBody(model, groupName, body) {
     if (!CAMEL_RE.test(inner.name || '')) {
       throw new DomainError(
         `${label} has a projection named "${inner.name}" – a grouped projection's name is local and ` +
-        `lowerCamel, read as ${groupName}.${groupLocalName(groupName, inner.name || 'name')}.`
+        `lowerCamel of at least two characters, read as ${groupName}.${groupLocalName(groupName, inner.name || 'name')}.`
       );
     }
     if (seen.has(inner.name)) throw new DomainError(`${label} has two projections named "${inner.name}".`);
@@ -3993,7 +3993,7 @@ function validateCommandBody(model, body) {
   const declaredAbove = [];
   for (const binding of boundary) {
     if (!CAMEL_RE.test(binding.alias || '')) {
-      throw new DomainError(`Boundary alias "${binding.alias}" must be camelCase.`);
+      throw new DomainError(`Boundary alias "${binding.alias}" must be camelCase, at least two characters.`);
     }
     if (aliases.has(binding.alias)) throw new DomainError(`Boundary alias "${binding.alias}" is bound twice.`);
     aliases.add(binding.alias);

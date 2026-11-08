@@ -5120,7 +5120,7 @@ The text get_model_source returns, apply_model_source applies and start_model ta
 - A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed – apply_model_source refuses that unless told allowRemovals: true – so to change a model, edit what get_model_source returned and send all of it back.
 - A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
 - DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads – derived, never declared (derive_boundary shows it).
-- A capitalised name is a declaration you can name from anywhere: types, events, groups, top-level projections, commands, enum members. A lowercase one is reached through something in scope: properties, parameters, tags, aliases, and the projections of a group (course.capacity).
+- A capitalised name is a declaration you can name from anywhere: types, events, groups, top-level projections, commands, enum members. A lowercase one is reached through something in scope: properties, parameters, tags, aliases, and the projections of a group (course.capacity). A name has at least two characters.
 - // and /* */ are comments. They are not stored.
 - @tagSchema("{type}={value}") on the line before a tag type changes how its values render as tags; "{type}:{value}" is the default.
 - @icon("📦") on the line before an event, a group or a command gives it the mark the pages show it with – one emoji or short glyph.
@@ -5450,6 +5450,15 @@ command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
 // by dsl.test.js.
 const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
 
+const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
+
+- Value types are nominal. An emitted value and a read's tag take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, and an integer does not fill a Seats property. Literals fit any matching base type. A read gives the type its projection declares, so declare the type the read's value goes on to fill.
+- An event property of a tag type must be one of the event's tags. So a command that reads by an identifier and stores it on an event needs that event tagged by it.
+- A handler has no condition: it runs for every event of its type that carries the projection's tags. When the change depends on the case, the event holds the amount for each case, with 0 where nothing changes.
+- A read needs a value for each tag, so an optional parameter cannot read one. Write one command with the read and one without.
+- "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
+`;
+
 const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: scripted projections, '
   + 'guarded emissions (emit … when …), optional reads (alias x? = …), arguments on a group\'s projection '
   + 'read through an alias (x.p(a: …)) and currentValue. A text or '
@@ -5459,6 +5468,7 @@ function sourceLanguageReference() {
   return [
     SOURCE_REFERENCE_GUIDE,
     '## Forms\n\n' + SOURCE_REFERENCE_FORMS,
+    SOURCE_REFERENCE_GOTCHAS,
     '## Tour – a complete model using every construct\n\n~~~\n' + SOURCE_REFERENCE_TOUR + '~~~',
     '## Example – a shipped model, as get_model_source prints it\n\n~~~\n' + SOURCE_REFERENCE_EXAMPLE + '~~~',
     SOURCE_REFERENCE_UNOFFERED,
