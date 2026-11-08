@@ -23,7 +23,7 @@ Every guard becomes one entry: a thrown error, a rejected result, a validation, 
 - **Accidental**: a side effect of the aggregate's shape. The stream's version check makes every command on an aggregate conflict with all the others, whether or not any rule needs it. Record what stops being serialized, and which commands that frees.
 - **Question**: the code does not settle it. A disabled guard, a catch that swallows a failure and a comment contradicting the code all belong here.
 
-A step doing two things gets one entry for each: a saga's check is a rule, and its catch-all a question. The notation has no way to react to an event, so the compensating step itself is unresolved, on the command it would run.
+A step doing two things gets one entry for each: a saga's check is a rule, and its catch-all a question. The notation has no way to react to an event. A step that only fans one decision out to related things, such as a process manager ending every share of a deleted customer, becomes a `for each` in the command that triggers it; say in the report that the cascade now commits with that decision instead of after it. Any other compensating step is unresolved, on the command it would run.
 
 Then look for what is missing, since no guard marks it: a handler that checks nothing where a rule seems expected, and what an event should do to related things (the seats of a cancelled order). Each is a question.
 
@@ -42,7 +42,7 @@ Done when every proposed field has its count, and every question the history can
 ## Mapping
 
 - **Events**: names and fields unchanged.
-- **Commands**: one per handler. Merging handlers, such as making a saga's two steps one strict command, is a proposal: it goes under _Asking_ and in the suggested redesigns.
+- **Commands**: one per handler. Merging handlers, such as making a saga's two steps one strict command, is a proposal: it goes under _Asking_ and in the suggested redesigns. A handler looping over identifiers it was given, such as marking a list of notifications read, stays one command with `for each` over its list parameter; one that rejects the whole batch over a single element the code would skip is a question.
 - **Existing tags**: keep them. `@tagSchema` carries a prefix and a value, and `{type}` in it renders the type's name, so a stored `concert=c1` on a `ConcertId` is `@tagSchema("concert={value}")`.
 - **A stream key**: the natural tag, when the event holds it as a field.
 - **An identifier with no stored tag**: stays a plain `string`, since `check` requires a tag type to be tagged. Tagging it is a proposal, listed under migration cost.

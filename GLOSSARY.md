@@ -32,3 +32,10 @@ Otherwise it is its movements: each handler, the commands appending its
 event, and their rules over the value. A view of the projection, worked
 out and never declared: there is no `lifecycle` keyword.
 _Avoid_: status, state machine (as a declared thing)
+
+**Fan-out emit**:
+A command step, `for each x in source`, that runs once per element of an
+open read, a list projection or a list parameter, emitting zero or more
+events into the command's one append. Stored as a loop step,
+`{forEach, in, steps}`. What a cascade or a per-recipient command is.
+_Avoid_: reaction, saga, batch command

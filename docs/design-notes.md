@@ -299,6 +299,47 @@ and prune what no longer holds.
   **`where` reads no projection** – `value`, `value.field`, the names
   in scope and literals (`collectionProblem`) – so a collection's
   query is its read's, and one fold per instance answers it.
+- **A fan-out emit is a step: `for each`** (11.0,
+  dcb-events.github.io#103). `{forEach: [names], in, steps}` runs its
+  steps once per element of an open read (present instances, in the
+  order of each one's first event), a list projection or a list
+  parameter (list order), inside the command's one append. It is what
+  a cascade was missing – deleting a customer ends each of its shares
+  – which otherwise became a reaction chain or one command per element
+  with a rejection where a skip was meant. **The element is a name in
+  scope, stored as `{parameterName}`**: a new operand kind would have
+  needed a case in every operand walker, and one forgotten would have
+  read the reference as a literal object; as a parameter, every reader
+  already reads it – a record element's field (`item.price`) too – and
+  `commandScopeProperties` adds the loop's names, typed by the open
+  tag's tag type or the list's element type (`loopVariables`), where
+  an operand is typed. A name is the loop's own: one shadowing a
+  payload property or an alias is advised (`loopProblem`). Over an open
+  read `value` is the instance's (`{instanceValue}`, the `where`'s
+  operand), typed by `loopValueType`. **The body only emits**: emissions,
+  and branches whose arms are one emission or one `reject`; a `reject`
+  reached refuses the whole command, as everywhere. A rule, a block
+  arm or a nested loop inside is an advisory (`loopStepProblem`) and a
+  positioned parse error; nesting is refused on the write path too,
+  being structure. No `where` on a loop: skipping is an `if`, one
+  condition vocabulary. **Zero elements emit nothing**, never a
+  refusal. **Reads per element**: a read naming an element is made once
+  per element (`evInlineKey` adds the element's values to the read's
+  spelling), so the run's reads and append condition hold each one,
+  and the static boundary shows it per element – `ShareId:{each
+  shareId}`, `fannedOut` (`readsPerElement`). A read that names no
+  element is made once however many there are. **Walkers see a loop's
+  steps as an arm keyed `each`** (`forEachStep`, `[2, 'each', 0]`,
+  arm keys `2/each/0/1`), so every emission, rule map, coupling, event
+  model, metro and Lifecycle reading `commandEmissions` counts what a
+  loop emits as the command's. **Scenarios**: a loop's emitting arms
+  are owed one each, like a command's (`commandSuccessesOwed`); a loop
+  without arms is part of plain success. `then A and B and C` lists the
+  events in order and is compared in that order – no construct for "a
+  variable number of events". **Pages**: a loop is a read-only card
+  with *Edit in code* (`branchCard`), the Append step names what it
+  records per element, and `withCommandLists` keeps it through edits,
+  as branches are.
 
 ## Tags: events, projections, handlers
 
@@ -434,8 +475,9 @@ and prune what no longer holds.
   bind. An open tag is of a scalar tag type: a record tag type would
   make an instance of several values, and waits for a case. A command
   folds one open read once per spelling (`scope.inline`, keyed by
-  `readKey`), like any read in place. `for each` (package 6) will
-  iterate the same reads; `evOpenRead` is its source.
+  `readKey`), like any read in place. A `for each` (package 6) runs
+  over the same reads, `evOpenRead` its source, and is the other place
+  `*` may stand (`openReadProblem`'s `inLoop`).
 - **A projection may hold a record, replaced whole** (11.0, #102).
   Every handler sets it from an event field of its type, or from a
   record of event fields and literals naming every field it requires
@@ -530,6 +572,14 @@ and prune what no longer holds.
   it (schema revision 11.0.5). The tool schemas write a collection
   function compactly, as they do a read in place – inlined, it tripled
   them.
+  11.0 also fans an emission out (#103): `{forEach, in, steps}` as a
+  step (`LoopStep`), its steps emissions and `LoopBranchStep`s whose
+  arms each hold one emission or `reject`; `InstanceValue` as a command
+  operand inside a loop over an open read; a `{parameterName}` naming a
+  loop's element. A new step and operand members, so part of the major
+  (schema revision 11.0.6). The tool schemas write a loop compactly –
+  inlined, every step shape nested again under each step and grew them
+  by a third.
   **6.1 is the contrast worth knowing**: entity `lifecycle` was additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
@@ -1373,6 +1423,21 @@ Watched, Decision, Store. Only the panel scrolls.
   bindings are (`aliasFields`), the way an alias and a payload
   property are. A record set whole is `{ field: …, … }`; `set x.f =
   …` is an error that says a record is replaced whole.
+- **`for each`** (11.0). `for each x in source => emit E { … }`, or a
+  block of `emit`s and `if`s; `for each (a, b) in P(c, *, *)` for two
+  open tags, in the projection's order. `in` was already a word (`x in
+  xs`); `for` joins the keywords and the statement words. The source
+  is the one other place `*` parses (`openAllowed`), and `value` is a
+  word only inside a loop over an open read – elsewhere it is a name.
+  The names resolve as payload properties do (`resolveCommandNames`),
+  which is how they are stored; a name shadowing a payload property or
+  an alias is an error where it is written. A nested loop, a `require`
+  inside one, a bare `reject` and a block arm are positioned errors – a
+  stored loop holding one prints as JSON. A `=> emit` body prints on
+  the head's line, anything else as a block; each loop is a printed
+  group of its own. The language service names a loop's names
+  `loopVariable`, renamed in one namespace with aliases and payload
+  properties.
 
 ## Scripts and the origin
 
@@ -1542,6 +1607,13 @@ Artboards: `design/dcb-queries/` (2026-10).
   walk every step and every arm, past every refusal, so they fetch
   what any way might read: more bandwidth for a branching command,
   never a second round for the arm that was taken.
+- **A loop's reads are each element's (11.0).** A read inside a `for
+  each` that names the element is asked once per element – the dry
+  runs walk every element too – so the append condition holds
+  `ShareId:s2`, `ShareId:s3`, … for the shares the decision read, and
+  the loop's open read itself by its bound tags alone. Elements come
+  from the round before: an open read's instances are a round, and the
+  reads by them the next.
 - **Held by a test.** Every command scenario of the shipped models
   and the fixtures decides the same through a port as over the log,
   and the call counts above are asserted (evaluate.test.js).

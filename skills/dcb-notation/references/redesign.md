@@ -19,6 +19,7 @@ Done when every lifecycle step and variant you might cut has a count.
 Apply each move wherever it fits, and quote the evidence:
 
 - **A chain of events that always runs together** becomes one event: the saga and its intermediate states go with it.
+- **A reaction chain that fans out** becomes one command: deleting a customer emits `CustomerWasDeleted` and, `for each shareId in ShareActiveAsOwner(customerId, *)`, a `ContractShareEnded`. The cascade then commits with the decision. A command repeated per recipient or per id becomes one with `for each` over a list parameter, skipping with `if` rather than rejecting.
 - **A state no rule reads** moves to a read model. Calculate it from what remains: paid from payments.
 - **A lifecycle step that exists to reach another step** goes: look at what follows it in the history.
 - **Events no rule tells apart** merge: name, email and phone become contact details.
