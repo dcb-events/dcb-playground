@@ -5063,212 +5063,437 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   ]
                 },
                 "parameters": {
-                  "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere – and writes no tag for it, when the property is\ntag-marked.\n",
+                  "description": "Keys are the event's property names; each value is a\n`CommandOperand` describing where the value comes from at\nexecution time. An *optional* event property's entry may be\nomitted; the published event then carries the explicit `null`\nthere – and writes no tag for it, when the property is\ntag-marked.\nA record-typed property's entry may build the record whole\n(`EmissionRecordValue`, 11.0).\n",
                   "type": "object",
                   "additionalProperties": {
-                    "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
                     "oneOf": [
                       {
-                        "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "parameterName": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                            "examples": [
-                              "someProperty"
+                        "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
+                        "oneOf": [
+                          {
+                            "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "parameterName": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                "examples": [
+                                  "someProperty"
+                                ]
+                              },
+                              "property": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                "examples": [
+                                  "someProperty"
+                                ],
+                                "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                              }
+                            },
+                            "required": [
+                              "parameterName"
                             ]
                           },
-                          "property": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                            "examples": [
-                              "someProperty"
-                            ],
-                            "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
-                          }
-                        },
-                        "required": [
-                          "parameterName"
-                        ]
-                      },
-                      {
-                        "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "alias": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
-                            "examples": [
-                              "course",
-                              "sourceCourse"
+                          {
+                            "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "alias": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
+                                "examples": [
+                                  "course",
+                                  "sourceCourse"
+                                ]
+                              },
+                              "property": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                "examples": [
+                                  "someProperty"
+                                ]
+                              },
+                              "field": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                "examples": [
+                                  "someProperty"
+                                ],
+                                "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
+                              }
+                            },
+                            "required": [
+                              "alias"
                             ]
                           },
-                          "property": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                            "examples": [
-                              "someProperty"
+                          {
+                            "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "enumMember": {
+                                "type": [
+                                  "string",
+                                  "number",
+                                  "boolean"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "enumMember"
                             ]
                           },
-                          "field": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                            "examples": [
-                              "someProperty"
-                            ],
-                            "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
-                          }
-                        },
-                        "required": [
-                          "alias"
-                        ]
-                      },
-                      {
-                        "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "enumMember": {
+                          {
+                            "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
                             "type": [
                               "string",
                               "number",
                               "boolean"
                             ]
-                          }
-                        },
-                        "required": [
-                          "enumMember"
-                        ]
-                      },
-                      {
-                        "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
-                        "type": [
-                          "string",
-                          "number",
-                          "boolean"
-                        ]
-                      },
-                      {
-                        "type": "object",
-                        "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
-                        "properties": {
-                          "projection": {
-                            "type": "string"
                           },
-                          "tags": {
-                            "type": "object"
-                          }
-                        },
-                        "required": [
-                          "projection"
-                        ]
-                      },
-                      {
-                        "type": "object",
-                        "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
-                        "properties": {
-                          "collect": {
-                            "enum": [
-                              "count",
-                              "sum",
-                              "min",
-                              "max",
-                              "average",
-                              "any",
-                              "all",
-                              "list"
+                          {
+                            "type": "object",
+                            "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
+                            "properties": {
+                              "projection": {
+                                "type": "string"
+                              },
+                              "tags": {
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "projection"
                             ]
                           },
-                          "read": {
-                            "type": "object"
+                          {
+                            "type": "object",
+                            "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
+                            "properties": {
+                              "collect": {
+                                "enum": [
+                                  "count",
+                                  "sum",
+                                  "min",
+                                  "max",
+                                  "average",
+                                  "any",
+                                  "all",
+                                  "list"
+                                ]
+                              },
+                              "read": {
+                                "type": "object"
+                              },
+                              "where": {
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "collect",
+                              "read"
+                            ]
                           },
-                          "where": {
-                            "type": "object"
+                          {
+                            "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "instanceValue": {
+                                "enum": [
+                                  true
+                                ]
+                              },
+                              "field": {
+                                "type": "string",
+                                "minLength": 2,
+                                "maxLength": 100,
+                                "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                "examples": [
+                                  "someProperty"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "instanceValue"
+                            ]
+                          },
+                          {
+                            "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "duration": {
+                                "type": "string",
+                                "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                              }
+                            },
+                            "required": [
+                              "duration"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
+                            "properties": {
+                              "operator": {
+                                "enum": [
+                                  "add",
+                                  "subtract"
+                                ]
+                              },
+                              "leftHandSide": {},
+                              "rightHandSide": {}
+                            },
+                            "required": [
+                              "operator",
+                              "leftHandSide",
+                              "rightHandSide"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                            "properties": {
+                              "count": {}
+                            },
+                            "required": [
+                              "count"
+                            ]
                           }
-                        },
-                        "required": [
-                          "collect",
-                          "read"
                         ]
                       },
                       {
-                        "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                        "description": "A record built whole in an emission field (11.0): `{record}`, the\nshape a handler's `RecordValue` has, each field of the record the\nevent property holds by name, from any value an emission field takes\n– a parameter, a read, a collection function, arithmetic – and never\nanother record: one level. Every field the record requires is given;\nan optional one may be left out. A read inside joins the command's\nboundary as any read does. Only an emission field takes one.\n",
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
-                          "instanceValue": {
-                            "enum": [
-                              true
-                            ]
-                          },
-                          "field": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 100,
-                            "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
-                            "examples": [
-                              "someProperty"
-                            ]
+                          "record": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "description": "Where a value comes from inside a command – its boundary, its\nconditions and its event emissions – a projection read in place\namong them.\nA collection function (11.0) among them.\nInside a loop over an open read (11.0), the instance's value\n(`InstanceValue`).\nA duration (`DurationValue`) and two operands added or subtracted\n(`ArithmeticValue`, 11.0) among them.\nA count of a list (`CountValue`, G3) among them.\n",
+                              "oneOf": [
+                                {
+                                  "description": "A property of the command payload, optionally reaching one field\ninside it.\n\n`{parameterName: items}` is the payload property itself.\n`{parameterName: items, property: productId}` is that field of it –\nand when the property is a list of composites, the field of *every*\nelement, in order. The shape deliberately mirrors\n`AliasPropertyValue`: one hop, never a path.\n\nInside a derived projection (10.0) it names one of that projection's\nown parameters – a tag or an argument – and never reaches a field; in\na handler's condition (11.0), one of the projection's own tags.\nInside a loop (`LoopStep`, 11.0) it may name one of the loop's names –\nthe element, read as a payload property is.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "parameterName": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ]
+                                    },
+                                    "property": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ],
+                                      "description": "A field of the parameter's composite type. Only meaningful\nwhen the parameter is typed with a composite custom type.\n"
+                                    }
+                                  },
+                                  "required": [
+                                    "parameterName"
+                                  ]
+                                },
+                                {
+                                  "description": "Something read through a binding. The alias must appear in the\ncommand's `boundary`.\n\n`{alias: course, property: capacity}` reads one projection of a bound\ngroup instance – `capacity`, by its local name – and, where that\nprojection takes arguments, gives them beside it: `{alias: course,\nproperty: seatsOn, arguments: {slot: …}}`, `course.seatsOn(slot: s)`.\nThey belong to the projection read, never to the group. `{alias:\ncourseNumbering}` – no `property` – is a bound projection's value.\n\n`property` is therefore **required on a group alias** and **rejected\non a projection alias**: a group holds many values and no single one\nto mean, a projection has exactly one and no name for it – and so are\n`arguments` on a projection alias, whose read already gave them.\n\n`field` (11.0) takes one field of a record value – of a bound\nprojection's, `{alias: address, field: city}`, or of a group member's,\n`{alias: course, property: address, field: city}`.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "alias": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]*$",
+                                      "examples": [
+                                        "course",
+                                        "sourceCourse"
+                                      ]
+                                    },
+                                    "property": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ]
+                                    },
+                                    "field": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ],
+                                      "description": "One field of the record the projection holds (11.0): `P(x).city`.\nThe same read as the whole value; only what is taken from it differs.\n"
+                                    }
+                                  },
+                                  "required": [
+                                    "alias"
+                                  ]
+                                },
+                                {
+                                  "description": "A member of an enum type – a scalar custom type whose `schema`\ncarries the JSON Schema `enum` keyword. Modeled as a reference\nrather than a bare literal so that renaming a member rewrites\nevery use of it. `enumMember` holds whatever JSON value that\n`enum` array actually contains – a plain string is by far the\ncommon case, but nothing here requires it.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "enumMember": {
+                                      "type": [
+                                        "string",
+                                        "number",
+                                        "boolean"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "enumMember"
+                                  ]
+                                },
+                                {
+                                  "description": "A literal operand. Declared as a type union rather than a\n`oneOf` of separate types: an integer satisfies both `integer`\nand `number`, which makes a `oneOf` over both reject every whole\nnumber.\n",
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "description": "A projection read in place – a rule's operand, an emission's\nvalue, another read's tag – the same read a `ProjectionBinding`\nnames, without the name: `CourseStatus(courseId)`. Written twice in\none command, it is one query. A grouped projection is read by its\nqualified name, its tags its group's and its arguments its own:\n`Course(courseId).capacity`, `{projection: \"Course.capacity\", tags:\n{courseId: …}}`. `tags`: one value per tag the projection declares, keyed by its name – an operand of the tag's type, a tag literal {tagType, tagValue}, or {each: operand}.",
+                                  "properties": {
+                                    "projection": {
+                                      "type": "string"
+                                    },
+                                    "tags": {
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "projection"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "description": "A collection function over an open read (11.0):\n`sum(ReservationSeats(courseId, *))`, `count(PendingModification(contractId, *) where\nvalue == BankingInformation)`. `read` leaves at least one tag open\n(`OpenTag`); `where` keeps the instances it holds for. Over no instance\n`count` and `sum` give 0, `min`, `max` and `average` null, `any` false\nand `all` true; without a `where`, `any` says whether one is present\nand `all` holds. `count` is an integer, `sum`, `min` and `max` what the\nprojection holds, `average` a number, `any` and `all` a boolean. A\nnull value holds no number, and the numeric ones skip it. Usable\nwherever a value is: a rule, a branch's condition, an emission's\nfield, a derived projection.\n`list` (G1 of the 11.0 acceptance) collects the one tag `read` leaves\nopen – exactly one: the values of the present instances, in the order\nof each one's first event, a list of that tag's type – and goes\nwherever a list does: an emission's list field, `contains`, a\n`CountValue`, a loop's `in`. `where` filters it as any. `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any read's. `where`: a condition, as a rule's, whose sides are {instanceValue: true} (value), {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: \"list\"` takes a read with exactly one tag open and gives that tag's values as a list.",
+                                  "properties": {
+                                    "collect": {
+                                      "enum": [
+                                        "count",
+                                        "sum",
+                                        "min",
+                                        "max",
+                                        "average",
+                                        "any",
+                                        "all",
+                                        "list"
+                                      ]
+                                    },
+                                    "read": {
+                                      "type": "object"
+                                    },
+                                    "where": {
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "collect",
+                                    "read"
+                                  ]
+                                },
+                                {
+                                  "description": "One collected instance's value (11.0), `value` – or, with `field`,\none field of a record value, `value.city`: inside a `where`, the\ninstance being kept or not; inside a loop over an open read\n(`LoopStep`), the instance the loop is at.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "instanceValue": {
+                                      "enum": [
+                                        true
+                                      ]
+                                    },
+                                    "field": {
+                                      "type": "string",
+                                      "minLength": 2,
+                                      "maxLength": 100,
+                                      "pattern": "^\\p{Ll}[\\p{L}\\p{M}\\p{Nd}]+$",
+                                      "examples": [
+                                        "someProperty"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "instanceValue"
+                                  ]
+                                },
+                                {
+                                  "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "duration": {
+                                      "type": "string",
+                                      "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+                                    }
+                                  },
+                                  "required": [
+                                    "duration"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
+                                  "properties": {
+                                    "operator": {
+                                      "enum": [
+                                        "add",
+                                        "subtract"
+                                      ]
+                                    },
+                                    "leftHandSide": {},
+                                    "rightHandSide": {}
+                                  },
+                                  "required": [
+                                    "operator",
+                                    "leftHandSide",
+                                    "rightHandSide"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
+                                  "properties": {
+                                    "count": {}
+                                  },
+                                  "required": [
+                                    "count"
+                                  ]
+                                }
+                              ]
+                            }
                           }
                         },
                         "required": [
-                          "instanceValue"
-                        ]
-                      },
-                      {
-                        "description": "A length of time (11.0), spelled `15m`, `24h`, `7d` or `1h30m`: an ISO 8601\nduration of whole days, hours, minutes and seconds, its units as written\n(`PT15M`, `PT24H`, `P7D`, `PT1H30M`). A day is exactly 24 hours; there are\nno years, months or weeks and no sign.\n",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "duration": {
-                            "type": "string",
-                            "pattern": "^P(?!$)(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
-                          }
-                        },
-                        "required": [
-                          "duration"
-                        ]
-                      },
-                      {
-                        "type": "object",
-                        "description": "Two values added or subtracted (11.0): `CourseCapacity(courseId) -\nsum(…)`, `now + 15m`. Numbers compute as numbers; a datetime moved by a\nduration is a datetime, written in UTC (`…Z`); two durations add up, and\nnever go below zero. A longer sum nests on the left, `a - b + c`. A side\nof a rule, a branch's condition or an emitted value – never a read's\ntag, nor a `where`'s side. `leftHandSide` and `rightHandSide`: command operands, as a rule's sides – a parameter, a read, a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.",
-                        "properties": {
-                          "operator": {
-                            "enum": [
-                              "add",
-                              "subtract"
-                            ]
-                          },
-                          "leftHandSide": {},
-                          "rightHandSide": {}
-                        },
-                        "required": [
-                          "operator",
-                          "leftHandSide",
-                          "rightHandSide"
-                        ]
-                      },
-                      {
-                        "type": "object",
-                        "description": "The length of a list, as a value (G3 of the 11.0 acceptance):\n`count(bookIds)`, `count(Wishlist(memberId))`, `count(list(Lent(memberId,\n*)))` – a list parameter or record field, a list projection's read or\nalias, a `list` collection. An integer, 0 for none (null included),\nusable wherever a value is: either side of a comparison, arithmetic,\nan emission's field, a derived projection. A rule `count(xs) == 3`\n(also `!=`, `<` and `>`) stays the count predicate (`countEquals`,\n`countLessThan`, `countGreaterThan`) it always was, so no document\nchanges; this is the form everywhere else. A count of instances is\nthe `count` collection function, `count(P(x, *))`. `count`: the list counted – a parameter, a read or alias of a list projection, or a {collect: \"list\", read} collection.",
-                        "properties": {
-                          "count": {}
-                        },
-                        "required": [
-                          "count"
+                          "record"
                         ]
                       }
                     ]

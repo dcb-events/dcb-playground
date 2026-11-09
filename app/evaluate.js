@@ -1006,6 +1006,11 @@ function evReadOperand(operand, scope) {
     }
     case 'enum-member':
       return operand.enumMember;
+    // A record built whole in an emission field (#5): each field read
+    // as any emitted value is, in the order written – a read inside
+    // made as anywhere.
+    case 'record':
+      return Object.fromEntries(Object.entries(operand.record || {}).map(([key, value]) => [key, evNormalize(evReadOperand(value, scope))]));
     // A duration literal (11.0), `15m`: the ISO 8601 duration it stores.
     case 'duration':
       return operand.duration;

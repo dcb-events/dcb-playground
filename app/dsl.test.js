@@ -4349,6 +4349,69 @@ command MoveBook(bookId: BookId, shelf: Shelf) {
       'a required field left out');
   });
 
+  // A record built whole in an emission field: each field any value an
+  // emission field takes, a read among them; one level.
+  const BUILT = swap(swap(SHELVES, `  on BookMoved => set event.data.shelf.row
+}
+`, `  on BookMoved => set event.data.shelf.row
+}
+
+projection BookRoom (tag bookId: BookId): string = null {
+  on BookShelved => set event.data.room
+}
+`), `command MoveBook(bookId: BookId, shelf: Shelf) {`, `command ShelveLikeBook(bookId: BookId, like: BookId, row?: integer) {
+  emit BookMoved { bookId, shelf: { room: BookRoom(like), row } }
+
+  scenarios {
+    scenario "beside another" {
+      given BookShelved { bookId: "b2", room: "C" }
+      when ShelveLikeBook { bookId: "b1", like: "b2", row: 3 }
+      then BookMoved { bookId: "b1", shelf: { room: "C", row: 3 } }
+    }
+  }
+}
+
+command MoveBook(bookId: BookId, shelf: Shelf) {`);
+
+  check('#5: an emission field builds a record whole, and prints as written', () => {
+    const { model } = buildText(BUILT);
+    const emission = model()['command-definitions'].ShelveLikeBook.steps[0];
+    eq(emission.parameters.shelf, { record: { room: { projection: 'BookRoom', tags: { bookId: { parameterName: 'like' } } }, row: { parameterName: 'row' } } }, 'stored');
+    eq(modelToSource(model()), BUILT, 'printed as written');
+    assertSameModel(model(), parseModelSource(BUILT), 'round trip');
+    eq(sandbox.boundarySummary(model(), model()['command-definitions'].ShelveLikeBook).items.map((i) => `${i.types.join('|')} [${i.tags.join(', ')}]`),
+      ['BookShelved [BookId:{like}]'], 'its read joins the boundary');
+    eq(runAll(BUILT), ['current', 'current', 'current'], 'all hold');
+    eq(advised(BUILT), [], 'advisory-clean');
+  });
+
+  check('#5: a record built in an emission is held to its type, whole, and one level', () => {
+    const at = 'shelf: { room: BookRoom(like), row } }';
+    eq(advised(swap(BUILT, at, 'shelf: { row } }')),
+      ['ShelveLikeBook: "BookMoved.shelf" leaves out "room" – a record is built whole: { room: …, row?: … }.'], 'a required field');
+    eq(advised(swap(BUILT, at, 'shelf: { room: BookRoom(like), row: like } }')),
+      ['ShelveLikeBook: "BookMoved.shelf.row" is declared integer, but takes its value from "like", which is BookId.'], 'a field\'s type');
+    eq(advised(swap(BUILT, at, 'shelf: { room: BookRoom(like), row, aisle: 2 } }')),
+      ['ShelveLikeBook: "BookMoved.shelf" sets "aisle", which Shelf has no field of.'], 'an unknown field');
+    eq(advised(swap(BUILT, 'emit BookMoved { bookId, shelf: { room: BookRoom(like), row } }', 'emit BookShelved { bookId, room: { room: "A" }, row }'))
+      .filter((line) => line.startsWith('ShelveLikeBook')),
+    ['ShelveLikeBook: "BookShelved.room" is declared string, but builds a record – only a property holding one record takes { field: …, … }.'], 'not a record');
+    eq(parseModelSource(swap(BUILT, at, 'shelf: { room: { a: 1 }, row } }')).diagnostics.map((d) => d.message).slice(0, 1),
+      ['A record field takes a value – a record built in an emission holds no record of its own.'], 'one level');
+    eq(parseModelSource(swap(BUILT, '    else reject "No such row"', '    else reject "No such row"\n  require shelf == { room: "A" }\n    else reject "Not A"'))
+      .diagnostics.length > 0, true, 'nowhere but an emission field');
+  });
+
+  check('#5: a record built in an emission evaluates, and follows a rename of its field', () => {
+    const { id, model } = buildText(BUILT);
+    const log = [{ type: 'BookShelved', data: { bookId: 'b2', room: 'C', row: null } }];
+    eq(sandbox.evaluateCommand(model(), log, 'ShelveLikeBook', { bookId: 'b1', like: 'b2', row: null }).events,
+      [{ type: 'BookMoved', data: { bookId: 'b1', shelf: { room: 'C', row: null } } }], 'its fields read');
+    sandbox.renameMember('custom-type-definition', id, 'Shelf', 'field', 'room', 'hall');
+    eq(model()['command-definitions'].ShelveLikeBook.steps[0].parameters.shelf.record.hall !== undefined, true, 'the key follows');
+    eq(renameAt(BUILT, 'record Shelf { room', 'record Shelf { '.length, 'hall').text.includes('shelf: { hall: BookRoom(like), row }'), true, 'in the code view too');
+  });
+
   check('#5: a tag field is never optional', () => {
     eq(advised(swap(SHELVES, 'record Shelf { room: string, row?: integer }', 'record Shelf { room: string, row?: integer, owner?: BookId }'))
       .filter((line) => line.startsWith('Shelf:')),

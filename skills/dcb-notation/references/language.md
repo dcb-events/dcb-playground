@@ -112,7 +112,9 @@ A projection may hold a record its handlers replace whole – set event.data.add
 set { street: event.data.street, city: event.data.city } naming every required field. Setting
 one field at a time (composite state) is refused. A record's field may be optional, record
 Address { street: string, floor?: integer }: an absent one reads null, and a scenario gives a
-record whole but for its optional fields.
+record whole but for its optional fields. An emission field builds one the same way, each
+field any value an emission field takes – emit Moved { customerId, address: { street,
+floor: Floor(customerId) } } – one level deep, and nowhere but in an emission.
 
 Scenarios sit in one scenarios { … } group at the end of the block of the command or
 projection they exercise, and name it:
@@ -180,9 +182,11 @@ record Shelf { room: string, row?: integer }
 
 // ---- Events ----
 // "tag" marks each value the event is tagged by; "name?:" is optional
-// (null when absent), "X[]" a list, and "tag each f" tags the event once
-// per element of a list of records, by that field.
+// (null when absent), "X[]" a list, "tag f" after a record tags the
+// event by that field, and "tag each f" tags it once per element of a
+// list of records, by that field.
 event BookAdded { tag bookId: BookId, isbn: Isbn, title: string, subtitle?: string }
+event CopyCatalogued { copy: Copy tag bookId }
 event CopiesDonated { donor: string, copies: Copy[] tag each bookId }
 event BookLent { tag bookId: BookId, tag memberId: MemberId, tag loanId: LoanId }
 event BookReturned { tag bookId: BookId, tag memberId: MemberId }
@@ -367,6 +371,16 @@ command AddBook(bookId: BookId, isbn: Isbn, title: string, subtitle?: string) {
       then rejected "Book already exists"
     }
   }
+}
+
+// An emission field may build a record whole, "{ field: …, … }": each
+// field any value an emission field takes, an optional one left out –
+// one level, and only in an emission.
+command CatalogueCopy(bookId: BookId, isbn: Isbn) {
+  require BookStatus(bookId) == Unknown
+    else reject "A copy is already in the catalogue"
+
+  emit CopyCatalogued { copy: { bookId, isbn } }
 }
 
 command DonateCopies(donor: string, copies: Copy[]) {

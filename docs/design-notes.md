@@ -366,12 +366,13 @@ and prune what no longer holds.
   the ones whose result the field holds (`fieldCollectionFunctions` –
   `list` for a list, `count` / `sum` / … for a number, `any` / `all`
   for a boolean), and a stored `count(list(P(x, *)))` opens as its list
-  with the count kept around it. A record built whole is not offered
-  there: the language has none in a command (`builds a record – only a
-  handler sets one`, an advisory), so one stored says that beside it
-  rather than sending to the code view, which prints the command as
-  JSON. Adding a command-side record literal would be a language
-  change, and a record the command was given or read already passes.
+  with the count kept around it. A record-typed field also takes `a
+  record built here…` (#5, `2026-11-09-migration-feedback.md`): a
+  picker per field of the record, each offering what is in scope of
+  that field's type – a record parameter's fields among them – and a
+  parameter named as the field taken at once. A field holding
+  anything else, a literal or a read in place, is edited in the code
+  view.
   **A derived projection's side** offers `a collection…` beside the
   reads, its parameters and a typed value, built in a card under the
   side and set whole (`derivedCollectionCard`, index.html), its own

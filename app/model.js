@@ -2983,6 +2983,14 @@ function forEachCommandOperand(body, outerVisit) {
   const visit = (operand, meta) => {
     outerVisit(operand, meta);
     if (operandSource(operand) === 'each') { visit(operand.each, meta); return; }
+    // A record built in an emission field (#5): each field an operand
+    // in the same place, one level down.
+    if (operandSource(operand) === 'record') {
+      for (const [key, field] of Object.entries((operand.record && typeof operand.record === 'object') ? operand.record : {})) {
+        visit(field, { ...meta, where: `${meta.where.replace(/"$/, '')}.${key}"`, emitField: false, inRecord: operand });
+      }
+      return;
+    }
     // Arithmetic (11.0): both sides, each an operand in the same place.
     if (operandSource(operand) === 'arithmetic') {
       visit(operand.leftHandSide, { ...meta, arithmetic: operand });
@@ -3062,7 +3070,7 @@ function forEachCommandOperand(body, outerVisit) {
     }
     if (kind === 'emit') {
       for (const [key, operand] of Object.entries(step.parameters || {})) {
-        visit(operand, { where: `emission "${step.name}.${key}"`, loop });
+        visit(operand, { where: `emission "${step.name}.${key}"`, loop, emitField: true });
       }
     }
     if (kind === 'loop' && step.in !== undefined) {
@@ -3458,6 +3466,7 @@ function operandForLeaf(operand, leaf) {
   const source = operandSource(operand);
   if (source === 'parameter') return { parameterName: operand.parameterName, property: leaf.field };
   if (source === 'alias-property') return { alias: operand.alias, property: leaf.field };
+  if (source === 'record' && operand.record && operand.record[leaf.field] !== undefined) return operand.record[leaf.field];
   return operand;
 }
 
@@ -3804,7 +3813,13 @@ function mapConditionOperands(body, replace) {
   for (const leaf of commandConditionLeaves(body)) mapCondition(leaf);
   for (const emission of commandEmissions(body)) {
     for (const key of Object.keys(emission.parameters || {})) {
-      emission.parameters[key] = replace(emission.parameters[key]);
+      const value = emission.parameters[key];
+      // A record built in place (#5): its fields are emission values.
+      if (operandSource(value) === 'record' && value.record && typeof value.record === 'object') {
+        for (const field of Object.keys(value.record)) value.record[field] = replace(value.record[field]);
+        continue;
+      }
+      emission.parameters[key] = replace(value);
     }
   }
 }
@@ -3836,6 +3851,8 @@ function operandAliases(operand, out = []) {
     operandAliases(operand.rightHandSide, out);
   } else if (operandSource(operand) === 'count') {
     operandAliases(operand.count, out);
+  } else if (operandSource(operand) === 'record') {
+    for (const field of Object.values((operand.record && typeof operand.record === 'object') ? operand.record : {})) operandAliases(field, out);
   } else if (operandSource(operand) === 'projection-read') {
     for (const inner of [...readTagOperands(operand), ...Object.values(operand.arguments || {})]) operandAliases(inner, out);
   }
@@ -6178,8 +6195,11 @@ function validateCommandBody(model, body) {
       const field = operand.field === undefined ? null : recordFieldProblem(model, { valueType: held.propertyType, isList: held.isList }, operand);
       if (field) { failure = `${meta.where} reads ${operandText(operand)}, but ${field}`; return; }
     }
+    // A record is built whole in an emission field (#5), one level:
+    // nowhere else in a command, and never inside another.
     if (source === 'record') {
-      failure = `${meta.where} builds a record – only a handler sets one.`;
+      if (meta.inRecord) failure = `${meta.where} builds a record inside a record – a record built in an emission is one level.`;
+      else if (!meta.emitField) failure = `${meta.where} builds a record – only an emission field, or a handler, takes one.`;
       return;
     }
     if (source === 'duration') {
@@ -6371,10 +6391,38 @@ function validateCommandBody(model, body) {
     for (const property of event.properties || []) {
       const operand = (emission.parameters || {})[property.name];
       if (operand === undefined) continue;
-      const resolved = resolveOperandType(operand, {
+      const scope = {
         boundary, commandProperties: commandScopeProperties(model, body, loop), model,
         instanceValue: loopValueType(model, loop),
-      });
+      };
+      // A record built whole (#5): of a record-typed property, every
+      // field it requires, each held to its field's type as any
+      // emitted value is.
+      if (operandSource(operand) === 'record') {
+        const fields = !property.isList && compositeFieldsOf(model, property.propertyType);
+        const where = `"${emission.name}.${property.name}"`;
+        if (!fields) {
+          throw new DomainError(`${where} is declared ${property.propertyType}${property.isList ? '[]' : ''}, `
+            + 'but builds a record – only a property holding one record takes { field: …, … }.');
+        }
+        const given = (operand.record && typeof operand.record === 'object') ? operand.record : {};
+        for (const [key, value] of Object.entries(given)) {
+          const field = fields.find((f) => f && f.name === key);
+          if (!field) throw new DomainError(`${where} sets "${key}", which ${property.propertyType} has no field of.`);
+          const held = resolveOperandType(value, scope);
+          if (held && (held.propertyType !== field.propertyType || held.isList)) {
+            throw new DomainError(`"${emission.name}.${property.name}.${key}" is declared ${field.propertyType}, but takes its value from `
+              + `"${operandText(value)}", which is ${held.propertyType}${held.isList ? '[]' : ''}.`);
+          }
+        }
+        const missing = fields.find((f) => f && !f.isOptional && !(f.name in given));
+        if (missing) {
+          throw new DomainError(`${where} leaves out "${missing.name}" – a record is built whole: `
+            + `{ ${fields.map((f) => `${f.name}${f.isOptional ? '?' : ''}: …`).join(', ')} }.`);
+        }
+        continue;
+      }
+      const resolved = resolveOperandType(operand, scope);
       if (!resolved) continue;
       if (resolved.propertyType !== property.propertyType || resolved.isList !== !!property.isList) {
         throw new DomainError(
@@ -7603,6 +7651,17 @@ const MEMBER_REWRITES = {
         if (source === 'collection' && operandRead(operand) && holds(operandRead(operand))
           && renameWhereField(operand, previous, next)) touched = true;
       });
+      // A record built in an emission (#5) names the fields as keys.
+      for (const emission of commandEmissions(command)) {
+        const event = model['event-definitions'][emission.name];
+        for (const property of (event && event.properties) || []) {
+          const value = (emission.parameters || {})[property.name];
+          if (property.isList || property.propertyType !== typeName || operandSource(value) !== 'record'
+            || !value.record || !(previous in value.record)) continue;
+          emission.parameters[property.name] = { record: renameKey(value.record, previous, next) };
+          touched = true;
+        }
+      }
       return touched;
     }),
     ...Object.entries(model['projection-scenario-definitions'] || {}).flatMap(([key, scenario]) => {

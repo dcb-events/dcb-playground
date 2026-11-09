@@ -7859,7 +7859,7 @@ command Return(memberId: MemberId, bookId: BookId) {
     }
   });
 
-  check('an emission field is set to a collection or a count; a record built whole says why it is not', () => {
+  check('an emission field is set to a collection, a count or a record built here', () => {
     sandbox.closeForms();
     const paint = (name) => sandbox.stepEmits(model(), sandbox.sliceOf(model(), name));
     const buttons = (name, label) => findAll(paint(name), (n) => n.tag === 'button' && textOf(n) === label);
@@ -7888,14 +7888,23 @@ command Return(memberId: MemberId, bookId: BookId) {
     let text = sandbox.modelToSource(model());
     eq(text.includes('lent: count(Lent(memberId, *))'), true, text.slice(text.indexOf('command Leave'), text.indexOf('command Leave') + 300));
     eq(sandbox.parseModelSource(text).diagnostics, [], 'and parses back');
-    // A record built whole is no value a command has: no offer, and one
-    // stored says why rather than sending to the code view.
+    // A record built here (#5): offered for a record-typed field, its
+    // fields each picked from what is in scope.
     sandbox.state.slice = 'Move';
     sandbox.state.openEvent = 'BookMoved';
-    eq(!!withOption('Move', ' record'), false, 'no record offered');
+    sandbox.patch('command-definition', 'Move', (b) => { b.properties.push({ name: 'room', propertyType: 'string' }); });
+    withOption('Move', ' record').onchange({ target: { value: ' record' } });
+    eq(emitted('Move', 'BookMoved').shelf, { record: { room: { parameterName: 'room' } } }, 'built, a parameter of a field\'s name taken');
+    const row = findAll(paint('Move'), (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option').some((o) => o.value === JSON.stringify({ parameterName: 'shelf', property: 'row' })))[0];
+    row.onchange({ target: { value: JSON.stringify({ parameterName: 'shelf', property: 'row' }) } });
+    eq(emitted('Move', 'BookMoved').shelf, { record: { room: { parameterName: 'room' }, row: { parameterName: 'shelf', property: 'row' } } }, 'a field picked');
+    let printed = sandbox.modelToSource(model());
+    eq(printed.includes('emit BookMoved { bookId, shelf: { room, row: shelf.row } }'), true, printed.slice(printed.indexOf('command Move'), printed.indexOf('command Move') + 200));
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
     sandbox.patch('command-definition', 'Move', (b) => { b.publishes[0].parameters.shelf = { record: { room: 'Hall', row: 2 } }; });
     const moved = textOf(paint('Move'));
-    eq(moved.includes('a command builds no record') && !moved.includes('Edit in code'), true, moved.slice(0, 500));
+    eq(moved.includes('a record, built here') && moved.includes('Edit in code'), true, 'a literal field is edited in the code view: ' + moved.slice(0, 500));
     sandbox.state.openEvent = null;
     sandbox.applyModelSource(id, LISTS);
   });

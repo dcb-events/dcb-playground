@@ -713,6 +713,25 @@ async function call(name, args) {
     eq(stored.then, { outcome: 'rejected', events: [], rejection: 'Book already exists' }, 'recorded');
   });
 
+  await check('a record built in an emission, and an optional field, are offered and land as written', async () => {
+    const schema = registered.get('add_command_definition').inputSchema;
+    eq(/"record"/.test(JSON.stringify(schema.properties.steps)), true, 'a record among an emission field\'s values');
+    eq(/isOptional/.test(JSON.stringify(registered.get('add_custom_type_definition').inputSchema.properties.properties)), true, 'an optional field offered');
+    const source = `model "Shelves"
+tag type BookId = string
+record Shelf { room: string, row?: integer }
+event BookMoved { tag bookId: BookId, shelf: Shelf }
+command MoveBook(bookId: BookId, room: string) {
+  emit BookMoved { bookId, shelf: { room } }
+}
+`;
+    const { value, isError, text } = await call('start_model', { name: 'Shelves', source });
+    eq(isError, false, text);
+    eq(projectState()[value.id]['command-definitions'].MoveBook.steps[0].parameters.shelf, { record: { room: { parameterName: 'room' } } }, 'stored');
+    const run = await call('evaluate_command', { commandName: 'MoveBook', arguments: { bookId: 'b1', room: 'A' } });
+    eq(run.value.events[0].data.shelf, { room: 'A' }, 'built, the optional field left out');
+  });
+
   await check('start_model without code points the agent at the language', async () => {
     const { value } = await call('start_model', { name: 'Empty Again' });
     eq(value.next.includes('get_model_language') && value.next.includes('apply_model_source'), true, value.next);

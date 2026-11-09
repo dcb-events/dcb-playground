@@ -9144,26 +9144,62 @@ function eventFields(model, emission, event, { edit, loop = null } = {}) {
     const built = fieldValueEditor(model, { reads: boundary, payload: commandProperties }, p, bound, key, options, typeScope, set);
     const fns = fieldCollectionFunctions(model, p);
     const open = (kind, draft) => { state.fieldArith = { key, kind, draft }; render(); };
+    // A record built here (#5), one picker per field: a record-typed
+    // field may be given whole, each of its fields a value in scope.
+    const recordFields = !p.isList ? compositeFieldsOf(model, p.propertyType) : null;
+    // A record given to the command lends its fields too.
+    const reach = commandProperties.flatMap((q) => (!q.isList && compositeFieldsOf(model, q.propertyType) || [])
+      .map((f) => [JSON.stringify({ parameterName: q.name, property: f.name }), `${propertyWords(q.name)} · ${propertyWords(f.name)}`]));
+    const typed = (type) => [...options, ...reach].filter(([v]) => {
+      const resolved = resolveOperandType(JSON.parse(v), typeScope);
+      return resolved && resolved.propertyType === type && !resolved.isList;
+    });
+    const buildRecord = () => set({
+      record: Object.fromEntries(recordFields
+        .map((f) => [f.name, typed(f.propertyType).find(([v]) => v === JSON.stringify({ parameterName: f.name }))])
+        .filter(([, found]) => found).map(([name, [v]]) => [name, JSON.parse(v)])),
+    });
+    const recordRows = recordFields && operandSource(bound) === 'record' ? recordFields.map((f) => {
+      const value = (bound.record || {})[f.name];
+      const fieldOptions = typed(f.propertyType);
+      const setField = (operand) => patchSlice((b) => write(b, (e) => {
+        const held = (e.parameters || {})[p.name];
+        if (operandSource(held) !== 'record') return;
+        if (operand === undefined) delete held.record[f.name];
+        else held.record[f.name] = operand;
+      }));
+      const beyond = value !== undefined && !fieldOptions.some(([v]) => v === JSON.stringify(value));
+      return h('div', { class: 'field', style: 'margin-left:18px', 'data-src': 'evprop:' + emission.name + '.' + p.name + '.' + f.name },
+        h('span', { class: 'nm' }, propertyWords(f.name)),
+        h('span', { class: 'muted tiny' }, readable(typeLabel(f))),
+        h('span', { class: 'muted tiny' }, '←'),
+        beyond ? h('span', {}, h('span', { class: 'op' }, operandWords(value)), ' ',
+          codeViewButton('This value is edited in the code view'))
+          : pick([['', 'unset'], ...fieldOptions], value === undefined ? '' : JSON.stringify(value),
+            (v) => setField(v === '' ? undefined : JSON.parse(v))));
+    }) : [];
     const row = h('div', { class: 'field', 'data-src': 'evprop:' + emission.name + '.' + p.name },
       h('span', { class: 'nm' }, propertyWords(p.name)),
       h('span', { class: 'muted tiny' }, readable(typeLabel(p))),
       h('span', { class: 'muted tiny' }, '←'),
       built ? built.summary
-      // A record built whole is a handler's (`set { … }`); a command
-      // passes a record it was given or read – the language has no
-      // record literal there, so one stored is said as it is, with why.
-      : operandSource(bound) === 'record' ? h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
-        h('span', { class: 'muted tiny', title: 'Pass a record the command was given or read instead' }, 'a command builds no record – only a handler sets one'))
+      // A record built here (#5): its fields below, one picker each.
+      // One where the field holds no record is said as it is, with why.
+      : operandSource(bound) === 'record' ? h('span', {}, h('span', { class: 'op' }, recordFields ? 'a record, built here' : operandWords(bound)), ' ',
+        recordFields ? h('button', { class: 'btn tiny ghost', title: 'Unset this field', onclick: () => patchSlice((b) => write(b, (e) => { delete e.parameters[p.name]; })) }, 'Clear')
+          : h('span', { class: 'muted tiny', title: 'Only a field holding one record takes a record built here' }, `${readable(p.propertyType)}${p.isList ? '[]' : ''} holds no record built here`))
       // What no editor here builds is said as it is, and edited in the
       // code view.
       : (operandBeyondEditors(bound) ? h('span', {}, h('span', { class: 'op' }, operandWords(bound)), ' ',
         codeViewButton('This value is edited in the code view')) :
       pick([['', 'unset'], ...fieldOptions,
         ...(computesField(model, p) ? [[ARITH, 'a sum or difference…']] : []),
-        ...(fns.length && openReadableProjections(model).length ? [[COLLECT, 'a collection…']] : [])],
+        ...(fns.length && openReadableProjections(model).length ? [[COLLECT, 'a collection…']] : []),
+        ...(recordFields ? [[RECORD, 'a record built here…']] : [])],
         bound === undefined ? '' : JSON.stringify(bound),
         (v) => (v === ARITH ? open('arith', { operator: 'add', left: '', right: '' })
           : v === COLLECT ? open('collect', blankCollect(fns[0]))
+          : v === RECORD ? buildRecord()
             : patchSlice((b) => write(b, (e) => {
           e.parameters = e.parameters || {};
           // '' is unset, not an operand – a choice like any other, so a
@@ -9171,7 +9207,7 @@ function eventFields(model, emission, event, { edit, loop = null } = {}) {
           if (v === '') delete e.parameters[p.name];
           else e.parameters[p.name] = JSON.parse(v);
         }))))));
-    return built && built.editor ? [row, built.editor] : row;
+    return [row, ...(built && built.editor ? [built.editor] : []), ...recordRows];
   }).flat();
 
   // What the command was given but this event does not yet carry. A
