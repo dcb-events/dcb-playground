@@ -356,6 +356,11 @@
   .fields { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
   .field { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; }
   .field .nm { min-width: 170px; }
+  @media (max-width: 560px) {
+    .field { flex-wrap: wrap; }
+    .field .nm { min-width: 0; flex: 1 1 auto; }
+    .field select { max-width: 100%; }
+  }
   /* A field's type, always on the row rather than waiting in the
      reveal: small and grey so the name stays the loudest thing, but
      never a click away. Still the way into the member editor. */
