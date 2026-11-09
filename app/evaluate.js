@@ -152,7 +152,9 @@ function evNormalize(value) {
 // reading one is where the scenario turns out to depend on it – so it
 // is the read itself that fails, here, wherever a fold, a rule, a
 // branch, a where, an emission or a loop asks for it. Nothing reads a
-// field it does not need, so a field nobody needs may stay out.
+// field it does not need, so a field nobody needs may stay out – and
+// an emission that only copies one onto its event leaves it out there
+// too (`evCopiesUnspecified`), for a Then that does not list it.
 const EV_UNSPECIFIED = Symbol('unspecified');
 
 function evOwn(object, key) {
@@ -170,6 +172,27 @@ function evOwn(object, key) {
 function evUnspecified(object, key) {
   const unspecified = object !== null && typeof object === 'object' ? object[EV_UNSPECIFIED] : null;
   return !!unspecified && unspecified.names.has(key) && !Object.hasOwn(object, key);
+}
+
+// Whether an emitted operand is a plain copy of something a scenario
+// left out – a parameter, a loop's name or a record field of one –
+// which the event then leaves out too, rather than reading it.
+function evCopiesUnspecified(operand, scope) {
+  return operandSource(operand) === 'parameter' && evUnspecified(scope.args, operand.parameterName);
+}
+
+// The first field a Then lists that the run left unspecified, as
+// `{type, field}` – a value copied through from what the scenario left
+// out, which there is nothing to compare with – or null.
+function evThenListsUnspecified(then, events) {
+  if (!then || then.outcome !== 'published') return null;
+  for (const [i, event] of (then.events || []).entries()) {
+    const got = events[i];
+    if (!event || !got || event.type !== got.type || !event.data || typeof event.data !== 'object') continue;
+    const field = Object.keys(event.data).find((key) => evUnspecified(got.data, key));
+    if (field !== undefined) return { type: event.type, field };
+  }
+  return null;
 }
 
 function evDeepEqual(a, b) {
@@ -1549,8 +1572,18 @@ function evDecide(model, events, commandName, args, collect) {
       fail(`"${commandName}" publishes "${emission.name}", which this model does not define.`);
     }
     const data = {};
+    // A value a scenario left out, copied as it is into a property that
+    // is no tag, stays unspecified on the event (11.0): the outcome
+    // does not depend on it, so the scenario need not give it. Anything
+    // that computes with it, compares it or tags by it still reads it.
+    const tagged = new Set(eventTagLeaves(model, definition).map((leaf) => leaf.property));
+    const passedOn = new Set();
     for (const property of definition.properties || []) {
       const operand = evOwn(emission.parameters, property.name);
+      if (!tagged.has(property.name) && evCopiesUnspecified(operand, scope)) {
+        passedOn.add(property.name);
+        continue;
+      }
       if (operand === undefined) {
         // An optional event property needs no mapping. The published
         // payload still carries the key, holding the explicit null –
@@ -1564,6 +1597,7 @@ function evDecide(model, events, commandName, args, collect) {
       }
       data[property.name] = attempt(() => evReadOperand(operand, scope));
     }
+    if (passedOn.size) data[EV_UNSPECIFIED] = { owner: emission.name, names: passedOn };
     published.push({ type: emission.name, data });
   };
 
@@ -1875,6 +1909,7 @@ function evThenHolds(actual, expected, model = null) {
   const isRecord = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
   const listedHold = (listed, have, properties) => Object.keys(listed).every((key) => {
     const property = (properties || []).find((p) => p && p.name === key);
+    if (evUnspecified(have, key)) return false;
     const held = isRecord(have) && evOwn(have, key) !== undefined ? have[key] : null;
     const fields = model && property && !property.isList ? compositeFieldsOf(model, property.propertyType) : null;
     if (fields && isRecord(listed[key]) && isRecord(held)) return listedHold(listed[key], held, fields);
@@ -1908,6 +1943,11 @@ function deriveThen(model, scenario) {
   evCheckThen(model, scenario.then);
 
   const result = evaluateCommand(model, log, scenario.command, args);
+  const compared = evThenListsUnspecified(scenario.then, result.events || []);
+  if (compared) {
+    fail(`The Then compares "${compared.field}" of ${compared.type}, which the scenario left out – `
+      + 'a value copied through as it is stays unspecified, so the Then leaves it out too.');
+  }
   if (result.outcome === 'published') {
     return { outcome: 'published', events: result.events.map((e) => ({ type: e.type, data: e.data })) };
   }

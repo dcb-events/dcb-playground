@@ -97,7 +97,9 @@ _Avoid_: using it for computations over many values (see Collection function)
 **Unspecified field**:
 A property a scenario leaves out of a given event, a when or a then event,
 because its outcome does not depend on it. Reading one during the run is an
-error naming it; a then ignores it. Tags are never unspecified.
+error naming it; a then ignores it. Emitted as it is into a property that is
+no tag, it stays unspecified on the event, and a then must not list it. Tags
+are never unspecified.
 _Avoid_: missing field, default value
 
 **Description**:

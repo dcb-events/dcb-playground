@@ -6487,7 +6487,9 @@ A scenario leaves out every property its outcome does not depend on – in given
 so it says what it depends on; tags are always given:
   given CustomerWasAdded { customerId: "cu1" }  when SetInstallment { contractId: "co1", actor: "cu2" }
 A property left out is unspecified: a run that reads it is an error naming it (reads unspecified
-field "name" of CustomerWasAdded). A then compares the fields it lists and ignores the rest.
+field "name" of CustomerWasAdded) – except one emitted as it is into a property that is no tag,
+which the event leaves out too, so a then must not list it. A then compares the fields it lists
+and ignores the rest.
 The values a scenario gives are held to their types' constraints (pattern, minimum, …).
 
 A definition printed as command X json { … } is stored JSON the language cannot spell.

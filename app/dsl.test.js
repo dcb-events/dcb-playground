@@ -3466,11 +3466,37 @@ command SetLabels(contractId: ContractId, labels?: string[]) {
   });
 
   check('reading a field left out breaks the scenario, naming it', () => {
-    eq(statuses(swap(PARTIAL, 'actor: "cu1", installment: 50, note: "n" }', 'actor: "cu1", installment: 50 }')),
-      ['current', 'Reads unspecified field "note" of SetInstallment – the outcome depends on it, so the scenario gives it.'], 'a parameter emitted');
+    eq(statuses(swap(PARTIAL, 'actor: "cu1", installment: 50, note: "n" }', 'actor: "cu1", note: "n" }')),
+      ['current', 'The Then compares "installment" of InstallmentSet, which the scenario left out – a value copied through as it is stays unspecified, so the Then leaves it out too.'], 'a parameter emitted and listed');
     const greet = withScenario('Greet', '    scenario {\n      given CustomerWasAdded { customerId: "cu1" }\n'
       + '      when Greet { customerId: "cu1" }\n      then Greeted { customerId: "cu1" }\n    }');
     eq(statuses(greet).slice(2), ['Reads unspecified field "name" of CustomerWasAdded – the outcome depends on it, so the scenario gives it.'], 'a field a handler sets');
+  });
+
+  check('a value left out and emitted as it is stays unspecified', () => {
+    const noNote = swap(PARTIAL, 'actor: "cu1", installment: 50, note: "n" }', 'actor: "cu1", installment: 50 }');
+    eq(statuses(noNote), ['current', 'current'], 'a then not listing it holds');
+    eq(statuses(swap(noNote, 'actor: "cu1", installment: 50 }\n      then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50 }',
+      'actor: "cu1", installment: 50 }\n      then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50, note: "n" }'))[1],
+    'The Then compares "note" of InstallmentSet, which the scenario left out – a value copied through as it is stays unspecified, so the Then leaves it out too.',
+    'a then listing it is an error naming it');
+    // Computed, compared or tagged by, it is still read.
+    const computed = swap(noNote, 'emit InstallmentSet { contractId, actor, installment, note }', 'emit InstallmentSet { contractId, actor, installment: installment + 1, note }');
+    eq(statuses(computed)[1], 'drifted', 'the installment given is computed with');
+    const left = swap(computed, 'actor: "cu1", installment: 50 }', 'actor: "cu1" }');
+    eq(statuses(left)[1], 'Reads unspecified field "installment" of SetInstallment – the outcome depends on it, so the scenario gives it.', 'arithmetic reads it');
+    const compared = swap(noNote, '  emit InstallmentSet', '  require note != "x"\n    else reject "No x"\n  emit InstallmentSet');
+    eq(statuses(compared)[1], 'Reads unspecified field "note" of SetInstallment – the outcome depends on it, so the scenario gives it.', 'a comparison reads it');
+    const tagless = swap(PARTIAL, 'when SetInstallment { contractId: "co1", actor: "cu1", installment: 50, note: "n" }', 'when SetInstallment { contractId: "co1", installment: 50 }');
+    eq(statuses(tagless)[1], 'Reads unspecified field "actor" of SetInstallment – the outcome depends on it, so the scenario gives it.', 'a tag is never unspecified');
+    // Recorded without a then, the event leaves it out.
+    const recording = swap(noNote, '      then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50 }\n', '');
+    fresh();
+    const id = sandbox.createDcbModel('Text');
+    applyModelSource(id, recording, { recordOutcomes: true });
+    const recorded = Object.values(projectState()[id]['scenario-definitions'])[1].then;
+    eq(recorded.events[0].data, { contractId: 'co1', actor: 'cu1', installment: 50 }, 'recorded without it');
+    eq(modelToSource(projectState()[id]).includes('then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50 }'), true, 'printed without it');
   });
 
   check('a tag left out is an error', () => {
