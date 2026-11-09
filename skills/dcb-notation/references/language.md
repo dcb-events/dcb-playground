@@ -109,8 +109,10 @@ min, max and average null; any false; all true. Without a where, any says whethe
 present, and all holds. A derived projection may hold one such value: { sum(P(x, *)) }.
 
 A projection may hold a record its handlers replace whole – set event.data.address, or
-set { street: event.data.street, city: event.data.city } naming every field. Setting one
-field at a time (composite state) is refused.
+set { street: event.data.street, city: event.data.city } naming every required field. Setting
+one field at a time (composite state) is refused. A record's field may be optional, record
+Address { street: string, floor?: integer }: an absent one reads null, and a scenario gives a
+record whole but for its optional fields.
 
 Scenarios sit in one scenarios { … } group at the end of the block of the command or
 projection they exercise, and name it:
@@ -171,9 +173,10 @@ tag type LoanId = string { pattern: "^l[0-9]+$" }
 @sensitive
 tag type EmailAddress = string { pattern: "^[^A-Z]*$" }
 enum BookStatus { Unknown, Available, Lent, Withdrawn }
-// A record is a composite value; every field is one required value.
+// A record is a composite value; every field is one value, and "name?:"
+// one that may be left out (null when absent) – never a tag.
 record Copy { bookId: BookId, isbn: Isbn }
-record Shelf { room: string, row: integer }
+record Shelf { room: string, row?: integer }
 
 // ---- Events ----
 // "tag" marks each value the event is tagged by; "name?:" is optional
@@ -227,7 +230,7 @@ projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
 }
 
 // A projection may hold a record, replaced whole: an event field of its
-// type, or "{ field: …, … }" naming every field. A read gives a field
+// type, or "{ field: …, … }" naming every required field. A read gives a field
 // of it, BookShelf(bookId).room.
 projection BookShelf (tag bookId: BookId): Shelf = null {
   on BookShelved => set { room: event.data.room, row: event.data.row }

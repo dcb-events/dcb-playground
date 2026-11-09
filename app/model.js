@@ -1859,8 +1859,11 @@ function fitsJsonType(type, value) {
 // would make the scenario show what cannot happen. A key the payload
 // leaves out, and null, are no value to check – an optional value's
 // absence, a required one's `replay` says apart; a time's format is
-// `payloadTimeProblems`' to say.
-function payloadValueProblems(model, properties, data) {
+// `payloadTimeProblems`' to say. `wholeRecords` holds a record to
+// every field it requires – a scenario's Given and When give one
+// whole, its optional fields aside (11.0); a Then compares the fields
+// it lists.
+function payloadValueProblems(model, properties, data, { wholeRecords = false } = {}) {
   const out = [];
   const scalar = (typeName, value) => {
     const body = model['custom-type-definitions'][typeName];
@@ -1892,6 +1895,10 @@ function payloadValueProblems(model, properties, data) {
       if (jsonTypeOf(value) !== 'object') { out.push({ name, value, problem: 'is no record', type: typeName }); return; }
       for (const field of fields) {
         const held = Object.prototype.hasOwnProperty.call(value, field.name) ? value[field.name] : undefined;
+        if (wholeRecords && held === undefined && !field.isOptional) {
+          out.push({ name, value, problem: `has no field "${field.name}"`, type: typeName });
+          continue;
+        }
         checkHeld(`${name}.${field.name}`, field, held);
       }
       return;
@@ -5820,9 +5827,12 @@ function validateCustomTypeBody(model, typeName, body) {
           `because a list field flattens and would break the index a zipped condition reads by.`
         );
       }
-      if (field.isOptional) {
+      // An optional field (11.0) is a value that may be absent, read as
+      // null – but never a tag: a missing tag field would contribute no
+      // tag and shift every later index.
+      if (field.isOptional && cls.kind === 'value' && cls.isTag) {
         throw new DomainError(
-          `Field "${typeName}.${field.name}" is optional. A composite's fields are required, ` +
+          `Field "${typeName}.${field.name}" is an optional tag. A composite's tag fields are required, ` +
           `because a missing tag field would contribute no tag and shift every later index.`
         );
       }
@@ -8604,8 +8614,8 @@ function definitionsToSchema(model) {
 // is, because a defective model must still run.
 //
 // A custom scalar type already *is* a JSON Schema (its `schema`), so it
-// is carried over whole; a composite is an object of its fields, every
-// one required and singular. `refOf(typeName)` says how a property
+// is carried over whole; a composite is an object of its fields, each
+// singular, and required unless optional (11.0) – which may be absent. `refOf(typeName)` says how a property
 // names a custom type – a `$ref` into wherever the caller keeps
 // `customTypeSchemas`, or, left out, the type's schema inline. An
 // unresolved type allows any value; its advisory already says so.
@@ -8615,7 +8625,7 @@ function customTypeSchema(model, typeName, refOf) {
   const body = model['custom-type-definitions'][typeName];
   if (!body) return {};
   if (Array.isArray(body.properties)) {
-    return propertiesSchema(model, body.properties, refOf, { requireAll: true });
+    return propertiesSchema(model, body.properties, refOf);
   }
   return deepClone(body.schema || {});
 }

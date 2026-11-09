@@ -4750,7 +4750,8 @@ function retypeMember(member, changes) {
 // is the model's job rather than a body edit.
 //
 // `allow` says which knobs this site has: a projection parameter is
-// always a single required identifier, so it has no arity to set.
+// always a single required identifier, so it has no arity to set; a
+// record's field may be optional but never a list (`list: false`).
 //
 // `newType(choose)` adds a row to the type picker that creates a custom
 // type and hands it to `choose`. `editType(typeName)`, given, offers to
@@ -4789,7 +4790,7 @@ function memberEditor(model, {
         if (v === NEW_DEFINITION) return newType(retype);
         retype(v);
       }),
-      allow.arity === false ? null : h('label', { class: 'tiny muted' },
+      allow.arity === false || allow.list === false ? null : h('label', { class: 'tiny muted' },
         h('input', {
           type: 'checkbox', checked: !!member.isList,
           onchange: (e) => onReplace(retypeMember(member, { isList: e.target.checked })),
@@ -10566,9 +10567,10 @@ function commandIconPicker(model, name, command) {
 // composites is what lets a single event record something that
 // happened to many instances at once.
 //
-// Fields are offered as name-and-type only. There are no list or
-// optional controls, because a composite's fields may be neither – the
-// editor declines to ask rather than asking and then refusing.
+// Fields are offered as a name, a type and whether they are optional
+// (11.0). There is no list control, because a composite's fields are
+// singular – the editor declines to ask rather than asking and then
+// refusing.
 function renderCustomTypes(model, main) {
   main.appendChild(h('header', {},
     h('div', { class: 'row' }, h('div', { class: 'name' }, 'Custom types'), h('span', { class: 'grow' }), surfaceToggle(model)),
@@ -10683,14 +10685,15 @@ function customTypeEditor(model, name, { inModal = false, onRenamed = null } = {
   if (composite) {
     const where = 'field:' + name;
     card.appendChild(h('div', { class: 'erows' }, body.properties.map((field, i) => {
-      // A field is always singular and always required – that is
-      // what keeps a list of records the same length as the bindings
-      // fanned out over it – so arity is not offered here.
+      // A field is always singular – that is what keeps a list of
+      // records the same length as the bindings fanned out over it – so
+      // only optional is offered here (11.0); an optional tag field is
+      // advised.
       if (editingMember(where, field.name)) {
         return memberEditor(model, {
-          member: field, where, allow: { arity: false }, types: fieldTypeOptions(model),
+          member: field, where, allow: { list: false }, types: fieldTypeOptions(model),
           onReplace: (next) => patch('custom-type-definition', name, (b) => {
-            b.properties[i] = { name: next.name, propertyType: next.propertyType };
+            b.properties[i] = { name: next.name, propertyType: next.propertyType, ...(next.isOptional ? { isOptional: true } : {}) };
           }),
           onRename: (to) => renameMember('custom-type-definition', model.id, name, 'field', field.name, to),
         });
@@ -10707,7 +10710,7 @@ function customTypeEditor(model, name, { inModal = false, onRenamed = null } = {
             class: 'chip editable',
             title: 'Rename or retype this field',
             onclick: () => openMember(where, field.name),
-          }, readable(field.propertyType)),
+          }, readable(typeLabel(field))),
           isId ? h('span', { class: 'tiny muted' },
             'a tag – every event carrying this is tagged with it') : null,
           h('span', { style: 'flex:1' }),

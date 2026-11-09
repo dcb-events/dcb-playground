@@ -1861,8 +1861,11 @@ function fitsJsonType(type, value) {
 // would make the scenario show what cannot happen. A key the payload
 // leaves out, and null, are no value to check – an optional value's
 // absence, a required one's `replay` says apart; a time's format is
-// `payloadTimeProblems`' to say.
-function payloadValueProblems(model, properties, data) {
+// `payloadTimeProblems`' to say. `wholeRecords` holds a record to
+// every field it requires – a scenario's Given and When give one
+// whole, its optional fields aside (11.0); a Then compares the fields
+// it lists.
+function payloadValueProblems(model, properties, data, { wholeRecords = false } = {}) {
   const out = [];
   const scalar = (typeName, value) => {
     const body = model['custom-type-definitions'][typeName];
@@ -1894,6 +1897,10 @@ function payloadValueProblems(model, properties, data) {
       if (jsonTypeOf(value) !== 'object') { out.push({ name, value, problem: 'is no record', type: typeName }); return; }
       for (const field of fields) {
         const held = Object.prototype.hasOwnProperty.call(value, field.name) ? value[field.name] : undefined;
+        if (wholeRecords && held === undefined && !field.isOptional) {
+          out.push({ name, value, problem: `has no field "${field.name}"`, type: typeName });
+          continue;
+        }
         checkHeld(`${name}.${field.name}`, field, held);
       }
       return;
@@ -5822,9 +5829,12 @@ function validateCustomTypeBody(model, typeName, body) {
           `because a list field flattens and would break the index a zipped condition reads by.`
         );
       }
-      if (field.isOptional) {
+      // An optional field (11.0) is a value that may be absent, read as
+      // null – but never a tag: a missing tag field would contribute no
+      // tag and shift every later index.
+      if (field.isOptional && cls.kind === 'value' && cls.isTag) {
         throw new DomainError(
-          `Field "${typeName}.${field.name}" is optional. A composite's fields are required, ` +
+          `Field "${typeName}.${field.name}" is an optional tag. A composite's tag fields are required, ` +
           `because a missing tag field would contribute no tag and shift every later index.`
         );
       }
@@ -8606,8 +8616,8 @@ function definitionsToSchema(model) {
 // is, because a defective model must still run.
 //
 // A custom scalar type already *is* a JSON Schema (its `schema`), so it
-// is carried over whole; a composite is an object of its fields, every
-// one required and singular. `refOf(typeName)` says how a property
+// is carried over whole; a composite is an object of its fields, each
+// singular, and required unless optional (11.0) – which may be absent. `refOf(typeName)` says how a property
 // names a custom type – a `$ref` into wherever the caller keeps
 // `customTypeSchemas`, or, left out, the type's schema inline. An
 // unresolved type allows any value; its advisory already says so.
@@ -8617,7 +8627,7 @@ function customTypeSchema(model, typeName, refOf) {
   const body = model['custom-type-definitions'][typeName];
   if (!body) return {};
   if (Array.isArray(body.properties)) {
-    return propertiesSchema(model, body.properties, refOf, { requireAll: true });
+    return propertiesSchema(model, body.properties, refOf);
   }
   return deepClone(body.schema || {});
 }
@@ -10581,7 +10591,8 @@ function evCompileHandlerOperand(operand) {
       if (operand.property !== undefined) {
         return (state, event) => {
           const held = evNormalize(evOwn(event.data, operand.eventProperty));
-          return held === null || held === undefined ? null : evOwn(held, operand.property);
+          const field = held === null || held === undefined ? undefined : evOwn(held, operand.property);
+          return field === undefined ? null : field;
         };
       }
       return (state, event) => evOwn(event.data, operand.eventProperty);
@@ -11108,10 +11119,13 @@ function evReadOperand(operand, scope) {
         fail(`This command was given no value for "${operand.parameterName}".`);
       }
       if (!operand.property) return evNormalize(held);
+      // A record's field left out – an optional one (11.0) – is null.
       const value = evNormalize(held);
-      return Array.isArray(value)
-        ? value.map((element) => evOwn(element, operand.property))
-        : evOwn(value, operand.property);
+      const field = (record) => {
+        const one = evOwn(record, operand.property);
+        return one === undefined ? null : one;
+      };
+      return Array.isArray(value) ? value.map(field) : field(value);
     }
     case 'alias-property': {
       const binding = evBound(operand.alias, scope);
@@ -11979,8 +11993,10 @@ function evSameOutcome(a, b) {
 // definitions: a tag is always given, since tags decide which reads
 // see an event – an optional one left out is its null – and every
 // value given is one its type admits, constraints and time formats
-// alike. `tagged` is false for a command's arguments, which have none.
-function evScenarioPayload(model, properties, data, owner, where, tagged) {
+// alike, a record whole but for its optional fields (a Then's,
+// `partialRecords`, compares what it lists). `tagged` is false for a
+// command's arguments, which have none.
+function evScenarioPayload(model, properties, data, owner, where, tagged, { partialRecords = false } = {}) {
   const held = data !== null && typeof data === 'object' && !Array.isArray(data) ? data : {};
   const tags = new Set(tagged ? eventTagLeaves(model, { properties, tags: tagged }).map((leaf) => leaf.property) : []);
   const out = { ...held };
@@ -11995,7 +12011,7 @@ function evScenarioPayload(model, properties, data, owner, where, tagged) {
   }
   const untimely = payloadTimeProblems(model, properties, held)[0];
   if (untimely) fail(`${where} carries ${untimely.name}: ${untimely.problem}`);
-  const refused = payloadValueProblems(model, properties, held)[0];
+  const refused = payloadValueProblems(model, properties, held, { wholeRecords: !partialRecords })[0];
   // Named by its type, and said to be new: a 10.x scenario that ran
   // may break here on nothing but a value its type never admitted.
   if (refused) {
@@ -12081,7 +12097,7 @@ function evCheckThen(model, then) {
     const definition = evOwn(model['event-definitions'], (event || {}).type);
     if (!definition) return;
     evScenarioPayload(model, definition.properties, event.data, event.type,
-      `Expected event ${index + 1} ("${event.type}")`, definition.tags || []);
+      `Expected event ${index + 1} ("${event.type}")`, definition.tags || [], { partialRecords: true });
   });
 }
 
@@ -13756,7 +13772,7 @@ function parseModelSourceText(text, options) {
     // `set x.field = …` would update one field of a record – composite
     // state, which stays refused (11.0).
     if (peek().t === 'ident' && !startsHandlerOperand() && (is('.', 1) || is('=', 1))) {
-      fail('A record is replaced whole – set it to an event field holding one, or to { field: …, … } naming every field.');
+      fail('A record is replaced whole – set it to an event field holding one, or to { field: …, … } naming every required field.');
     }
     if (startsHandlerOperand()) out.value = handlerOperand();
     if (inBranch && peek().t === 'ident' && OPERATIONS.includes(peek().v)) {
@@ -13982,13 +13998,16 @@ function parseModelSourceText(text, options) {
       while (!is('}')) {
         guardBlock('}');
         const nameToken = ident('a field name');
+        // `name?: T` (11.0): a field that may be left out, read as null.
+        const isOptional = !!accept('?');
         expect(':');
         const typeToken = ident('a type');
-        const field = { name: nameToken.v, propertyType: typeToken.v };
+        const field = { name: nameToken.v, propertyType: typeToken.v, ...(isOptional ? { isOptional: true } : {}) };
         mark(field, 'name', nameToken);
         mark(field, 'propertyType', typeToken);
         properties.push(field);
-        if (is('[') || is('?')) fail('A record field is always one required value – a list or an optional field cannot be zipped.');
+        if (is('[')) fail('A record field is one value – a list field cannot be zipped.');
+        if (is('?')) fail(`An optional field is written ${nameToken.v}?: ${typeToken.v}.`);
         if (!accept(',') && peek().t !== 'ident') break;
       }
       expect('}', '"}" or ","');
@@ -15664,7 +15683,7 @@ function printCustomType(name, body) {
   if (body.properties !== undefined) {
     if (body.schema !== undefined) unprintable('it has both a schema and fields');
     if (!Array.isArray(body.properties)) unprintable('its fields are not a list');
-    const fields = body.properties.map((f) => `${sourceRef(f.name, 'field')}: ${sourceRef(f.propertyType, 'type')}`);
+    const fields = body.properties.map((f) => `${sourceRef(f.name, 'field')}${f.isOptional === true ? '?' : ''}: ${sourceRef(f.propertyType, 'type')}`);
     return tagSchema + sourceBlock(`${tag}record ${declared}`, fields);
   }
   const schema = body.schema;
@@ -18916,8 +18935,10 @@ min, max and average null; any false; all true. Without a where, any says whethe
 present, and all holds. A derived projection may hold one such value: { sum(P(x, *)) }.
 
 A projection may hold a record its handlers replace whole – set event.data.address, or
-set { street: event.data.street, city: event.data.city } naming every field. Setting one
-field at a time (composite state) is refused.
+set { street: event.data.street, city: event.data.city } naming every required field. Setting
+one field at a time (composite state) is refused. A record's field may be optional, record
+Address { street: string, floor?: integer }: an absent one reads null, and a scenario gives a
+record whole but for its optional fields.
 
 Scenarios sit in one scenarios { … } group at the end of the block of the command or
 projection they exercise, and name it:
@@ -18955,9 +18976,10 @@ tag type LoanId = string { pattern: "^l[0-9]+$" }
 @sensitive
 tag type EmailAddress = string { pattern: "^[^A-Z]*$" }
 enum BookStatus { Unknown, Available, Lent, Withdrawn }
-// A record is a composite value; every field is one required value.
+// A record is a composite value; every field is one value, and "name?:"
+// one that may be left out (null when absent) – never a tag.
 record Copy { bookId: BookId, isbn: Isbn }
-record Shelf { room: string, row: integer }
+record Shelf { room: string, row?: integer }
 
 // ---- Events ----
 // "tag" marks each value the event is tagged by; "name?:" is optional
@@ -19011,7 +19033,7 @@ projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
 }
 
 // A projection may hold a record, replaced whole: an event field of its
-// type, or "{ field: …, … }" naming every field. A read gives a field
+// type, or "{ field: …, … }" naming every required field. A read gives a field
 // of it, BookShelf(bookId).room.
 projection BookShelf (tag bookId: BookId): Shelf = null {
   on BookShelved => set { room: event.data.room, row: event.data.row }

@@ -2920,7 +2920,7 @@ command SendParcel(customerId: CustomerId, courseId: CourseId, city: string, lea
       [`${lineOf('  sum(ReservationSeats(courseId, *))')}:7 ReservationSeats(*, *) leaves every tag open – at least one stays bound.`],
       'every tag open');
     eq(errorOf('set { street: event.data.street, city: event.data.city }', 'set address.city = event.data.city').slice(0, 1),
-      [`${lineOf('set { street')}:31 A record is replaced whole – set it to an event field holding one, or to { field: …, … } naming every field.`],
+      [`${lineOf('set { street')}:31 A record is replaced whole – set it to an event field holding one, or to { field: …, … } naming every required field.`],
       'a partial update');
   });
 
@@ -3971,7 +3971,7 @@ command SetSeats(courseId: CourseId, seats: NumberOfSeats) {
 // Types
 tag type CustomerId = string
 tag type EmailAddress = string
-record SignUp { emailAddress: EmailAddress, name: string }
+record SignUp { emailAddress: EmailAddress, name?: string }
 
 // Events
 event SignedUp { tag customerId: CustomerId, signUp: SignUp tag emailAddress }
@@ -4250,6 +4250,110 @@ command Return(memberId: MemberId, bookId: BookId) {
     const printed = modelToSource(model());
     eq([printed.includes('lent: count(list(OnLoan(memberId, *))) + count(books)'), printed.includes('count(Wished(memberId))'),
       printed.includes('Written as JSON')], [true, true, false], 'the editors\' renames too');
+  });
+}
+
+
+// ---------------------------------------------------------------
+// Records (migration feedback, #5): a field may be optional, `name?:
+// T`, and an absent one reads null; a handler's `set { … }` names
+// every required field; a scenario gives a record whole, its optional
+// fields aside.
+// ---------------------------------------------------------------
+{
+  const SHELVES = `model "Shelves"
+
+// Types
+tag type BookId = string
+record Shelf { room: string, row?: integer }
+
+// Events
+event BookShelved { tag bookId: BookId, room: string, row?: integer }
+event BookMoved { tag bookId: BookId, shelf: Shelf }
+
+// Projections
+projection BookShelf (tag bookId: BookId): Shelf = null {
+  on BookShelved => set { room: event.data.room }
+  on BookMoved => set event.data.shelf
+}
+
+projection BookRow (tag bookId: BookId): integer = null {
+  on BookMoved => set event.data.shelf.row
+}
+
+// Commands
+command ShelveBook(bookId: BookId, room: string, row?: integer) {
+  emit BookShelved { bookId, room, row }
+}
+
+command MoveBook(bookId: BookId, shelf: Shelf) {
+  require shelf.row is empty or shelf.row > 0
+    else reject "No such row"
+  require BookShelf(bookId).row != shelf.row or BookShelf(bookId).room != shelf.room
+    else reject "Already there"
+
+  emit BookMoved { bookId, shelf }
+
+  scenarios {
+    scenario "a room without a row" {
+      given BookShelved { bookId: "b1", room: "A" }
+      when MoveBook { bookId: "b1", shelf: { room: "B" } }
+      then BookMoved { bookId: "b1", shelf: { room: "B" } }
+    }
+
+    scenario "the same room, no row either way" {
+      given BookShelved { bookId: "b1", room: "A" }
+      when MoveBook { bookId: "b1", shelf: { room: "A" } }
+      then rejected "Already there"
+    }
+  }
+}
+`;
+  const runAll = (text) => {
+    const model = buildText(text).model();
+    return Object.values(model['scenario-definitions']).map((body) => {
+      const run = sandbox.runScenario(model, body);
+      return run.status === 'broken' ? run.reason : run.status;
+    });
+  };
+  const advised = (text) => advisedOtherwise(buildText(text).model()).map((a) => `${a.name}: ${a.message}`);
+
+  check('#5: a record field may be optional, and printed as written', () => {
+    const { model } = buildText(SHELVES);
+    eq(model()['custom-type-definitions'].Shelf.properties, [{ name: 'room', propertyType: 'string' }, { name: 'row', propertyType: 'integer', isOptional: true }], 'stored');
+    eq(modelToSource(model()), SHELVES, 'printed as written');
+    assertSameModel(model(), parseModelSource(SHELVES), 'round trip');
+    eq(sandbox.customTypeSchema(model(), 'Shelf').required, ['room'], 'its schema lets it be left out');
+    eq(advised(SHELVES), [], 'advisory-clean');
+    eq(parseModelSource(swap(SHELVES, 'row?: integer }', 'row: integer[] }')).diagnostics.map((d) => d.message),
+      ['A record field is one value – a list field cannot be zipped.'], 'a list field stays refused');
+  });
+
+  check('#5: an absent optional field reads null', () => {
+    eq(runAll(SHELVES), ['current', 'current'], 'both hold');
+    const { model } = buildText(SHELVES);
+    const log = [{ type: 'BookMoved', data: { bookId: 'b1', shelf: { room: 'A' } } }];
+    eq(sandbox.foldProjection(model(), log, 'BookRow', { tags: { bookId: 'b1' } }), null, 'a handler taking it');
+    eq(sandbox.foldProjection(model(), log, 'BookShelf', { tags: { bookId: 'b1' } }), { room: 'A' }, 'the record as set');
+  });
+
+  check('#5: a set names every required field, and may leave out an optional one', () => {
+    eq(advised(swap(SHELVES, 'set { room: event.data.room }', 'set { row: event.data.row }')),
+      ['BookShelf: The handler for "BookShelved" on projection "BookShelf" leaves out "room" – a record is replaced whole: set it to an event field holding a Shelf, or to { room: …, row: … }.'],
+      'a required field left out');
+  });
+
+  check('#5: a scenario gives a record whole, its optional fields aside', () => {
+    eq(runAll(swap(SHELVES, 'when MoveBook { bookId: "b1", shelf: { room: "B" } }', 'when MoveBook { bookId: "b1", shelf: { row: 2 } }'))[0],
+      'The When ("MoveBook") gives shelf {"row":2}, which Shelf does not admit: no field "room" (scenario values are held to their types since 11.0).',
+      'a required field left out');
+  });
+
+  check('#5: a tag field is never optional', () => {
+    eq(advised(swap(SHELVES, 'record Shelf { room: string, row?: integer }', 'record Shelf { room: string, row?: integer, owner?: BookId }'))
+      .filter((line) => line.startsWith('Shelf:')),
+      ['Shelf: Field "Shelf.owner" is an optional tag. A composite\'s tag fields are required, because a missing tag field would contribute no tag and shift every later index.'],
+      'advised');
   });
 }
 

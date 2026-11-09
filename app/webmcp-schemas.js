@@ -6232,7 +6232,7 @@ const WEBMCP_DEFINITION_SCHEMAS = {
         "type": "array",
         "minItems": 1,
         "items": {
-          "description": "One field of a composite value type. Deliberately **not** a\n`PropertyDefinition`: a field is always singular and always\nrequired, and it may not itself be typed with a composite.\n\nAll three restrictions exist to keep *zipping* meaningful (see\n`CommandDefinition.steps`). Zipping is index correlation\nbetween a fanned-out binding and the list it fanned from, and it\nonly holds while the two have the same length:\n\n  - a **list** field would flatten, as list-valued reads off a\n    plural alias already do, and a flattened list has a different\n    length than the list it came from;\n  - an **optional** identifier field would contribute a variable\n    number of tags, so a binding fanned from it would be shorter\n    than its source;\n  - a **nested** composite would need a path operand rather than\n    the single hop `{parameterName, property}` affords.\n\nEach is a way for the index to drift silently, with nothing on the\npage to show it had.\n",
+          "description": "One field of a composite value type. Deliberately **not** a\n`PropertyDefinition`: a field is always singular, a tag field is always\nrequired, and it may not itself be typed with a composite.\n\nAll three restrictions exist to keep *zipping* meaningful (see\n`CommandDefinition.steps`). Zipping is index correlation\nbetween a fanned-out binding and the list it fanned from, and it\nonly holds while the two have the same length:\n\n  - a **list** field would flatten, as list-valued reads off a\n    plural alias already do, and a flattened list has a different\n    length than the list it came from;\n  - an **optional** identifier field would contribute a variable\n    number of tags, so a binding fanned from it would be shorter\n    than its source;\n  - a **nested** composite would need a path operand rather than\n    the single hop `{parameterName, property}` affords.\n\nEach is a way for the index to drift silently, with nothing on the\npage to show it had. A field of any other type may be optional\n(`isOptional`, 11.0).\n",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -6268,6 +6268,11 @@ const WEBMCP_DEFINITION_SCHEMAS = {
                   ]
                 }
               ]
+            },
+            "isOptional": {
+              "type": "boolean",
+              "default": false,
+              "description": "The field may be left out of a record (11.0), and an absent one\nreads as `null`. A handler's `RecordValue` names every field that is\nnot optional, and a scenario's Given and When give a record whole but\nfor its optional fields. Never on a field of a tag type.\n"
             }
           },
           "required": [

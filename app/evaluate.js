@@ -431,7 +431,8 @@ function evCompileHandlerOperand(operand) {
       if (operand.property !== undefined) {
         return (state, event) => {
           const held = evNormalize(evOwn(event.data, operand.eventProperty));
-          return held === null || held === undefined ? null : evOwn(held, operand.property);
+          const field = held === null || held === undefined ? undefined : evOwn(held, operand.property);
+          return field === undefined ? null : field;
         };
       }
       return (state, event) => evOwn(event.data, operand.eventProperty);
@@ -958,10 +959,13 @@ function evReadOperand(operand, scope) {
         fail(`This command was given no value for "${operand.parameterName}".`);
       }
       if (!operand.property) return evNormalize(held);
+      // A record's field left out – an optional one (11.0) – is null.
       const value = evNormalize(held);
-      return Array.isArray(value)
-        ? value.map((element) => evOwn(element, operand.property))
-        : evOwn(value, operand.property);
+      const field = (record) => {
+        const one = evOwn(record, operand.property);
+        return one === undefined ? null : one;
+      };
+      return Array.isArray(value) ? value.map(field) : field(value);
     }
     case 'alias-property': {
       const binding = evBound(operand.alias, scope);
@@ -1829,8 +1833,10 @@ function evSameOutcome(a, b) {
 // definitions: a tag is always given, since tags decide which reads
 // see an event – an optional one left out is its null – and every
 // value given is one its type admits, constraints and time formats
-// alike. `tagged` is false for a command's arguments, which have none.
-function evScenarioPayload(model, properties, data, owner, where, tagged) {
+// alike, a record whole but for its optional fields (a Then's,
+// `partialRecords`, compares what it lists). `tagged` is false for a
+// command's arguments, which have none.
+function evScenarioPayload(model, properties, data, owner, where, tagged, { partialRecords = false } = {}) {
   const held = data !== null && typeof data === 'object' && !Array.isArray(data) ? data : {};
   const tags = new Set(tagged ? eventTagLeaves(model, { properties, tags: tagged }).map((leaf) => leaf.property) : []);
   const out = { ...held };
@@ -1845,7 +1851,7 @@ function evScenarioPayload(model, properties, data, owner, where, tagged) {
   }
   const untimely = payloadTimeProblems(model, properties, held)[0];
   if (untimely) fail(`${where} carries ${untimely.name}: ${untimely.problem}`);
-  const refused = payloadValueProblems(model, properties, held)[0];
+  const refused = payloadValueProblems(model, properties, held, { wholeRecords: !partialRecords })[0];
   // Named by its type, and said to be new: a 10.x scenario that ran
   // may break here on nothing but a value its type never admitted.
   if (refused) {
@@ -1931,7 +1937,7 @@ function evCheckThen(model, then) {
     const definition = evOwn(model['event-definitions'], (event || {}).type);
     if (!definition) return;
     evScenarioPayload(model, definition.properties, event.data, event.type,
-      `Expected event ${index + 1} ("${event.type}")`, definition.tags || []);
+      `Expected event ${index + 1} ("${event.type}")`, definition.tags || [], { partialRecords: true });
   });
 }
 

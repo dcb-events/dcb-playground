@@ -1313,7 +1313,7 @@ function parseModelSourceText(text, options) {
     // `set x.field = …` would update one field of a record – composite
     // state, which stays refused (11.0).
     if (peek().t === 'ident' && !startsHandlerOperand() && (is('.', 1) || is('=', 1))) {
-      fail('A record is replaced whole – set it to an event field holding one, or to { field: …, … } naming every field.');
+      fail('A record is replaced whole – set it to an event field holding one, or to { field: …, … } naming every required field.');
     }
     if (startsHandlerOperand()) out.value = handlerOperand();
     if (inBranch && peek().t === 'ident' && OPERATIONS.includes(peek().v)) {
@@ -1539,13 +1539,16 @@ function parseModelSourceText(text, options) {
       while (!is('}')) {
         guardBlock('}');
         const nameToken = ident('a field name');
+        // `name?: T` (11.0): a field that may be left out, read as null.
+        const isOptional = !!accept('?');
         expect(':');
         const typeToken = ident('a type');
-        const field = { name: nameToken.v, propertyType: typeToken.v };
+        const field = { name: nameToken.v, propertyType: typeToken.v, ...(isOptional ? { isOptional: true } : {}) };
         mark(field, 'name', nameToken);
         mark(field, 'propertyType', typeToken);
         properties.push(field);
-        if (is('[') || is('?')) fail('A record field is always one required value – a list or an optional field cannot be zipped.');
+        if (is('[')) fail('A record field is one value – a list field cannot be zipped.');
+        if (is('?')) fail(`An optional field is written ${nameToken.v}?: ${typeToken.v}.`);
         if (!accept(',') && peek().t !== 'ident') break;
       }
       expect('}', '"}" or ","');
@@ -3221,7 +3224,7 @@ function printCustomType(name, body) {
   if (body.properties !== undefined) {
     if (body.schema !== undefined) unprintable('it has both a schema and fields');
     if (!Array.isArray(body.properties)) unprintable('its fields are not a list');
-    const fields = body.properties.map((f) => `${sourceRef(f.name, 'field')}: ${sourceRef(f.propertyType, 'type')}`);
+    const fields = body.properties.map((f) => `${sourceRef(f.name, 'field')}${f.isOptional === true ? '?' : ''}: ${sourceRef(f.propertyType, 'type')}`);
     return tagSchema + sourceBlock(`${tag}record ${declared}`, fields);
   }
   const schema = body.schema;
@@ -6473,8 +6476,10 @@ min, max and average null; any false; all true. Without a where, any says whethe
 present, and all holds. A derived projection may hold one such value: { sum(P(x, *)) }.
 
 A projection may hold a record its handlers replace whole – set event.data.address, or
-set { street: event.data.street, city: event.data.city } naming every field. Setting one
-field at a time (composite state) is refused.
+set { street: event.data.street, city: event.data.city } naming every required field. Setting
+one field at a time (composite state) is refused. A record's field may be optional, record
+Address { street: string, floor?: integer }: an absent one reads null, and a scenario gives a
+record whole but for its optional fields.
 
 Scenarios sit in one scenarios { … } group at the end of the block of the command or
 projection they exercise, and name it:
@@ -6512,9 +6517,10 @@ tag type LoanId = string { pattern: "^l[0-9]+$" }
 @sensitive
 tag type EmailAddress = string { pattern: "^[^A-Z]*$" }
 enum BookStatus { Unknown, Available, Lent, Withdrawn }
-// A record is a composite value; every field is one required value.
+// A record is a composite value; every field is one value, and "name?:"
+// one that may be left out (null when absent) – never a tag.
 record Copy { bookId: BookId, isbn: Isbn }
-record Shelf { room: string, row: integer }
+record Shelf { room: string, row?: integer }
 
 // ---- Events ----
 // "tag" marks each value the event is tagged by; "name?:" is optional
@@ -6568,7 +6574,7 @@ projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
 }
 
 // A projection may hold a record, replaced whole: an event field of its
-// type, or "{ field: …, … }" naming every field. A read gives a field
+// type, or "{ field: …, … }" naming every required field. A read gives a field
 // of it, BookShelf(bookId).room.
 projection BookShelf (tag bookId: BookId): Shelf = null {
   on BookShelved => set { room: event.data.room, row: event.data.row }
