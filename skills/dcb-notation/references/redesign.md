@@ -28,6 +28,7 @@ Apply each move wherever it fits, and quote the evidence:
 - **Commands split per case** merge into one with branches when they decide on the same reads: `if … => emit A { … }  else if … => emit B { … }  else => reject "…"`. A case that takes other parameters keeps them optional, read inside `if x is not empty => …`.
 - **A running total kept beside per-item values** goes: read `sum(ReservationSeats(courseId, *))` over the per-item projection instead, and drop the fields events carried only to subtract from the total again.
 - **A value fixed at the point of decision** is stored there, so later commands read less.
+- **An event that changes a projection only sometimes**, such as a reassignment that leaves the status as it is, still conflicts with every command reading that projection. Where that matters, split the event.
 - **An expiry job that flips state** goes when the state only gates a rule: store the end, `expiresAt: now + 15m`, and read `where value.expiresAt > now` with `now` a parameter. A job stays only where something must happen at that time, outside the model, calling a command.
 - **Definitions no core rule reads** split out, along with their side effects: catalogue data, notes, emails.
 
