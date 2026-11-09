@@ -7046,7 +7046,7 @@ command Relocate(customerId: CustomerId, street: string, city: string) {
     eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
     const derived = page('CourseSeatsReserved');
     eq(derived.includes('sum(ReservationSeats(courseId, *))'), true, derived.slice(0, 400));
-    eq(derived.includes('Edit in code'), true, 'and the way to edit it');
+    eq(derived.includes('Edit in code'), false, 'edited through the collection\'s questions');
     const address = page('CustomerAddress');
     eq(address.includes('a record from the event…') && address.includes('street:') && !address.includes('Edit in code'), true,
       'a record built from the event\'s fields, field by field: ' + address.slice(0, 600));
@@ -7088,6 +7088,117 @@ command Relocate(customerId: CustomerId, street: string, city: string) {
     const city = model()['projection-definitions'].CustomerCity;
     sandbox.updateDefinition('projection-definition', id, 'CustomerCity', cleanProjectionBody(projectionDraftFrom(city)));
     eq(model()['projection-definitions'].CustomerCity, city, 'a field kept');
+    sandbox.applyModelSource(id, SEATS);
+  });
+
+  // A derived projection holding a collection (11.0) is edited by the
+  // collection's questions in a card under its side, set whole – the
+  // emission field's treatment – and goes through the same command.
+  check('a derived projection holds, computes with and compares a collection built on its page', () => {
+    const paint = () => {
+      const main = sandbox.document.createElement('div');
+      sandbox.renderProjections(model(), main);
+      return main;
+    };
+    const open = (name) => {
+      sandbox.state.view = 'projections';
+      sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+      sandbox.state.projTab = 'definition';
+      return paint();
+    };
+    const buttons = (label) => findAll(paint(), (n) => n.tag === 'button' && textOf(n) === label);
+    const withOption = (value) => findAll(paint(), (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option').some((o) => o.value === value));
+    const choose = (value, at = 0) => withOption(value).slice(at)[0].onchange({ target: { value } });
+    const save = () => sandbox.autoSaveProjectionDraft();
+    const stored = () => model()['projection-definitions'].CourseSeatsReserved;
+    const roundTrip = () => {
+      const text = sandbox.modelToSource(model());
+      const parsed = sandbox.parseModelSource(text);
+      eq(parsed.diagnostics, [], 'parses back: ' + text.slice(text.indexOf('derived projection'), text.indexOf('derived projection') + 200));
+      eq(parsed.collections['projection-definition'].CourseSeatsReserved, stored(), 'identical');
+      eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+      return text;
+    };
+    // Opened again and set: no loss.
+    const before = stored();
+    open('CourseSeatsReserved');
+    buttons('Edit')[0].onclick();
+    eq([sandbox.state.projDraft.body.derivedBuild.side, sandbox.state.projDraft.body.derivedBuild.collect.fn], ['leftHandSide', 'sum'], 'opens as its questions');
+    buttons('Set')[0].onclick();
+    save();
+    eq(stored(), before, 'no loss');
+    // Held as it is: an average where a value is over 2, offered once a
+    // type holds a number, and retyped one.
+    buttons('Edit')[0].onclick();
+    eq(withOption('average').length, 0, 'no type holds an average yet');
+    buttons('Cancel')[0].onclick();
+    sandbox.addDefinition('custom-type-definition', id, 'Ratio', { schema: { type: 'number' } });
+    open('CourseSeatsReserved');
+    buttons('Edit')[0].onclick();
+    choose('average');
+    buttons('+ where')[0].onclick();
+    const where = sandbox.state.projDraft.body.derivedBuild.collect.where[0];
+    choose('greaterThan');
+    Object.assign(where, { right: ' literal', rightText: '2' });
+    buttons('Set')[0].onclick();
+    save();
+    eq(stored().valueType, 'Ratio', 'an average is a number');
+    eq(stored().derived, { leftHandSide: { collect: 'average', read: { projection: 'ReservationSeats',
+      tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } } },
+    where: { leftHandSide: { instanceValue: true }, predicate: 'greaterThan', rightHandSide: 2 } } }, 'stored');
+    let text = roundTrip();
+    eq(text.includes('average(ReservationSeats(courseId, *) where value > 2)'), true, 'printed');
+    // Compared: `any(…) == true`, a collection on the left of a comparison.
+    open('CourseSeatsReserved');
+    choose('p:equals');
+    buttons('Edit')[0].onclick();
+    choose('any');
+    buttons('Set')[0].onclick();
+    findAll(paint(), (n) => n.tag === 'select' && findAll(n, (o) => o.tag === 'option').some((o) => o.value === ' literal')).slice(-1)[0]
+      .onchange({ target: { value: ' literal' } });
+    sandbox.state.projDraft.body.derived.rightHandSide = true;
+    save();
+    eq([stored().valueType, stored().derived.predicate, stored().derived.leftHandSide.collect, stored().derived.rightHandSide],
+      ['boolean', 'equals', 'any', true], 'a comparison of a collection');
+    roundTrip();
+    // Computed: a sum on the right of a subtraction, built afresh.
+    open('CourseSeatsReserved');
+    choose('o:subtract');
+    sandbox.state.projDraft.body.derived.leftHandSide = 100;
+    const right = withOption(' collect').slice(-1)[0];
+    right.onchange({ target: { value: ' collect' } });
+    eq(sandbox.state.projDraft.body.derivedBuild.side, 'rightHandSide', 'the right side built');
+    eq(withOption('any').length, 0, 'only what computes is offered');
+    choose('ReservationSeats', -1);
+    buttons('Set')[0].onclick();
+    save();
+    eq(stored().derived, { leftHandSide: 100, operator: 'subtract', rightHandSide: { collect: 'count',
+      read: { projection: 'ReservationSeats', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } } } } }, 'stored');
+    text = roundTrip();
+    eq(text.includes('100 - count(ReservationSeats(courseId, *))'), true, 'printed');
+    eq(textOf(open('CourseSeatsReserved')).includes('Edit in code'), false, 'and edited on its page');
+    // Unfinished, Set says so and nothing is written.
+    const kept = stored();
+    buttons('Edit')[0].onclick();
+    sandbox.state.projDraft.body.derivedBuild.collect.projection = '';
+    buttons('Set')[0].onclick();
+    save();
+    eq(stored(), kept, 'nothing written');
+    sandbox.state.projDraft = null;
+    sandbox.applyModelSource(id, SEATS);
+  });
+
+  // A where comparing the other way round has a spelling the questions
+  // do not write: it stays as the code view prints it.
+  check('a derived projection whose collection the questions do not ask stays with the way to the code view', () => {
+    sandbox.addDefinition('projection-definition', id, 'Odd', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: { collect: 'count', read: { projection: 'ReservationSeats', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } } },
+        where: { leftHandSide: 3, predicate: 'lessThan', rightHandSide: { instanceValue: true } } } },
+    });
+    eq(page('Odd').includes('Edit in code'), true, 'with the way to the code view');
+    sandbox.state.projDraft = null;
     sandbox.applyModelSource(id, SEATS);
   });
 
@@ -7730,7 +7841,7 @@ command Return(memberId: MemberId, bookId: BookId) {
     eq(room.includes('shelf.room') && !room.includes('Edit in code'), true, 'a record\'s field one hop in, picked in the row: ' + room.slice(0, 600));
     eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'].BookRoom.handlers, 'painting it changed nothing');
     const derived = page('LentCount');
-    eq(derived.includes('count(list(Lent(memberId, *)))') && derived.includes('Edit in code'), true, derived.slice(0, 600));
+    eq(derived.includes('count(list(Lent(memberId, *)))') && !derived.includes('Edit in code'), true, derived.slice(0, 600));
     sandbox.state.projDraft = null;
     const decision = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'Lend')));
     eq(decision.includes('count(Lent(memberId, *)) + count(bookIds)') && !decision.includes('Edit in code'), true,
@@ -7786,6 +7897,46 @@ command Return(memberId: MemberId, bookId: BookId) {
     const moved = textOf(paint('Move'));
     eq(moved.includes('a command builds no record') && !moved.includes('Edit in code'), true, moved.slice(0, 500));
     sandbox.state.openEvent = null;
+    sandbox.applyModelSource(id, LISTS);
+  });
+
+  check('a derived count of a list opens as its list, counted, and a list held as it is is typed one', () => {
+    const paint = () => {
+      const main = sandbox.document.createElement('div');
+      sandbox.renderProjections(model(), main);
+      return main;
+    };
+    const buttons = (label) => findAll(paint(), (n) => n.tag === 'button' && textOf(n) === label);
+    const before = model()['projection-definitions'].LentCount;
+    page('LentCount');
+    buttons('Edit')[0].onclick();
+    const build = sandbox.state.projDraft.body.derivedBuild;
+    eq([build.counted, build.collect.fn], [true, 'list'], 'counted');
+    eq(textOf(paint()).includes('count(…) of the list below'), true, 'said');
+    buttons('Set')[0].onclick();
+    sandbox.autoSaveProjectionDraft();
+    eq(model()['projection-definitions'].LentCount, before, 'no loss');
+    // A list held as it is: the open tag's type, a list.
+    buttons('Edit')[0].onclick();
+    delete sandbox.state.projDraft.body.derivedBuild.counted;
+    buttons('Set')[0].onclick();
+    sandbox.autoSaveProjectionDraft();
+    const body = model()['projection-definitions'].LentCount;
+    eq([body.valueType, body.isList, body.derived.leftHandSide.collect], ['BookId', true, 'list'], 'a list of book ids');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('derived projection LentCount (tag memberId: MemberId): BookId[] {\n  list(Lent(memberId, *))'), true, text.slice(text.indexOf('derived projection'), text.indexOf('derived projection') + 120));
+    const parsed = sandbox.parseModelSource(text);
+    eq(parsed.diagnostics, [], 'parses back');
+    eq(parsed.collections['projection-definition'].LentCount, body, 'identical');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    // A count of a list compared by == is the count predicate, the
+    // notation's one spelling of it.
+    const draft = projectionDraftFrom(before);
+    Object.assign(draft.derived, { predicate: 'equals', rightHandSide: 2 });
+    draft.valueType = 'boolean';
+    const compared = cleanProjectionBody(draft);
+    eq([compared.derived.predicate, compared.derived.leftHandSide.collect], ['countEquals', 'list'], 'the count predicate');
+    sandbox.state.projDraft = null;
     sandbox.applyModelSource(id, LISTS);
   });
 

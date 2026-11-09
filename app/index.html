@@ -11293,6 +11293,14 @@ function cleanProjectionShape(draft) {
           rightHandSide: operand(draft.derived.rightHandSide),
         };
     if (!computes && draft.derived.negate) derived.negate = true;
+    // `count(xs) == n`, `<`, `>` is the count predicate in the notation
+    // – the only spelling it has – so a count of a list compared so is
+    // stored as one, and prints.
+    const counted = { equals: 'countEquals', lessThan: 'countLessThan', greaterThan: 'countGreaterThan' }[derived.predicate];
+    if (!computes && counted && operandSource(derived.leftHandSide) === 'count') {
+      derived.leftHandSide = derived.leftHandSide.count;
+      derived.predicate = counted;
+    }
     return {
       ...parameters,
       // The one thing a predicate can yield is a boolean – stated here
@@ -11533,16 +11541,102 @@ function projectionCheckGuess(model, name) {
   }
 }
 
+// A side of a derived projection that is a collection function (11.0)
+// the collection questions write – `count(list(P(x, *)))` among them,
+// opened as its list with the count kept around it.
+function derivedCollectionSide(operand) {
+  if (collectionEditable(operand)) return true;
+  return operandSource(operand) === 'count' && collectionEditable(operand.count) && operand.count.collect === 'list';
+}
+
+// Whether the side editors write a derived side: what a picker offers,
+// or a collection the collection questions do.
+function derivedSideEditable(operand) {
+  return !operandBeyondEditors(operand) || derivedCollectionSide(operand);
+}
+
+// The collection functions a derived side may be: any of them held as
+// it is or compared, a number's to compute with. An average is a
+// number no built-in type holds, so it is offered once the model has a
+// type of number to hold it – or kept where it already is.
+function derivedCollectionFunctions(model, draft, kept = null) {
+  const fns = draft.derived.operator !== undefined ? ['count', 'sum', 'min', 'max', 'average'] : COLLECTION_FUNCTIONS;
+  return fns.filter((fn) => fn !== 'average' || fn === kept || !!numberTypeOf(model));
+}
+
+// The first type of the model that holds a number, not only an integer.
+function numberTypeOf(model) {
+  return allTypeNames(model).find((name) => numericBaseOf(model, name) === 'number') || null;
+}
+
+// A derived projection holding one value takes the type it yields
+// (`derivedOperandType`, model.js) unless its own type already holds
+// that – an average a type of number.
+function retypeHeld(model, draft) {
+  if (!derivedHolds(draft.derived)) return;
+  const held = derivedOperandType(model, draft.derived.leftHandSide, draft);
+  if (!held || (held.isList === !!draft.isList && sameValueKind(model, held.propertyType, draft.valueType))) return;
+  draft.valueType = held.propertyType === 'number' ? numberTypeOf(model) || draft.valueType : held.propertyType;
+  draft.isList = held.isList;
+}
+
+// What a derived projection's own parameters give a collection's
+// questions: the values in scope (`[operand, words]`) and the scope that
+// types them, as a command's payload would.
+function derivedCollectionScope(model, draft) {
+  const own = [
+    ...(draft.tags || []).filter((t) => t && t.name && t.tagType).map((t) => ({ name: t.name, propertyType: t.tagType, isList: false })),
+    ...(draft.arguments || []).filter((a) => a && a.name && a.propertyType).map((a) => ({ name: a.name, propertyType: a.propertyType, isList: false })),
+  ];
+  return {
+    values: own.map((p) => [JSON.stringify({ parameterName: p.name }), propertyWords(p.name)]),
+    slice: { reads: [], payload: own },
+    typeScope: { boundary: [], commandProperties: own, model },
+  };
+}
+
+// A derived side's collection, while it is built or opened again: its
+// questions in a card under the side, set whole (`Set`) – the emission
+// field's treatment (`fieldValueEditor`). Held as it is, the projection
+// takes the type it gives unless its own type already holds that.
+function derivedCollectionCard(model, draft, side) {
+  const open = draft.derivedBuild && draft.derivedBuild.side === side ? draft.derivedBuild : null;
+  if (!open) return null;
+  const { values, slice, typeScope } = derivedCollectionScope(model, draft);
+  const stageRow = (label, ...controls) => h('div', { class: 'rule-stage' },
+    h('div', { class: 'q' }, label), h('div', { class: 'adder' }, ...controls));
+  const fns = open.counted ? ['list'] : derivedCollectionFunctions(model, draft, open.kept);
+  const done = () => {
+    const collect = collectionFromDraft(open.collect);
+    if (collect === undefined) return toast('Answer every question first.', true);
+    draft.derived[side] = open.counted ? { count: collect } : collect;
+    delete draft.derivedBuild;
+    retypeHeld(model, draft);
+    render();
+    scheduleProjectionAutosave();
+  };
+  return h('div', { class: 'card arm-editor field-value' },
+    open.counted ? h('div', { class: 'muted tiny' }, 'count(…) of the list below') : null,
+    ...collectionStages(model, slice, values, typeScope, open.collect, stageRow, { fns }).filter(Boolean),
+    h('div', { class: 'adder' },
+      h('button', { class: 'btn tiny primary', onclick: done }, 'Set'),
+      h('button', { class: 'btn tiny ghost', onclick: () => { delete draft.derivedBuild; render(); } }, 'Cancel')));
+}
+
 // One side of a derived predicate or computation: another projection –
 // read by whatever this one is read by – one of this projection's own
-// parameters (10.0), or a typed value: on the right of a comparison, on
-// either side of a computation. Enum members are offered exactly when
-// the other side holds an enum, the same rule the rule editor follows.
+// parameters (10.0), a collection function over an open read (11.0,
+// `derivedCollectionCard`), or a typed value: on the right of a
+// comparison, on either side of a computation. Enum members are offered
+// exactly when the other side holds an enum, the same rule the rule
+// editor follows.
 function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
   const derived = draft.derived;
   const current = derived[side];
+  if (draft.derivedBuild && draft.derivedBuild.side === side) return [h('span', { class: 'muted tiny' }, 'a collection…')];
   const isRead = operandSource(current) === 'projection-read';
   const isParameter = operandSource(current) === 'parameter';
+  const isCollection = derivedCollectionSide(current);
   // This projection's own parameters, tags then arguments, as the
   // draft has them – `{name, type}`.
   const own = [
@@ -11557,12 +11651,18 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
       .map((name) => [name, readable(name), null, own.length ? { section: 'Projections' } : undefined]),
     ...own.map(ownChoice),
   ];
+  if (isCollection || openReadableProjections(model).length) {
+    options.push([COLLECT, 'a collection…', null, own.length ? { section: 'Values' } : undefined]);
+  }
   if (allowLiteral) options.push([LITERAL, 'a typed value…', null, own.length ? { section: 'Values' } : undefined]);
   const chosen = isRead ? (current.projection || '')
     : isParameter ? JSON.stringify({ parameterName: current.parameterName })
-      : (current === undefined ? '' : LITERAL);
+      : isCollection ? COLLECT
+        : (current === undefined ? '' : LITERAL);
+  const build = (collect, extra = {}) => { draft.derivedBuild = { side, collect, ...extra }; render(); };
 
   const nodes = [pick(options, chosen, (v) => {
+    if (v === COLLECT) return build(blankCollect(derivedCollectionFunctions(model, draft)[0]));
     if (v === LITERAL) derived[side] = '';
     else if (v.startsWith('{')) derived[side] = JSON.parse(v);
     else derived[side] = { projection: v };
@@ -11609,6 +11709,14 @@ function derivedSideEditor(model, draft, side, { allowLiteral } = {}) {
         }));
       }
     }
+  }
+
+  // A collection as it reads, and Edit opens its questions again.
+  if (isCollection) {
+    const counted = operandSource(current) === 'count';
+    nodes.push(h('code', { class: 'op' }, operandText(current)),
+      h('button', { class: 'btn tiny', onclick: () => build(collectionDraftFrom(counted ? current.count : current),
+        counted ? { counted: true } : { kept: current.collect }) }, 'Edit'));
   }
 
   if (!isRead && !isParameter && chosen === LITERAL) {
@@ -11983,8 +12091,12 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       ? h('div', { class: 'pfields' },
           // A comparison holds a boolean and nothing else; a computation
           // holds the number its author types it as – set from its
-          // operands when the operator is picked, editable after.
-          fieldLabel('type', draft.derived.operator !== undefined ? typePicker : h('span', { class: 'chip' }, 'boolean')),
+          // operands when the operator is picked, editable after – and
+          // one value held as it is (11.0) what it is typed as, a list
+          // said so.
+          fieldLabel('type', draft.derived.operator !== undefined || derivedHolds(draft.derived)
+            ? h('span', {}, typePicker, draft.isList ? h('span', { class: 'chip' }, 'list') : null)
+            : h('span', { class: 'chip' }, 'boolean')),
           fieldLabel('starts at', h('span', { class: 'muted tiny' }, '– its operands\' start')))
       : h('div', { class: 'pfields' },
           fieldLabel('type', typePicker),
@@ -12290,6 +12402,10 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
   }));
   const holdsRead = !!draft.derived && derivedHolds(draft.derived)
     && operandSource(draft.derived.leftHandSide) === 'projection-read' && !operandBeyondEditors({ ...draft.derived.leftHandSide, field: undefined });
+  // Or a collection function held as it is (11.0), built by the
+  // collection questions under the side.
+  const holdsCollection = !!draft.derived && derivedHolds(draft.derived) && derivedCollectionSide(draft.derived.leftHandSide);
+  const holdsOne = holdsRead || holdsCollection;
   const derivedChoice = !draft.derived ? '' : computes ? 'o:' + draft.derived.operator
     : derivedHolds(draft.derived) ? 'h:' : 'p:' + draft.derived.predicate;
   const derivedChoices = [
@@ -12303,8 +12419,10 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     if (v === 'h:') {
       // One read held as it is: its value, of its type.
       for (const key of ['predicate', 'operator', 'negate', 'rightHandSide']) delete derived[key];
+      if (draft.derivedBuild && draft.derivedBuild.side === 'rightHandSide') delete draft.derivedBuild;
       const read = operandSource(derived.leftHandSide) === 'projection-read' ? projectionsOf(model)[derived.leftHandSide.projection] : null;
       if (read) { draft.valueType = read.valueType; draft.isList = !!read.isList; }
+      else if (derivedCollectionSide(derived.leftHandSide)) retypeHeld(model, draft);
       render();
       return;
     }
@@ -12326,13 +12444,15 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
     render();
   };
 
-  // What the side editors cannot write (11.0) – one operand held as it
-  // is, a collection function, a record's field, time arithmetic – is
-  // shown as the code view writes it and edited there. Time arithmetic
-  // needs no literal to be there (`start + hold` over two parameters),
-  // and the operator picker here computes numbers: it would retype it.
-  const derivedInCode = !!draft.derived && ((derivedHolds(draft.derived) && !holdsRead)
-    || derivedOperands(draft.derived).some(operandBeyondEditors)
+  // What the side editors cannot write – one operand held as it is
+  // that is neither a read nor a collection, a collection the questions
+  // do not ask (over a grouped projection, with arguments), time
+  // arithmetic by another operator – is shown as the code view writes
+  // it and edited there. Time arithmetic needs no literal to be there
+  // (`start + hold` over two parameters), and the operator picker here
+  // computes numbers: it would retype it.
+  const derivedInCode = !!draft.derived && ((derivedHolds(draft.derived) && !holdsOne)
+    || !derivedOperands(draft.derived).every(derivedSideEditable)
     || (timeComputes && !['add', 'subtract'].includes(draft.derived.operator)));
   const derivedSection = !draft.derived ? null : derivedInCode ? projectionSection('derived',
     hint('proj-derived', 'Derived', [
@@ -12340,16 +12460,18 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
       'Their queries are its query, so reading it guards the append exactly as reading them would.',
     ]), null,
     h('div', { class: 'adder' }, h('code', { class: 'op' }, derivedText(draft.derived)),
-      codeViewButton('Edit what it derives in the code view – the editors here write one comparison or computation of two reads'))) : projectionSection('derived',
+      codeViewButton('Edit what it derives in the code view – the editors here write a comparison or computation of two values, or one read or collection held as it is'))) : projectionSection('derived',
     hint('proj-derived', 'Derived', [
       'One comparison or computation over other projections – read by this one\'s parameters – and its own parameters.',
       'A comparison holds a boolean; a computation (+, -, *, min, max) a number, null while a side is null.',
+      'A side may be a collection function over an open read, P(x, *); held as it is, the projection holds its result.',
       'Their queries are its query, so reading it guards the append exactly as reading them would.',
     ]), null,
     h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'leftHandSide', { allowLiteral: computes }),
       ...(holdsRead ? derivedFieldPicker(model, draft) : [])),
+    derivedCollectionCard(model, draft, 'leftHandSide'),
     h('div', { class: 'adder' },
-      computes || holdsRead ? null : h('label', { class: 'tiny muted' }, h('input', {
+      computes || holdsOne ? null : h('label', { class: 'tiny muted' }, h('input', {
         type: 'checkbox', checked: !!draft.derived.negate,
         onchange: (e) => {
           if (e.target.checked) draft.derived.negate = true;
@@ -12357,7 +12479,8 @@ function projectionFields(model, draft, { groupName: givenGroup, onNewType, onCh
         },
       }), ' not'),
       pick(derivedChoices, derivedChoice, pickDerived)),
-    holdsRead ? null : h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'rightHandSide', { allowLiteral: true })));
+    holdsOne ? null : h('div', { class: 'adder' }, ...derivedSideEditor(model, draft, 'rightHandSide', { allowLiteral: true })),
+    holdsOne ? null : derivedCollectionCard(model, draft, 'rightHandSide'));
 
   // ---- advanced ----
   //
