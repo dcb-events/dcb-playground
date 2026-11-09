@@ -3482,12 +3482,23 @@ command SetLabels(contractId: ContractId, labels?: string[]) {
 
   check('the values a scenario gives are held to their types\' constraints', () => {
     eq(statuses(swap(PARTIAL, 'given CustomerWasAdded { customerId: "cu1" }', 'given CustomerWasAdded { customerId: "x1" }')),
-      ['Given step 1 ("CustomerWasAdded") gives customerId "x1", which does not match ^cu[0-9]+$.', 'current'], 'a pattern in a given');
+      ['Given step 1 ("CustomerWasAdded") gives customerId "x1", which CustomerId does not admit: not matching ^cu[0-9]+$ (scenario values are held to their types since 11.0).', 'current'], 'a pattern in a given');
     eq(statuses(swap(PARTIAL, 'installment: 50, note: "n" }', 'installment: 0, note: "n" }'))[1],
-      'The When ("SetInstallment") gives installment 0, which is below 1.', 'a minimum in a when');
+      'The When ("SetInstallment") gives installment 0, which Installment does not admit: below 1 (scenario values are held to their types since 11.0).', 'a minimum in a when');
     eq(statuses(swap(PARTIAL, 'then InstallmentSet { contractId: "co1", actor: "cu1", installment: 50 }',
       'then InstallmentSet { contractId: "co1", actor: "cu1", installment: -5 }'))[1],
-      'Expected event 1 ("InstallmentSet") gives installment -5, which is below 1.', 'a minimum in a then');
+      'Expected event 1 ("InstallmentSet") gives installment -5, which Installment does not admit: below 1 (scenario values are held to their types since 11.0).', 'a minimum in a then');
+  });
+
+  check('a command emitting nothing is advised as a query, outside the model', () => {
+    const { model } = buildText(PARTIAL + `
+command MayEdit(contractId: ContractId, actor: CustomerId) {
+  require ContractOwner(contractId) == actor
+    else reject "Share does not permit this action"
+}
+`);
+    eq(advisedOtherwise(model()).map((a) => `${a.name}: ${a.message}`),
+      ['MayEdit: A command must publish at least one event: a command without an event is a query, outside the model.'], 'the reason given');
   });
 
   check('an optional list is allowed, and null is its absence', () => {
@@ -3682,9 +3693,9 @@ command AddThing(id: ThingId, items: Items, meta: Meta) {
   check('D1: an array value fits an array type, and an object an object type', () => {
     eq(runAll(ARRAYS), ['current'], 'the repro holds');
     eq(runAll(swap(ARRAYS, 'when AddThing { id: "t1", items: [1]', 'when AddThing { id: "t1", items: { a: 1 }')),
-      ['The When ("AddThing") gives items {"a":1}, which is no array.'], 'an object is no array');
+      ['The When ("AddThing") gives items {"a":1}, which Items does not admit: no array (scenario values are held to their types since 11.0).'], 'an object is no array');
     eq(runAll(swap(ARRAYS, 'meta: { a: 1 } }\n      then', 'meta: [1] }\n      then')),
-      ['The When ("AddThing") gives meta [1], which is no object.'], 'an array is no object');
+      ['The When ("AddThing") gives meta [1], which Meta does not admit: no object (scenario values are held to their types since 11.0).'], 'an array is no object');
   });
 
   check('D1: one check of a value against its type, shared by scenarios and replay', () => {

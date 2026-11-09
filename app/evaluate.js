@@ -1812,7 +1812,12 @@ function evScenarioPayload(model, properties, data, owner, where, tagged) {
   const untimely = payloadTimeProblems(model, properties, held)[0];
   if (untimely) fail(`${where} carries ${untimely.name}: ${untimely.problem}`);
   const refused = payloadValueProblems(model, properties, held)[0];
-  if (refused) fail(`${where} gives ${refused.name} ${JSON.stringify(refused.value)}, which ${refused.problem}.`);
+  // Named by its type, and said to be new: a 10.x scenario that ran
+  // may break here on nothing but a value its type never admitted.
+  if (refused) {
+    fail(`${where} gives ${refused.name} ${JSON.stringify(refused.value)}, which ${refused.type} does not admit: `
+      + `${refused.problem.replace(/^(is|has) /, '').replace(/^does not match /, 'not matching ')} (scenario values are held to their types since 11.0).`);
+  }
   if (names.size) out[EV_UNSPECIFIED] = { owner, names };
   return out;
 }

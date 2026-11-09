@@ -1851,7 +1851,8 @@ function fitsJsonType(type, value) {
 }
 
 // The values in a payload its types refuse – `[{name, value,
-// problem}]`, `problem` finishing "…, which <problem>." – a list's
+// problem, type}]`, `problem` finishing "…, which <problem>.", `type`
+// the type refusing it – a list's
 // elements and a record's fields included (11.0). The one check of a
 // value against its type: a scenario's values are held to it as a
 // stored event is (`replay`, dcb.js), since a value no type admits
@@ -1888,7 +1889,7 @@ function payloadValueProblems(model, properties, data) {
     if (value === null || value === undefined) return;
     const fields = compositeFieldsOf(model, typeName);
     if (fields) {
-      if (jsonTypeOf(value) !== 'object') { out.push({ name, value, problem: 'is no record' }); return; }
+      if (jsonTypeOf(value) !== 'object') { out.push({ name, value, problem: 'is no record', type: typeName }); return; }
       for (const field of fields) {
         const held = Object.prototype.hasOwnProperty.call(value, field.name) ? value[field.name] : undefined;
         checkHeld(`${name}.${field.name}`, field, held);
@@ -1896,13 +1897,13 @@ function payloadValueProblems(model, properties, data) {
       return;
     }
     const problem = scalar(typeName, value);
-    if (problem) out.push({ name, value, problem });
+    if (problem) out.push({ name, value, problem, type: typeName });
   };
   // A property's value: a list's each element, once it is a list.
   const checkHeld = (name, property, held) => {
     if (!property.isList) { check(name, property.propertyType, held); return; }
     if (held === null || held === undefined) return;
-    if (!Array.isArray(held)) { out.push({ name, value: held, problem: 'is no list' }); return; }
+    if (!Array.isArray(held)) { out.push({ name, value: held, problem: 'is no list', type: `${property.propertyType}[]` }); return; }
     for (const element of held) check(name, property.propertyType, element);
   };
   for (const property of properties || []) {
@@ -6428,7 +6429,7 @@ function validateCommandBody(model, body) {
   }
 
   if (!commandEmissions(body).length) {
-    throw new DomainError('A command must publish at least one event.');
+    throw new DomainError('A command must publish at least one event: a command without an event is a query, outside the model.');
   }
 }
 
