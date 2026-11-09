@@ -372,6 +372,18 @@ and prune what no longer holds.
   rather than sending to the code view, which prints the command as
   JSON. Adding a command-side record literal would be a language
   change, and a record the command was given or read already passes.
+  **A derived projection's side** offers `a collection…` beside the
+  reads, its parameters and a typed value, built in a card under the
+  side and set whole (`derivedCollectionCard`, index.html), its own
+  parameters the values in scope: any function held as it is or
+  compared, the numeric ones in a computation. Held as it is, it takes
+  the type the collection yields (`derivedOperandType`, model.js)
+  unless its own already holds that – a write would refuse it
+  otherwise. `average` yields a number no built-in type holds, so it is
+  offered once the model declares a type of number. A stored
+  `count(list(P(x, *)))` opens as its list, counted; compared by `==`,
+  `<` or `>` it is stored as the count predicate, the notation's one
+  spelling of it.
   A record value's field and a list's count are rows of the pickers
   beside the value (`valueRowsBeyondReads`), rules and emission fields
   alike. What the editors cannot say – a sum on the right of `+` / `-`,
@@ -1955,7 +1967,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   offers `+` and `-` only and keeps its time type when the operator
   changes: retyping it a number was the bug that once made it
   read-only. A derived projection may also hold one read's value
-  (`holds`), or one field of a record it reads.
+  (`holds`), one field of a record it reads, or a collection – typed
+  as what it holds, not as a comparison's boolean.
 
 ## Descriptions and notes
 
