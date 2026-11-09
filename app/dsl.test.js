@@ -2280,6 +2280,60 @@ command ClaimUsername(username: Username) {
     eq(stdout.includes('UsernameClaimed [Username:{username}]'), true, 'the boundary');
   });
 
+  check('the skill\'s check gives each read a line of its own, naming what reads it', () => {
+    const text = `model "Incidents"
+tag type IncidentId = string
+group Incident (tag incidentId: IncidentId) {
+  projection open: boolean = false {
+    on IncidentReported => set true
+  }
+
+  projection exported: boolean = false {
+    on IncidentExported => set true
+  }
+
+  projection title: string = null {
+    on IncidentReported => set event.data.title
+  }
+}
+untagged projection Exports: integer = 0 {
+  on IncidentExported => increment 1
+}
+event IncidentReported { tag incidentId: IncidentId, title: string }
+event IncidentExported { tag incidentId: IncidentId, title: string }
+command ExportIncident(incidentId: IncidentId) {
+  alias incident = Incident(incidentId)
+  alias exports = Exports()
+  require incident.open is true
+    else reject "Incident is not open"
+  if incident.exported is true => reject "Incident was already exported"
+  emit IncidentExported { incidentId, title: incident.title }
+}
+`;
+    const { stdout } = run('check', write('incidents.dcb', text));
+    const lines = stdout.slice(stdout.indexOf('ExportIncident:')).split('\n').slice(1, 5);
+    eq(lines, [
+      '  Incident.open ← "Incident is not open": IncidentReported [IncidentId:{incidentId}]',
+      '  Incident.exported ← "Incident was already exported": IncidentExported [IncidentId:{incidentId}]',
+      '  Incident.title ← emit: IncidentReported [IncidentId:{incidentId}]',
+      '  Exports ← serialises: IncidentExported [no tag]',
+    ], stdout);
+    // A read nothing consults has no reader, which check says as nothing.
+    const { model } = buildText(text);
+    const body = { properties: [{ name: 'incidentId', propertyType: 'IncidentId' }], steps: [],
+      boundary: [{ alias: 'idle', projection: 'Incident.open', tags: { incidentId: { parameterName: 'incidentId' } } }] };
+    eq(sandbox.boundaryReads(model(), body).map((read) => [read.label, read.readers]), [['Incident.open', []]], 'no reader');
+  });
+
+  check('the skill\'s check counts a cause many broken scenarios share', () => {
+    const text = swap(swap(MODEL, 'tag type Username = string', 'tag type Username = string { minLength: 2 }'),
+      'given UsernameClaimed { username: "a" }', 'given UsernameClaimed { username: "b" }');
+    const { status, stderr } = run('check', write('short.dcb', text));
+    eq(status, 1, 'exit');
+    eq(stderr.includes('which Username does not admit: shorter than 2 (scenario values are held to their types since 11.0)'), true, stderr);
+    eq(stderr.includes('\n\n2 broken scenarios: a value Username does not admit\n'), true, stderr);
+  });
+
   check('the skill\'s check fails what the playground only advises on', () => {
     const fails = (name, text, expected) => {
       const { status, stderr } = run('check', write(name, text));

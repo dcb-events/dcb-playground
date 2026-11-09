@@ -109,13 +109,27 @@ function coverageGaps(playground, model) {
   return gaps;
 }
 
+// Why a broken scenario cannot run, as one cause many share: a value
+// its type does not admit, a field read that was left out – or, where
+// nothing generalises, the reason itself.
+function brokenCause(reason) {
+  const refused = reason.match(/, which (.+?) does not admit: /);
+  if (refused) return `a value ${refused[1]} does not admit`;
+  const unspecified = reason.match(/^Reads unspecified field ("[^"]*") of (\S+)/);
+  if (unspecified) return `reads unspecified field ${unspecified[1]} of ${unspecified[2]}`;
+  return reason.replace(/^(Given step \d+|Expected event \d+) /, '');
+}
+
 function checkProblems(playground, file, { model, parsed }, cover) {
   const problems = [];
+  const causes = new Map();
   const report = playground.sourceScenarioReport(model, parsed);
   // "Drifted" is the playground's word for a scenario that once held. Here
   // it may never have: this run may be the first.
   for (const p of [...report.errors, ...report.warnings]) {
     problems.push(`${file}:${p.line}:${p.col} scenario: ${p.message.replace(/^Drifted – the model now does:/, 'Does not hold – the model does:')}`);
+    const broken = p.message.match(/^(?:Broken – |No outcome – cannot run: )([\s\S]*)$/);
+    if (broken) causes.set(brokenCause(broken[1]), (causes.get(brokenCause(broken[1])) || 0) + 1);
   }
   for (const a of playground.modelAdvisories(model)) problems.push(`${a.name}: ${a.message}`);
   for (const line of playground.modelToSource(model).split('\n')) {
@@ -130,7 +144,10 @@ function checkProblems(playground, file, { model, parsed }, cover) {
   const gaps = coverageGaps(playground, model);
   const required = gaps.filter(({ name }) => !cover || cover.includes(name));
   problems.push(...required.map(({ name, gap }) => `command ${name}: ${gap}`));
-  return { problems, otherGaps: gaps.filter((gap) => !required.includes(gap)) };
+  // A cause many scenarios share – a type's constraint 11.0 holds them
+  // to, mostly – is said once, counted, after the list.
+  const summary = [...causes].filter(([, count]) => count > 1).map(([cause, count]) => `${count} broken scenarios: ${cause}`);
+  return { problems, summary, otherGaps: gaps.filter((gap) => !required.includes(gap)) };
 }
 
 // Every `@unresolved` note (11.0), as `kind name: text`, the model's
@@ -165,13 +182,22 @@ function commandNotes(model) {
   return lines;
 }
 
+// Each command's boundary, one line per read (`boundaryReads`), so an
+// audit names the rule each line serves: the projection read, what
+// reads it – a rule by its message, `emit`, … or `nothing` – and its
+// query item. A group's members each get a line of their own, though
+// the store is asked them as one item.
 function boundaryLines(playground, model) {
   const lines = [];
   for (const [name, body] of Object.entries(model['command-definitions'])) {
     const summary = playground.boundarySummary(model, body);
     lines.push(`${name}: ${summary.words}; appends with tags ${summary.writes.join(', ') || 'none'}`);
-    for (const item of summary.items) {
-      lines.push(`  ${item.types.join(' | ') || 'any type'} [${item.tags.join(', ') || 'no tag'}]${item.fannedOut ? ' per element' : ''}`);
+    for (const read of playground.boundaryReads(model, body)) {
+      const readers = read.readers.length ? read.readers.join(', ') : 'nothing';
+      for (const item of read.items) {
+        lines.push(`  ${read.label}${item.via ? ` via ${item.via}` : ''} ← ${readers}: `
+          + `${item.types.join(' | ') || 'any type'} [${item.tags.join(', ') || 'no tag'}]${item.fannedOut ? ' per element' : ''}`);
+      }
     }
   }
   return lines;
@@ -381,11 +407,11 @@ function main() {
     console.log(PLAYGROUND_URL + '#model=' + zlib.gzipSync(JSON.stringify(playground.buildShareEnvelope(model, []))).toString('base64url')
       + (playground.experimentalFeatures(model).length ? '&experimental' : ''));
   } else {
-    const { problems: found, otherGaps } = checkProblems(playground, file, loaded, cover);
+    const { problems: found, summary, otherGaps } = checkProblems(playground, file, loaded, cover);
     const unresolved = unresolvedNotes(model);
     const incomplete = unresolved.length ? [`Model is incomplete: ${unresolved.length} unresolved`, ...unresolved.map((note) => `  ${note}`)] : [];
     const problems = [...loaded.problems, ...found, ...(strict && incomplete.length ? [incomplete.join('\n')] : [])];
-    if (problems.length) console.error(problems.join('\n') + `\n\n${problems.length} problem(s)\n`);
+    if (problems.length) console.error(problems.join('\n') + (summary.length ? `\n\n${summary.join('\n')}` : '') + `\n\n${problems.length} problem(s)\n`);
     if (otherGaps.length) console.log('Not covered, outside --cover:\n' + otherGaps.map(({ name, gap }) => `  command ${name}: ${gap}`).join('\n') + '\n');
     const notes = vocabularyNotes(model);
     if (notes.length) console.log('Worth a look:\n' + notes.map((note) => `  ${note}`).join('\n') + '\n');

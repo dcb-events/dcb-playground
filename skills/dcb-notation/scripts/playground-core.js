@@ -3956,6 +3956,121 @@ function boundarySummary(model, body) {
   return { items, queries, types, tags, anyType, writes: dcb.writes, words };
 }
 
+// The boundary read by read, for an audit (#8, `dcb.js check`): one
+// entry per read the command makes – a projection alias, each member
+// of a group alias read, each read in place – as `{label, items,
+// readers}`. `label` is the projection read, qualified for a group's
+// (`Course.capacity`); `items` its query items, as `deriveDcb` writes
+// them; `readers` what consults it, in written order: a rule or a
+// branch arm refusing by its message (`"Course is full"`), `if` for a
+// branch choosing what to emit, `emit`, `for each`, `tag of X` for a
+// read another read is tagged by, and `serialises` for an untagged
+// read nothing else consults. A read nothing consults has none. The
+// derived query is unchanged: a group's members still share one item
+// there (`groupBindingItems`), which is exactly what an audit cannot
+// see through.
+function boundaryReads(model, body) {
+  const reads = [];
+  const byKey = new Map();
+  const add = (key, label, items) => {
+    if (byKey.has(key)) return;
+    const read = { key, label, items, readers: [] };
+    byKey.set(key, read);
+    reads.push(read);
+  };
+  const memberKey = (alias, operand) => `member:${alias}:${JSON.stringify(canonicalOperand({ property: operand.property, arguments: operand.arguments }))}`;
+  const bindings = (body.boundary || []).filter((b) => b && b.alias);
+  for (const binding of bindings) {
+    if (binding.projection !== undefined) {
+      if (projectionsOf(model)[binding.projection]) add(`alias:${binding.alias}`, binding.projection, readItems(model, body, binding, { alias: binding.alias }));
+      continue;
+    }
+    if (binding.group === undefined) continue;
+    forEachCommandOperand(body, (operand) => {
+      if (operandSource(operand) !== 'alias-property' || operand.alias !== binding.alias || !operand.property) return;
+      const read = groupMemberRead(binding, operand);
+      if (!projectionsOf(model)[read.projection]) return;
+      const args = Object.values(operand.arguments || {});
+      add(memberKey(binding.alias, operand), read.projection + (args.length ? `(${args.map(operandText).join(', ')})` : ''),
+        readItems(model, body, read, { alias: binding.alias, group: binding.group }));
+    });
+  }
+  for (const { key, read } of inlineReads(body)) {
+    if (projectionsOf(model)[read.projection]) add(`inline:${key}`, read.projection, readItems(model, body, read, { alias: null, inline: key }));
+  }
+
+  // The reads an operand consults, nested ones included.
+  const keysOf = (operand, out = new Set()) => {
+    if (Array.isArray(operand)) { operand.forEach((one) => keysOf(one, out)); return out; }
+    switch (operandSource(operand)) {
+      case 'alias-property': {
+        const binding = bindings.find((b) => b.alias === operand.alias);
+        if (binding && binding.projection !== undefined) out.add(`alias:${operand.alias}`);
+        else if (binding && operand.property) out.add(memberKey(operand.alias, operand));
+        Object.values(operand.arguments || {}).forEach((one) => keysOf(one, out));
+        break;
+      }
+      case 'projection-read':
+        out.add(`inline:${readKey(operand)}`);
+        [...readTagOperands(operand), ...Object.values(operand.arguments || {})].forEach((one) => keysOf(one, out));
+        break;
+      case 'collection':
+        keysOf(operand.read, out);
+        for (const leaf of conditionLeaves(operand.where && typeof operand.where === 'object' ? operand.where : null)) {
+          conditionOperands(leaf).forEach((one) => keysOf(one, out));
+        }
+        break;
+      case 'arithmetic': keysOf(operand.leftHandSide, out); keysOf(operand.rightHandSide, out); break;
+      case 'count': keysOf(operand.count, out); break;
+      case 'each': keysOf(operand.each, out); break;
+      case 'record': Object.values(operand.record || {}).forEach((one) => keysOf(one, out)); break;
+      default: break;
+    }
+    return out;
+  };
+  const note = (keys, reader) => {
+    for (const key of keys) {
+      const read = byKey.get(key);
+      if (read && !read.readers.includes(reader)) read.readers.push(reader);
+    }
+  };
+  const conditionKeys = (condition) => {
+    const out = new Set();
+    for (const leaf of conditionLeaves(condition)) conditionOperands(leaf).forEach((one) => keysOf(one, out));
+    return out;
+  };
+  forEachStep(commandSteps(body), (step) => {
+    const kind = stepKind(step);
+    if (kind === 'rule') note(conditionKeys(step.condition), step.rejection === undefined ? 'require' : JSON.stringify(step.rejection));
+    // An arm's condition decides its own arm and, not holding, every
+    // arm after it: an `else => reject` refuses on what came before.
+    if (kind === 'branch') {
+      const arms = stepArms(step);
+      const refusalOf = (arm) => arm.steps.find((one) => stepKind(one) === 'reject');
+      arms.forEach((arm, at) => {
+        if (arm.condition === undefined) return;
+        const keys = conditionKeys(arm.condition);
+        note(keys, refusalOf(arm) ? JSON.stringify(refusalOf(arm).reject) : 'if');
+        for (const later of arms.slice(at + 1)) if (refusalOf(later)) note(keys, JSON.stringify(refusalOf(later).reject));
+      });
+    }
+    if (kind === 'emit') for (const operand of Object.values(step.parameters || {})) note(keysOf(operand), 'emit');
+    if (kind === 'loop') note(keysOf(step.in), 'for each');
+  });
+  // A read whose value tags another: what that one is read for.
+  for (const binding of bindings) {
+    const consulted = new Set();
+    for (const operand of bindingOperands(binding)) keysOf(operand, consulted);
+    const labels = reads.filter((read) => read.items.some((item) => item.alias === binding.alias)).map((read) => read.label);
+    for (const label of labels.length ? labels : [binding.projection || binding.group]) note(consulted, `tag of ${label}`);
+  }
+  for (const read of reads) {
+    const projection = projectionsOf(model)[read.label];
+    if (!read.readers.length && read.key.startsWith('alias:') && projection && !projectionTagParams(projection).length) read.readers.push('serialises');
+  }
+  return reads;
+}
+
 // The boundary as the store is asked it (_DCB queries, shown_), and the
 // one place that says how a command's cycle runs:
 //
