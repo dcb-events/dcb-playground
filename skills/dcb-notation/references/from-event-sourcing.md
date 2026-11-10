@@ -10,6 +10,7 @@ List from the code, each with where it was found:
 
 - every stored event type, with its fields, its stream, and any tags or metadata it is written with
 - every command handler, and the aggregate or decider it runs against
+- every endpoint that only reads, such as a download or a "may I" check, as a query with the projections it reads: it is no command, since it appends nothing; one the app records, such as an audit entry, is a command emitting that event
 - every place a decision is enforced outside the aggregate: unique database indexes, reservation tables, sagas and process managers, checks against read models
 - every rule that reads another aggregate's state, with the identifier it reads by
 
@@ -20,10 +21,11 @@ Done when every event type and handler in the code appears in the list.
 Every guard becomes one entry: a thrown error, a rejected result, a validation, an index, a compensating step. For each, read what actually protects it today, then classify it:
 
 - **Rule**: a business rule, which becomes a `require`. A rule protected only eventually or only by a read model is still a rule, on the command that enforces it today; say so in the report.
+- **External**: a check on data the model does not hold, such as a block list, a payment provider or a capability of the caller. The layer around the commands makes it before dispatching, so it is no `require`: record it as `@external("…")` on the command, and the command takes no parameter for its result. The acting user is an ordinary parameter (`actor`), since every parameter comes from that layer; where a privilege depends on state inside the boundary and must not race, make one command per scope.
 - **Accidental**: a side effect of the aggregate's shape. The stream's version check makes every command on an aggregate conflict with all the others, whether or not any rule needs it. Record what stops being serialized, and which commands that frees.
 - **Question**: the code does not settle it. A disabled guard, a catch that swallows a failure and a comment contradicting the code all belong here.
 
-A step doing two things gets one entry for each: a saga's check is a rule, and its catch-all a question. The notation has no way to react to an event, so the compensating step itself is unresolved, on the command it would run.
+A step doing two things gets one entry for each: a saga's check is a rule, and its catch-all a question. The notation has no way to react to an event. A step that only fans one decision out to related things, such as a process manager ending every share of a deleted customer, becomes a `for each` in the command that triggers it; say in the report that the cascade now commits with that decision instead of after it. Any other compensating step is unresolved, on the command it would run.
 
 Then look for what is missing, since no guard marks it: a handler that checks nothing where a rule seems expected, and what an event should do to related things (the seats of a cancelled order). Each is a question.
 
@@ -42,13 +44,19 @@ Done when every proposed field has its count, and every question the history can
 ## Mapping
 
 - **Events**: names and fields unchanged.
-- **Commands**: one per handler. Merging handlers, such as making a saga's two steps one strict command, is a proposal: it goes under _Asking_ and in the suggested redesigns.
+- **Commands**: one per handler. Merging handlers, such as making a saga's two steps one strict command, is a proposal: it goes under _Asking_ and in the suggested redesigns. A handler looping over identifiers it was given, such as marking a list of notifications read, stays one command with `for each` over its list parameter; one that rejects the whole batch over a single element the code would skip is a question. An event the code fills with the identifiers it found, such as every open line of an order, takes them from an open read: `lineIds: list(LineOpen(orderId, *))`.
 - **Existing tags**: keep them. `@tagSchema` carries a prefix and a value, and `{type}` in it renders the type's name, so a stored `concert=c1` on a `ConcertId` is `@tagSchema("concert={value}")`.
 - **A stream key**: the natural tag, when the event holds it as a field.
-- **An identifier with no stored tag**: stays a plain `string`, since `check` requires a tag type to be tagged. Tagging it is a proposal, listed under migration cost.
-- **An identifier a command reads by and also stores**: the Inventory's cross-aggregate rules are these. A read needs the tag type and a plain `string` field cannot take it, so tagging the event is the clean answer. Each is a question in the first round. Without a yes, the command takes two parameters with the same value, `course: CourseId` to read and `courseId: string` to emit, and the report lists them.
-- **Field types**: the closest match to the code, `integer` only where the code guarantees whole numbers. Any narrowing is listed under migration cost.
-- **Aggregate state**: one projection per fact a rule reads. Fields no rule reads stay out.
+- **An identifier with no stored tag**: a field of a tag type is always one of its event's tags, and `check` refuses it otherwise; there is no untagged identifier field. Backfilling the tag on the stored events is the clean answer and cheaper than a field backfill: propose it, listed under migration cost. Without a yes, it stays a plain `string`, and the report lists it as a workaround.
+- **An identifier a command reads by and also stores**: the Inventory's cross-aggregate rules are these. A read needs the tag type and a plain `string` field cannot take it, so tagging the event is the clean answer. Each is a question in the first round. Without a yes, the command takes two parameters with the same value, `course: CourseId` to read and `courseId: string` to emit, and the report lists them as a workaround to remove once the tag is backfilled.
+- **Field types**: the closest match to the code, `integer` only where the code guarantees whole numbers. A timestamp the code stores is `datetime`, and `replay` reports stored values without an offset, which then need one backfilled; a length of time is `duration`, stored as ISO 8601 (`PT15M`). Any narrowing is listed under migration cost.
+- **Time**: the clock the code reads becomes a parameter, `now: datetime`, and a check against it a rule: `require OptInIssuedAt(token) + 24h > now`. A boolean the caller computed from the time (`isExpired`) becomes that rule over the stored datetime. Event metadata time (a recorded-at) is not readable by the model, so a rule depending on it is a question: store the time as event data, or mark it unresolved. Expiry jobs and cron stay outside, calling commands.
+- **An event naming two identifiers of one type**, such as a transfer's sender and receiver, or a share's owner and invitee: keep it as stored and tag it with both. The projection's handler says which side it is on, `on MoneyTransferred { if event.data.from == accountId => decrement event.data.amount  if event.data.to == accountId => increment event.data.amount }`, so no role tag types or split events are needed. Adding a role tag type is a proposal, only for a narrower boundary. Values keep their type everywhere: a handler sets a projection only from a field of the projection's own type, so a `CustomerId` never fills a `ShareInviteeId`, and there is no cast. A projection whose only job was to turn one type into another goes, and so does a record projection kept only to reach a field of a stored record: a handler takes it directly, `set event.data.signUp.emailAddress`.
+- **Aggregate state**: one projection per fact a rule reads. Fields no rule reads stay out. A value the aggregate keeps per item, such as seats per reservation, is a projection tagged by both identifiers, and a rule reads its total as `sum(ReservationSeats(courseId, *))`. A field the code added to an event only so a running total can be subtracted again is then not needed, and neither is its backfill. A composite the aggregate sets field by field becomes one projection per fact; one replaced whole may stay a record.
+- **Scenarios**: the app's tests are evidence for them, but its fixtures fill every field. A scenario gives only what its outcome depends on, every tag included: `given CustomerWasAdded { customerId: "cu1" }` wherever the name and email do not matter. No generator for full payloads is needed. Identifiers with a fixed format, such as a uuid, use one scheme throughout, varying only the last digits, and the same value for the same role in every scenario.
+- **Events the code no longer writes**: an event type still in the store but written by no handler today stays in the model, marked `@deprecated` with a `///` line saying what replaced it, and keeps its handlers. `check` advises on every other event nothing emits.
+- **Personal data in tags**: a tag the store already hashes (an email, a name) is a `@sensitive` tag type with the format as a `pattern`; the hashing stays in the adapter, and the normalisation (lower case, trim) in the layer around the commands. A `// model:` comment explaining the hash becomes the marker.
+- **Notes in the code**: what the code's comments say about a rule goes on the definition as a `///` description; a reading taken where the code was silent as `@assumption("…")`.
 - **Names**: say what the fact means in the domain, `CourseTemplateKnown` for an id that stays taken after removal. The model has events, tags and projections, so the old implementation's aggregates, streams and sagas appear only in the report.
 
 The notation requires a tag to be a property of its event. So a tag or stream key that lives only in metadata, or a tag format `@tagSchema` cannot carry, cannot be modelled faithfully. Each is a question, offered with its choices, such as adding the property.
@@ -67,7 +75,7 @@ Write each question so someone who has not read the code can answer it:
 
 Trace a claim about why a change is needed through the code or the history before you make it.
 
-If nobody can answer, change nothing. Model what stays faithful, leave the rest out, and mark **unresolved** each rule that depends on it and each question about a rule, including the missing ones. A question no rule hangs on stays open without counting. A conversion with anything unresolved is incomplete, whatever `check` says, and the hand-over says so first.
+If nobody can answer, change nothing. Model what stays faithful, leave the rest out, and mark **unresolved** each rule that depends on it and each question about a rule, including the missing ones: `@unresolved("…")` on the command (or the event, projection or type) it concerns, naming the rule in its text. A question no rule hangs on stays open without counting. A conversion with anything unresolved is incomplete: `check` says "Model is incomplete: N unresolved", and the hand-over says so first.
 
 ## Steps 3 to 6, then the report
 

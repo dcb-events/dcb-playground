@@ -3,7 +3,7 @@
 An in-browser modeling tool for designing and testing event-sourced systems
 built on [Dynamic Consistency Boundaries](https://dcb.events) (DCB).
 
-You build a _DCB Model_ — custom types, events, entities, projections and
+You build a _DCB Model_ — custom types, events, projections (optionally in groups) and
 commands — drive commands against a hypothetical event log, and see which
 consistency boundary each command derives: which events it has to read, and
 which append condition protects its decision.
@@ -44,9 +44,6 @@ Everything runs in the browser; the model and its history are kept in
 `localStorage`. WebMCP needs a real origin, so it does not work from
 `file:`.
 
-If a scripted handler in a model hangs the page, append `?safe` to the URL
-to load the model with scripts disabled.
-
 ## Tests
 
 Plain Node, no test runner:
@@ -63,7 +60,7 @@ node app/dsl.test.js
 - [`app/`](app/) — the application: plain classic scripts, one HTML page,
   one stylesheet. Each file's header comment documents its role.
 - [`dcb-model.schema.json`](dcb-model.schema.json) — JSON Schema of the
-  model interchange format (`https://dcb.events/schemas/model/v10.json`).
+  model interchange format (`https://dcb.events/schemas/model/v11.json`).
 - [`fixtures/`](fixtures/) — models with authored scenarios, read by the
   tests only.
 - [`skills/dcb-notation/`](skills/dcb-notation/) — a skill for authoring
@@ -88,8 +85,8 @@ Or copy the folder into your agent's skills directory.
 ## Dependencies
 
 None at runtime besides [Monaco](https://microsoft.github.io/monaco-editor/)
-(0.52.2), which is vendored under `app/vendor/monaco/` and loaded only when a
-scripted handler's editor is shown. A plain textarea is the fallback.
+(0.52.2), which is vendored under `app/vendor/monaco/` and loaded only when the
+code view is shown. A plain textarea is the fallback.
 
 ## Contributing
 

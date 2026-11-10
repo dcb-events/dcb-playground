@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v10.json",
-  "dcbModelVersion": "10.0",
+  "$schema": "https://dcb.events/schemas/model/v11.json",
+  "dcbModelVersion": "11.0",
   "name": "Content based decisions (derived projection)",
   "customTypeDefinitions": [
     {
@@ -93,7 +93,7 @@
       ]
     }
   ],
-  "entityDefinitions": [],
+  "groupDefinitions": [],
   "projectionDefinitions": [
     {
       "name": "DocumentLifecycle",
@@ -223,24 +223,24 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "DocumentLifecycle",
-            "tags": {
-              "documentId": {
-                "parameterName": "id"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DocumentLifecycle",
+              "tags": {
+                "documentId": {
+                  "parameterName": "id"
+                }
               }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "enumMember": "NonExistent"
             }
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "NonExistent"
-          },
           "rejection": "Document already exists"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "DocumentAdded",
           "parameters": {
@@ -268,45 +268,47 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "DocumentLifecycle",
-            "tags": {
-              "documentId": {
-                "parameterName": "docId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DocumentLifecycle",
+              "tags": {
+                "documentId": {
+                  "parameterName": "docId"
+                }
               }
-            }
-          },
-          "predicate": "equalsAny",
-          "rightHandSide": [
-            {
-              "enumMember": "Draft"
             },
-            {
-              "enumMember": "Published"
-            }
-          ],
+            "predicate": "equalsAny",
+            "rightHandSide": [
+              {
+                "enumMember": "Draft"
+              },
+              {
+                "enumMember": "Published"
+              }
+            ]
+          },
           "rejection": "Document is not editable"
         },
         {
-          "leftHandSide": {
-            "projection": "DocumentCurrentText",
-            "tags": {
-              "documentId": {
-                "parameterName": "docId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DocumentCurrentText",
+              "tags": {
+                "documentId": {
+                  "parameterName": "docId"
+                }
               }
-            }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "parameterName": "text"
+            },
+            "negate": true
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "parameterName": "text"
-          },
-          "negate": true,
           "rejection": "Text is unchanged"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "TextUpdated",
           "parameters": {
@@ -331,41 +333,43 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "DocumentLifecycle",
-            "tags": {
-              "documentId": {
-                "parameterName": "docId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DocumentLifecycle",
+              "tags": {
+                "documentId": {
+                  "parameterName": "docId"
+                }
               }
-            }
-          },
-          "predicate": "equalsAny",
-          "rightHandSide": [
-            {
-              "enumMember": "Draft"
             },
-            {
-              "enumMember": "Published"
-            }
-          ],
+            "predicate": "equalsAny",
+            "rightHandSide": [
+              {
+                "enumMember": "Draft"
+              },
+              {
+                "enumMember": "Published"
+              }
+            ]
+          },
           "rejection": "Document cannot be published"
         },
         {
-          "leftHandSide": {
-            "projection": "DocumentHasPendingChanges",
-            "tags": {
-              "documentId": {
-                "parameterName": "docId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DocumentHasPendingChanges",
+              "tags": {
+                "documentId": {
+                  "parameterName": "docId"
+                }
               }
-            }
+            },
+            "predicate": "isTrue"
           },
-          "predicate": "isTrue",
           "rejection": "No changes to publish"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "DocumentPublished",
           "parameters": {
@@ -395,29 +399,29 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "DocumentLifecycle",
-            "tags": {
-              "documentId": {
-                "parameterName": "docId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "DocumentLifecycle",
+              "tags": {
+                "documentId": {
+                  "parameterName": "docId"
+                }
               }
-            }
-          },
-          "predicate": "equalsAny",
-          "rightHandSide": [
-            {
-              "enumMember": "Draft"
             },
-            {
-              "enumMember": "Published"
-            }
-          ],
+            "predicate": "equalsAny",
+            "rightHandSide": [
+              {
+                "enumMember": "Draft"
+              },
+              {
+                "enumMember": "Published"
+              }
+            ]
+          },
           "rejection": "Document cannot be archived"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "DocumentArchived",
           "parameters": {

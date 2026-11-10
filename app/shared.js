@@ -9,8 +9,7 @@
 // and what those events change. The model layer stores none of that as
 // a unit; it is derived here, from the definitions. The overview pages
 // read the same material across every command at once – the coupling
-// matrix, and each entity's status as a lifecycle machine – and those
-// derivations live here too.
+// matrix and the event model – and those derivations live here too.
 // ============================================================
 
 // ---------- DOM ----------
@@ -72,240 +71,31 @@ function run(fn) {
   }
 }
 
-// ---------- the scripted-handler editor ----------
+// ---------- Monaco, loaded lazily ----------
 //
-// The one part of a model the tooling neither runs nor checks is the
-// scripted handler – but what its code can *see* is still knowable
-// from the definitions. This turns that knowledge into TypeScript: a
-// synthesized preamble typing `state`, `event` and `args` for one
-// handler, fed to Monaco (the app's one vendored dependency, pinned
-// by generate-vendor-monaco.js) so typing gets completion, hover and
-// squiggles that actually understand the model.
-//
-// The synthesis is the tested part, and it is pure. The choices it
-// bakes in:
-//   - every named scalar custom type is *branded* (`string & { __type:
-//     'CourseId' }`), so comparing a CourseId to a StudentId – or to a
-//     bare string literal – draws the no-overlap squiggle;
-//   - enums become literal unions, so `===` completes the legal values;
-//   - `state` is inferred from the initial state but stays *loose*
-//     (`& { [key: string]: any }` at every level), because a script
-//     may legitimately grow keys the initial state never had;
-//   - a dangling type or event reference types as `any` – a defective
-//     model must still load and edit, the same rule as everywhere.
-//
-// Each handler's preamble is its own file-scope (`export {};` makes
-// the model a module), which is what lets several editors with
-// different `event` types coexist in one TypeScript project. The
-// preamble ends by opening a `__check(` call whose parameter is what
-// a handler must return – the projection's value type (through
-// `exposes` when the state is bookkeeping around one exposed field),
-// allowing the initial state's type too when it differs, a null start
-// being how "nullable" is spelled. Brands are widened to their bases
-// there: code *produces* values, and no expression can produce a
-// brand. The call also makes a bare object literal read as an
-// expression, exactly as evaluate.js compiles it. All of it is
-// prepended to the author's code in the editor model and hidden from
-// view; only the code between the wrapper lines is ever written back.
-//
-// Monaco itself loads lazily, the first time a scripted handler row
-// is actually on screen: models without scripts never pay for it, and
-// if the assets are missing the row falls back to the plain textarea
-// it always was. Editor instances are cached across repaints (the
-// page rebuilds its whole DOM per render) and disposed once their row
-// is gone.
+// The code view's editor is Monaco (the app's one vendored dependency,
+// pinned by generate-vendor-monaco.js). It loads the first time the
+// code view is on screen: a page that never opens it never pays for
+// it, and if the assets are missing the view falls back to the plain
+// textarea it always was (`codeEditorElement`, index.html).
 
-// --- the synthesis: model + script + handler → TypeScript preamble ---
+let monacoPhase = 'unloaded'; // → 'loading' → 'ready' | 'failed'
 
-function scriptTsKey(name) {
-  return /^[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*$/u.test(name) ? name : JSON.stringify(name);
-}
-
-// A value's own JSON, safe inside the /** … */ it is hinted in.
-function scriptTsHint(value) {
-  const text = String(JSON.stringify(value)).replace(/\*\//g, '*\\/');
-  return text.length > 32 ? text.slice(0, 31) + '…' : text;
-}
-
-// The TypeScript shape of a JSON value – how `state` is typed from
-// the initial state. Objects stay walkable but loose; arrays type
-// their elements when the elements are uniform primitives and give up
-// honestly (`any[]`) when they are not.
-function scriptTsOfValue(value, indent) {
-  if (value === null || value === undefined) return 'any';
-  if (typeof value === 'string') return 'string';
-  if (typeof value === 'number') return 'number';
-  if (typeof value === 'boolean') return 'boolean';
-  if (Array.isArray(value)) {
-    if (!value.length) return 'any[]';
-    const parts = [...new Set(value.map((element) =>
-      (element !== null && typeof element === 'object') ? 'any' : scriptTsOfValue(element)))];
-    if (parts.includes('any')) return 'any[]';
-    return (parts.length === 1 ? parts[0] : '(' + parts.join(' | ') + ')') + '[]';
-  }
-  const pad = ' '.repeat((indent || 0) + 2);
-  const fields = Object.entries(value).map(([key, inner]) =>
-    pad + '/** starts at ' + scriptTsHint(inner) + ' */\n'
-    + pad + scriptTsKey(key) + ': ' + scriptTsOfValue(inner, (indent || 0) + 2) + ';');
-  if (!fields.length) return '{ [key: string]: any }';
-  return '{\n' + fields.join('\n') + '\n' + ' '.repeat(indent || 0) + '} & { [key: string]: any }';
-}
-
-// What a handler must return, as an inline TypeScript type. This is
-// return position, so brands widen to their bases – an expression can
-// compare branded values it was given, but never mint one – while
-// enums stay literal unions and composites stay structural.
-function scriptReturnType(model, body) {
-  const inline = (typeName, depth) => {
-    if (typeName === 'boolean') return 'boolean';
-    if (typeName === 'integer') return 'number';
-    if (typeName === 'string') return 'string';
-    const definition = (model['custom-type-definitions'] || {})[typeName];
-    if (!definition || depth > 2) return 'any';
-    if (Array.isArray(definition.properties)) {
-      return '{ ' + definition.properties
-        .map((field) => scriptTsKey(field.name) + ': ' + inline(field.propertyType, depth + 1))
-        .join('; ') + ' }';
-    }
-    const members = definition.schema && Array.isArray(definition.schema.enum)
-      && definition.schema.enum.length ? definition.schema.enum : null;
-    if (members) return members.map((member) => JSON.stringify(member)).join(' | ');
-    return ({ string: 'string', integer: 'number', number: 'number', boolean: 'boolean' })[
-      definition.schema && definition.schema.type] || 'string';
-  };
-
-  let value = inline(body.valueType, 0);
-  if (value === 'any') return 'any';
-  if (body.isList) value = (/[|&]/.test(value) ? '(' + value + ')' : value) + '[]';
-  // With `exposes`, the state is bookkeeping around one exposed field:
-  // the value type constrains that field, the rest is the script's own.
-  const script = body.script || {};
-  if (script.exposes) {
-    value = '{ ' + scriptTsKey(script.exposes) + ': ' + value + ' } & { [key: string]: any }';
-  }
-  // Where the projection starts is also a legal thing to hand back – a
-  // null start is how "nullable" is spelled.
-  const initial = script.initialState;
-  const initialTs = initial === null || initial === undefined ? 'null' : scriptTsOfValue(initial);
-  return initialTs === value || initialTs === 'any' ? value : value + ' | ' + initialTs;
-}
-
-// What one scripted handler can see, as the TypeScript preamble its
-// editor model is prefixed with. Ends opening the `__check(` call
-// that both types the returned state and makes the code parse as the
-// expression evaluate.js runs; the widget hides everything up to and
-// including that line.
-function scriptHandlerPreamble(model, body, handler) {
-  const script = body.script || {};
-  const lines = ['export {};'];
-  const aliased = new Map(); // typeName → true once its alias line is out
-
-  const resolveType = (typeName) => {
-    if (typeName === 'boolean') return 'boolean';
-    if (typeName === 'integer') return 'number';
-    if (typeName === 'string') return 'string';
-    const body = (model['custom-type-definitions'] || {})[typeName];
-    if (body === undefined || !/^[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*$/u.test(typeName)) return 'any';
-    if (aliased.has(typeName)) return aliased.get(typeName) ? typeName : 'any';
-    aliased.set(typeName, false);
-    let rhs;
-    if (Array.isArray(body.properties)) {
-      rhs = '{ ' + body.properties
-        .map((field) => scriptTsKey(field.name) + ': ' + resolveType(field.propertyType))
-        .join('; ') + ' }';
-    } else {
-      const members = body.schema && Array.isArray(body.schema.enum) && body.schema.enum.length
-        ? body.schema.enum : null;
-      if (members) {
-        rhs = members.map((member) => JSON.stringify(member)).join(' | ');
-      } else {
-        const base = ({ string: 'string', integer: 'number', number: 'number', boolean: 'boolean' })[
-          body.schema && body.schema.type] || 'string';
-        rhs = base + ' & { readonly __type: ' + JSON.stringify(typeName) + ' }';
-      }
-    }
-    aliased.set(typeName, true);
-    lines.push('type ' + typeName + ' = ' + rhs + ';');
-    return typeName;
-  };
-
-  const propertyType = (property) => {
-    let type = resolveType(property.propertyType);
-    if (property.isList) type += '[]';
-    if (property.isOptional) type += ' | null';
-    return type;
-  };
-
-  const event = (model['event-definitions'] || {})[handler.event];
-  const eventLines = [];
-  if (event) {
-    // Read-only, as at run time (`evFrozenEvent`, evaluate.js): the
-    // editor flags a write before the run refuses it.
-    eventLines.push('declare const event: {');
-    eventLines.push('  readonly type: ' + JSON.stringify(handler.event) + ';');
-    eventLines.push('  readonly data: {');
-    for (const property of event.properties || []) {
-      if (property.isOptional) {
-        eventLines.push('    /** optional – null when the event carries no value */');
-      } else if (property.propertyType === 'integer') {
-        eventLines.push('    /** integer */');
-      }
-      eventLines.push('    readonly ' + scriptTsKey(property.name) + ': ' + propertyType(property) + ';');
-    }
-    eventLines.push('  };');
-    eventLines.push('};');
-  } else {
-    eventLines.push('declare const event: { readonly type: string; readonly data: { readonly [key: string]: any } };');
-  }
-
-  const argFields = projectionSlots(body).filter((argument) => argument.name);
-  const argsType = argFields.length
-    ? '{ ' + argFields
-        .map((argument) => scriptTsKey(argument.name) + ': ' + resolveType(argument.propertyType))
-        .join('; ') + ' }'
-    : '{}';
-
-  // Alias lines were pushed by the resolve calls above; the declares
-  // come after them, whatever order the resolving happened in.
-  lines.push(...eventLines);
-  lines.push('declare const state: ' + scriptTsOfValue(script.initialState, 0) + ';');
-  lines.push('declare const args: ' + argsType + ';');
-  lines.push('declare function __check(nextState: ' + scriptReturnType(model, body) + '): void;');
-  lines.push('__check(');
-  return lines.join('\n');
-}
-
-// --- the widget: a cached Monaco editor per handler row ---
-
-// Rows are keyed by the draft object being edited (stable across
-// repaints – the page state holds it) plus the handler's index.
-const scriptEditorDraftIds = new WeakMap();
-let scriptEditorDraftSeq = 0;
-function scriptEditorKey(draft, index) {
-  if (!scriptEditorDraftIds.has(draft)) scriptEditorDraftIds.set(draft, ++scriptEditorDraftSeq);
-  return scriptEditorDraftIds.get(draft) + ':' + index;
-}
-
-const SCRIPT_EDITOR_LINE = 17;
-const SCRIPT_EDITOR_MAX_LINES = 16;
-let scriptEditorPhase = 'unloaded'; // → 'loading' → 'ready' | 'failed'
-const scriptEditors = new Map();
-
-function ensureScriptEditorLoaded() {
-  if (scriptEditorPhase !== 'unloaded') return;
+function ensureMonacoLoaded() {
+  if (monacoPhase !== 'unloaded') return;
   // No real head to load into (the test stub) – the textarea is it.
   if (typeof document === 'undefined' || !document.head || !document.head.appendChild) {
-    scriptEditorPhase = 'failed';
+    monacoPhase = 'failed';
     return;
   }
-  scriptEditorPhase = 'loading';
+  monacoPhase = 'loading';
   // The stock worker bootstrap resolves its `vs` root from its own
   // URL, so everything stays under vendor/monaco.
   window.MonacoEnvironment = {
     getWorkerUrl: () => 'vendor/monaco/vs/base/worker/workerMain.js',
   };
   const fail = () => {
-    scriptEditorPhase = 'failed';
+    monacoPhase = 'failed';
     if (typeof render === 'function') render();
   };
   document.head.appendChild(h('link', { rel: 'stylesheet', href: 'vendor/monaco/vs/editor/editor.main.css' }));
@@ -313,26 +103,7 @@ function ensureScriptEditorLoaded() {
   loader.onload = () => {
     window.require.config({ paths: { vs: 'vendor/monaco/vs' } });
     window.require(['vs/editor/editor.main'], () => {
-      const ts = monaco.languages.typescript;
-      ts.typescriptDefaults.setCompilerOptions({
-        target: ts.ScriptTarget.ES2020,
-        lib: ['es2020'],
-        allowNonTsExtensions: true,
-        noEmit: true,
-        // Null is a value here (the model's one spelling of "no
-        // value"), so it must be visible to the checker: without this
-        // it is assignable to everything and every `| null` in the
-        // synthesized types would be decoration.
-        strictNullChecks: true,
-      });
-      ts.typescriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: false,
-        noSyntaxValidation: false,
-        // No unused-variable hints: the preamble declares all three
-        // roots whether or not this handler reads them.
-        noSuggestionDiagnostics: true,
-      });
-      scriptEditorPhase = 'ready';
+      monacoPhase = 'ready';
       if (typeof render === 'function') render();
     }, fail);
   };
@@ -340,215 +111,18 @@ function ensureScriptEditorLoaded() {
   document.head.appendChild(loader);
 }
 
-// The element for one handler's code. Before Monaco is up (or if it
-// never comes up) this is the plain textarea it always was; after,
-// the cached editor, its content resynced when the draft changed
-// underneath it (undo, a switched event) but left alone mid-typing.
-function scriptCodeEditor(key, spec) {
-  if (scriptEditorPhase !== 'ready') {
-    ensureScriptEditorLoaded();
-    return h('textarea', {
-      class: 'mono', rows: Math.min(16, String(spec.code || '').split('\n').length + 1),
-      value: spec.code || '',
-      oninput: (e) => spec.onCode(e.target.value),
-    });
-  }
-  let entry = scriptEditors.get(key);
-  if (!entry) {
-    entry = createScriptEditorEntry(key);
-    scriptEditors.set(key, entry);
-  }
-  entry.spec = spec;
-  if (entry.preamble !== spec.preamble
-      || (!entry.editor.hasTextFocus() && entry.currentCode() !== (spec.code || ''))) {
-    entry.load(spec.preamble, spec.code || '');
-  }
-  monaco.editor.setTheme(isDark() ? 'vs-dark' : 'vs');
-  return entry.root;
-}
-
-// Editors whose row a repaint dropped. Called after every paint; an
-// entry whose root did not make it back into the document is done.
-function sweepScriptEditors() {
-  if (scriptEditorPhase !== 'ready') return;
-  for (const [key, entry] of scriptEditors) {
-    if (entry.root.isConnected) continue;
-    entry.editor.dispose();
-    entry.model.dispose();
-    scriptEditors.delete(key);
-  }
-}
-
-function scriptEditorFont() {
+function monacoFont() {
   const declared = getComputedStyle(document.documentElement).getPropertyValue('--mono');
   return (declared && declared.trim()) || 'ui-monospace, Menlo, Consolas, monospace';
-}
-
-function createScriptEditorEntry(key) {
-  const root = h('div', { class: 'script-editor' });
-  const uri = monaco.Uri.parse('inmemory://scripted/' + encodeURIComponent(key) + '.ts');
-  const model = monaco.editor.getModel(uri) || monaco.editor.createModel('', 'typescript', uri);
-  const editor = monaco.editor.create(root, {
-    model,
-    automaticLayout: true,
-    minimap: { enabled: false },
-    lineNumbers: 'off',
-    glyphMargin: false,
-    folding: false,
-    lineDecorationsWidth: 6,
-    scrollBeyondLastLine: false,
-    overviewRulerLanes: 0,
-    hideCursorInOverviewRuler: true,
-    renderLineHighlight: 'none',
-    wordWrap: 'on',
-    wordBasedSuggestions: 'off',
-    // The suggest widget must escape this small, clipped container.
-    fixedOverflowWidgets: true,
-    contextmenu: false,
-    links: false,
-    fontSize: 11,
-    lineHeight: SCRIPT_EDITOR_LINE,
-    fontFamily: scriptEditorFont(),
-    tabSize: 2,
-    padding: { top: 6, bottom: 6 },
-    scrollbar: { alwaysConsumeMouseWheel: false },
-  });
-  const entry = { root, editor, model, spec: null, preamble: '', headerLines: 0, loading: false };
-
-  // `setHiddenAreas` is internal API, stable here because the vendored
-  // version is pinned. Without it the wrapper lines stay visible –
-  // degraded, not broken.
-  const hideWrapper = (force) => {
-    if (typeof editor.setHiddenAreas !== 'function') return;
-    // setValue drops the view's hidden areas while the widget keeps
-    // its cached ranges, so re-applying identical ranges is swallowed
-    // as a no-op – clear first when the model was reloaded wholesale.
-    if (force) editor.setHiddenAreas([]);
-    const last = model.getLineCount();
-    editor.setHiddenAreas([
-      new monaco.Range(1, 1, entry.headerLines, 1),
-      new monaco.Range(last, 1, last, 1),
-    ]);
-  };
-
-  const resize = () => {
-    const height = Math.min(editor.getContentHeight(), SCRIPT_EDITOR_MAX_LINES * SCRIPT_EDITOR_LINE + 12);
-    root.style.height = Math.max(height, 2 * SCRIPT_EDITOR_LINE + 12) + 'px';
-  };
-  // Content height reflects the hidden areas only once the view has
-  // taken them in, and how soon that is is not promised – measure a
-  // frame after any wholesale load, and once more for good measure.
-  const resizeSoon = () => {
-    requestAnimationFrame(resize);
-    setTimeout(resize, 80);
-  };
-
-  entry.currentCode = () => {
-    const all = model.getLinesContent();
-    return all.slice(entry.headerLines, all.length - 1).join('\n');
-  };
-
-  entry.load = (preamble, code) => {
-    entry.loading = true;
-    entry.preamble = preamble;
-    entry.headerLines = preamble.split('\n').length;
-    model.setValue(preamble + '\n' + code + '\n)');
-    hideWrapper(true);
-    // setValue parks the cursor at 1:1 – inside the hidden preamble,
-    // where typing would land invisibly. Park it at the code's end.
-    const lastCodeLine = model.getLineCount() - 1;
-    editor.setPosition({ lineNumber: lastCodeLine, column: model.getLineMaxColumn(lastCodeLine) });
-    resizeSoon();
-    entry.loading = false;
-  };
-
-  // The wrapper is hidden, not protected – a select-all delete can
-  // still take it out. Whatever survived is the author's code; put the
-  // frame back around it. Asynchronously, and that is load-bearing:
-  // inside the change event the editing command has not yet placed its
-  // final cursor, so a synchronous setValue would be re-cursored into
-  // the hidden preamble and the next keystroke would land there.
-  // What of the author's code survived a wrapper-damaging edit. Walks
-  // the preamble line by line rather than as one prefix: a deletion at
-  // the code's edge merges a code line into the last preamble line,
-  // and a whole-prefix comparison would then mistake the entire
-  // preamble for code and paste it into view.
-  const recoverCode = (text) => {
-    const preambleLines = entry.preamble.split('\n');
-    const lines = text.split('\n');
-    let at = 0;
-    while (at < preambleLines.length && at < lines.length && lines[at] === preambleLines[at]) at += 1;
-    let rest = lines.slice(at);
-    // A merged boundary line: the preamble part survives as a prefix.
-    if (at < preambleLines.length && rest.length && rest[0].startsWith(preambleLines[at])) {
-      rest = [rest[0].slice(preambleLines[at].length), ...rest.slice(1)];
-    }
-    let code = rest.join('\n');
-    if (code.endsWith('\n)')) code = code.slice(0, -2);
-    else if (code.endsWith(')')) code = code.slice(0, -1); // merged into the last code line
-    return code;
-  };
-
-  let restoreQueued = false;
-  const queueRestore = () => {
-    if (restoreQueued) return;
-    restoreQueued = true;
-    setTimeout(() => {
-      restoreQueued = false;
-      const text = model.getValue();
-      const head = entry.preamble + '\n';
-      if (text.startsWith(head) && text.endsWith('\n)')) return; // undo beat us to it
-      entry.load(entry.preamble, recoverCode(text));
-      if (entry.spec) entry.spec.onCode(entry.currentCode());
-      root.dispatchEvent(new Event('input', { bubbles: true }));
-    }, 0);
-  };
-
-  // Better than repairing: the two deletions that would eat into the
-  // wrapper – Backspace at the code's first character, Delete at its
-  // last – simply do nothing, the same as at a document edge.
-  editor.onKeyDown((e) => {
-    if (e.keyCode !== monaco.KeyCode.Backspace && e.keyCode !== monaco.KeyCode.Delete) return;
-    const selection = editor.getSelection();
-    if (!selection || !selection.isEmpty()) return;
-    const at = selection.getStartPosition();
-    const lastCodeLine = model.getLineCount() - 1;
-    const atStart = at.lineNumber === entry.headerLines + 1 && at.column === 1;
-    const atEnd = at.lineNumber === lastCodeLine && at.column === model.getLineMaxColumn(lastCodeLine);
-    if ((e.keyCode === monaco.KeyCode.Backspace && atStart)
-        || (e.keyCode === monaco.KeyCode.Delete && atEnd)) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  });
-
-  model.onDidChangeContent(() => {
-    if (entry.loading) return;
-    const text = model.getValue();
-    const head = entry.preamble + '\n';
-    if (!text.startsWith(head) || !text.endsWith('\n)')) return queueRestore();
-    hideWrapper(); // the last line's number moves as lines come and go
-    if (entry.spec) entry.spec.onCode(entry.currentCode());
-    // A real, bubbling event: the page's delegated autosave must see
-    // an edit here exactly as it would see one typed in a field.
-    root.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  editor.onDidContentSizeChange(resize);
-
-  // Escape belongs to the editor (dismissing its own widgets), never
-  // to the page's close-the-form handler while typing code.
-  root.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); });
-
-  return entry;
 }
 
 // ---------- experimental features ----------
 //
 // Everything that is DCB is always on screen: types, events, projections,
 // the consistency boundary each command derives. What the examples on
-// dcb.events never need – entities and their lifecycles, scripted
-// projections, guarded emissions, the overview pages
-// (`EXPERIMENTAL_FEATURES`, model.js) – waits behind this flag.
+// dcb.events never need – the overview pages, and any construct staged
+// there (`EXPERIMENTAL_FEATURES`, model.js; none is, since 11.0) –
+// waits behind this flag.
 //
 // It gates *authoring*, never reading: a model that already uses an
 // experimental feature still loads, renders and evaluates it, and the
@@ -601,9 +175,9 @@ const ISSUES_URL = 'https://github.com/dcb-events/dcb-events.github.io/issues/ne
   + '?labels=playground&title=%5BPlayground%5D%20';
 const NOTATION_ANCHORS = [
   'model', 'comments', 'literals', 'annotations', 'json', 'tag-type', 'type', 'enum', 'record', 'event',
-  'projection', 'on', 'event-data', 'successor', 'current-value', 'entity', 'lifecycle', 'require',
-  'derived', 'script', 'command', 'read', 'read-entity', 'fan-out', 'optional-read', 'with', 'emit',
-  'emit-when', 'consistency-boundary', 'scenario', 'projection-scenario',
+  'projection', 'on', 'event-data', 'successor', 'require',
+  'derived', 'command', 'read', 'fan-out', 'with', 'emit',
+  'consistency-boundary', 'scenario', 'projection-scenario',
 ];
 
 function notationReference(anchor) {
@@ -755,7 +329,7 @@ function takeFirstChange(appended) {
   return changed;
 }
 
-// A model with nothing in it at all – no entities, no events, no
+// A model with nothing in it at all – no types, no events, no
 // commands. Everything downstream has to cope with that, because it is
 // where a real model actually starts.
 //
@@ -970,24 +544,22 @@ async function runAsync(fn) {
 
 // ---------- the slice ----------
 
-// Every entity property that handles this event – i.e. everything the
-// event changes. This is the link the original interface made you go
-// and find for yourself, one entity at a time.
-//
-// A property is a binding, so what handles the event is the projection
-// behind it; `property` carries both halves, since a reader wants the
-// name the entity calls it and the fold that answers for it.
+// Every grouped projection that handles this event – i.e. everything
+// the event changes that a group gives a name. `group` and the local
+// name (`property.name`) are what a reader wants to see, `projectionName`
+// the qualified name the fold answers to (`Course.capacity`).
 function effectsOf(model, eventName) {
   const out = [];
-  for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
-    for (const binding of entity.properties || []) {
-      const projection = model['projection-definitions'][(binding || {}).projection];
+  for (const [groupName, group] of Object.entries(model['group-definitions'] || {})) {
+    for (const inner of groupProjections(group)) {
+      const projectionName = qualifiedProjectionName(groupName, inner.name);
+      const projection = projectionsOf(model)[projectionName];
       for (const handler of (projection && projection.handlers) || []) {
         if (handler && handler.event === eventName) {
           out.push({
-            entity: entityName,
-            property: { ...binding, ...projection },
-            projectionName: binding.projection,
+            group: groupName,
+            property: { ...projection, name: inner.name },
+            projectionName,
             handler,
           });
         }
@@ -998,42 +570,25 @@ function effectsOf(model, eventName) {
 }
 
 // Every command that publishes this event – zero, one, or many. An
-// event has no single owner the way an entity does, so this answers
-// "who records this" instead of a boundary binding.
+// event has no single owner, so this answers "who records this"
+// instead of a boundary binding.
 function publishersOf(model, eventName) {
   const out = [];
   for (const [name, body] of Object.entries(model['command-definitions'])) {
-    for (const emission of body.publishes || []) {
-      if (emission && emission.name === eventName) out.push({ command: name, emission });
+    for (const emission of commandEmissions(body)) {
+      if (emission.name === eventName) out.push({ command: name, emission });
     }
   }
   return out;
 }
 
-// Every projection that handles this event and is *not* bound as some
-// entity's property – the ones `effectsOf` does not already name,
-// listed beside it rather than twice.
+// Every top-level projection that handles this event – the ones
+// `effectsOf` does not already name, listed beside it rather than twice.
 function projectionsHandling(model, eventName) {
   const out = [];
   for (const [name, body] of Object.entries(model['projection-definitions'])) {
-    if (boundAs(model, name).length) continue;
     for (const handler of body.handlers || []) {
       if (handler && handler.event === eventName) out.push({ projection: name, body, handler });
-    }
-  }
-  return out;
-}
-
-// Every entity property binding this projection – `{entity, property}`
-// each. Empty for one no entity binds, which is what everywhere else
-// calls a standalone projection.
-function boundAs(model, projectionName) {
-  const out = [];
-  for (const [entityName, entity] of Object.entries(model['entity-definitions'])) {
-    for (const binding of entity.properties || []) {
-      if (binding && binding.projection === projectionName) {
-        out.push({ entity: entityName, property: binding.name });
-      }
     }
   }
   return out;
@@ -1058,17 +613,31 @@ function scenariosReferencingEvent(model, eventName) {
 function sliceOf(model, commandName) {
   const body = model['command-definitions'][commandName];
   if (!body) return null;
+  const emitted = (emission) => ({
+    emission,
+    event: model['event-definitions'][emission.name] || null,
+    effects: effectsOf(model, emission.name),
+    standalone: projectionsHandling(model, emission.name),
+  });
   return {
     name: commandName,
     body,
     payload: body.properties || [],
     reads: body.boundary || [],
-    rules: body.conditions || [],
-    emits: (body.publishes || []).map((emission) => ({
-      emission,
-      event: model['event-definitions'][emission.name] || null,
-      effects: effectsOf(model, emission.name),
-      standalone: projectionsHandling(model, emission.name),
+    // The rules and emissions written at the top, as the pages edit
+    // them (`commandLists`) – a rule flat, its message beside its
+    // condition – and the branches and loops apart (11.0), edited in
+    // place by step path. `allEmits` is every
+    // emission any run may reach, the branches' and loops' too – what
+    // the command records; `loopEmits` the names a loop emits.
+    rules: commandLists(body).conditions,
+    branches: commandSteps(body).filter((step) => ['branch', 'loop'].includes(stepKind(step))),
+    emits: topLevelSteps(body, 'emit').map(emitted),
+    allEmits: commandEmissions(body).map(emitted),
+    loopEmits: uniq(commandLoops(body).flatMap((loop) => {
+      const names = [];
+      forEachStep(loopSteps(loop), (step) => { if (stepKind(step) === 'emit' && step.name) names.push(step.name); });
+      return names;
     })),
     projections: projectionsRead(body),
     // Grouped by the query to the store each read actually happens in,
@@ -1076,7 +645,6 @@ function sliceOf(model, commandName) {
     // its length. Derived here so nothing has to author it.
     rounds: deriveRounds(body),
     dcb: deriveDcb(model, body),
-    coverage: coverageIssues(model, body),
   };
 }
 
@@ -1103,13 +671,13 @@ function couplingMatrix(model) {
 
 function couplingRow(model, name, events) {
   const slice = sliceOf(model, name);
-  const produces = new Set((slice.body.publishes || []).map((e) => e && e.name).filter(Boolean));
+  const produces = new Set(commandEmissions(slice.body).map((e) => e.name).filter(Boolean));
   // event type -> Set of readable "where from" text.
   const via = {};
   for (const item of slice.dcb.items) {
     if (!item.types.length) continue;
     const binding = !item.projection && (slice.body.boundary || []).find((b) => b.alias === item.alias);
-    const entity = binding && model['entity-definitions'][binding.entity];
+    const group = binding && binding.group;
     for (const eventType of item.types) {
       if (!via[eventType]) via[eventType] = new Set();
       if (item.projection) {
@@ -1117,7 +685,7 @@ function couplingRow(model, name, events) {
         continue;
       }
       const sources = (item.readProperties || []).filter((propName) => {
-        const projection = entity && entityPropertyTarget(model, binding.entity, propName).projection;
+        const projection = group && projectionsOf(model)[qualifiedProjectionName(group, propName)];
         return projection && (projection.handlers || []).some((h) => h && h.event === eventType);
       });
       if (sources.length) sources.forEach((propName) => via[eventType].add(memberWords(item.alias, propName)));
@@ -1274,207 +842,337 @@ function couplingClusters(matrix) {
 
 // ---------- lifecycles ----------
 //
-// Each entity's lifecycle read as a state machine. Nothing here is
-// authored – every part is derived from definitions that already exist,
-// through the designation `model.js` resolves: an entity's `lifecycle`
-// names one of its own properties, and `lifecycleOf` flattens the two
-// spellings that property may have (a boolean, or an enum) into one
-// list of states.
+// How a projection's value moves over time. Nothing here is authored
+// or stored: every part is worked out from definitions that already
+// exist, which is why a lifecycle is a view of a projection and not a
+// construct of the language (it was one, an entity's designated
+// property, until 11.0 – see
+// docs/research/2026-10-28-lifecycles-for-enum-projections.md).
 //
-//   states       `lifecycleOf`'s states – an enum's members, or
-//                `false`/`true` for the two-state boolean case;
-//   transitions  the lifecycle projection's declared handlers – a
-//                handler that sets a state is an arrow into it, and the
-//                arrow starts wherever the commands publishing its
-//                event are allowed to run;
-//   commands     every command binding the entity, placed by its
-//                conditions over the lifecycle.
+// Where the values are finite – an enum, a boolean – it is a state
+// machine (`lifecycleMachine`). Anywhere else there are no states to
+// draw, only movements (`lifecycleMovements`): each handler, the
+// commands appending its event, and their rules over the value. No
+// states are invented for those – "empty / not empty" or "0 / more"
+// would be buckets the model does not state.
 //
-// A command with no condition over a lifecycle it touches is
-// *unguarded*: nothing refuses it at any state. That is a fact worth
-// surfacing, not papering over – an unguarded transition is drawn from
-// the initial state only as a convention, and flagged as such, so a
-// missing guard stays visible. It is also why the two-state machines
-// are on this page at all rather than filtered off it: a command that
-// creates a thing without checking that it does not exist yet is
-// exactly this bug, and it is commonest in the simplest machine.
+// The machine:
+//   states       the enum's members, in declared order – with `null`
+//                first when the projection can hold no state at all
+//                (starts at null, or a handler sets it);
+//   transitions  the projection's handlers: one that sets a member is
+//                an arrow into it, starting wherever the commands
+//                publishing its event are allowed to run;
+//   per state    the commands allowed to run there, read off their
+//                rules over this projection.
+//
+// A command that moves the projection with nothing guarding it is
+// *unguarded*, and stays visible rather than papered over: its arrow is
+// drawn from the initial state only as a convention, and flagged. What
+// cannot be read – a state taken from event data, a rule comparing to a
+// parameter, a command reading two instances at once – is said beside
+// the machine, never guessed into an arrow.
 
-// Which of `lifecycle`'s states a condition allows, or `null` when this
-// condition says nothing readable about it.
-//
-// An enum is read off `equals` against a member reference and
-// `equalsAny` against a list whose every entry is one – a bare literal
-// in the list makes it unreadable rather than guessed at. A boolean is
-// read off the unary `isTrue`/`isFalse` and off `equals` against a bare
-// `true`/`false`. Any other predicate leaves it unread.
-function lifecycleAllowedStates(condition, lifecycle, other) {
-  const states = lifecycle.states;
-  const only = (keep) => (condition.negate
-    ? states.filter((state) => !keep.includes(state))
-    : states.filter((state) => keep.includes(state)));
+// What a projection's lifecycle is made of, or null when it has none:
+// `{kind: 'enum' | 'boolean', states}` for a machine, `{kind:
+// 'movements'}` otherwise. A derived projection has no handlers of its
+// own, so it has none.
+function lifecycleOf(model, body) {
+  if (!body || derivedOf(body)) return null;
+  if (body.isList) return { kind: 'movements' };
+  const members = enumMembersFor(model, body.valueType);
+  if (members && members.every((member) => typeof member === 'string')) {
+    return { kind: 'enum', states: [...members] };
+  }
+  if (!members && literalKindOf(model, body.valueType) === 'boolean') return { kind: 'boolean', states: [false, true] };
+  return { kind: 'movements' };
+}
 
-  if (lifecycle.isBoolean) {
-    if (condition.predicate === 'isTrue') return only(['true']);
-    if (condition.predicate === 'isFalse') return only(['false']);
-    if (condition.predicate === 'equals' && typeof other === 'boolean') {
-      return only([String(other)]);
-    }
-    return null;
+// A literal state an operand names: an enum member, a boolean, or
+// `null` – the empty state. `undefined` when the operand names no state
+// this can read.
+function lifecycleStateOperand(operand, states) {
+  if (operand === null) return null;
+  if (typeof operand === 'boolean') return states.includes(operand) ? operand : undefined;
+  if (operandSource(operand) === 'enum-member' && states.includes(operand.enumMember)) return operand.enumMember;
+  return undefined;
+}
+
+// Which states a condition over the projection allows, given the other
+// side; null when the condition says nothing readable. `equals` against
+// a state and `equalsAny` against a list of them are read, negated or
+// not – an empty list too, which allows nothing, as it evaluates – and
+// a boolean's `isTrue` / `isFalse`.
+function lifecycleAllowedStates(condition, states, other) {
+  const only = (keep) => states.filter((state) => keep.includes(state) !== !!condition.negate);
+  if (condition.predicate === 'isTrue' && states.includes(true)) return only([true]);
+  if (condition.predicate === 'isFalse' && states.includes(false)) return only([false]);
+  if (condition.predicate === 'equals') {
+    const state = lifecycleStateOperand(other, states);
+    return state === undefined ? null : only([state]);
   }
-  if (condition.predicate === 'equals' && operandSource(other) === 'enum-member') {
-    return only([String(other.enumMember)]);
-  }
-  if (condition.predicate === 'equalsAny' && Array.isArray(other)
-      && other.length && other.every((entry) => operandSource(entry) === 'enum-member')) {
-    return only(other.map((entry) => String(entry.enumMember)));
-  }
-  // An empty `equalsAny` list is still read: "one of nothing" allows no
-  // state, which is what it evaluates to – unreadable would claim the
-  // opposite.
-  if (condition.predicate === 'equalsAny' && Array.isArray(other) && !other.length) {
-    return only([]);
+  if (condition.predicate === 'equalsAny' && Array.isArray(other)) {
+    const named = other.map((entry) => lifecycleStateOperand(entry, states));
+    return named.includes(undefined) ? null : only(named);
   }
   return null;
 }
 
-// The states `body`'s conditions allow `entityName`'s lifecycle to be
-// in, read off every condition over an alias binding that entity.
-// `states: null` means unguarded: the command binds the entity but no
-// condition constrains its lifecycle. Several conditions (or several
-// aliases) intersect: each is one more thing that must hold.
-function lifecycleConstraint(model, body, entityName, lifecycle) {
-  const aliases = new Set((body.boundary || [])
-    .filter((binding) => binding && binding.entity === entityName)
-    .map((binding) => binding.alias));
-  if (!aliases.size) return { binds: false, states: null };
+// The instance of `projectionName` an operand reads, as a key – the
+// read's tags, or its binding's – or null when it does not read it.
+// `each` says the read fans out, so no one instance is meant.
+function lifecycleReadOf(operand, body, projectionName) {
+  const instance = (tags) => {
+    const entries = Object.entries(tags && typeof tags === 'object' && !Array.isArray(tags) ? tags : {});
+    return { key: JSON.stringify(entries), each: entries.some(([, value]) => operandSource(value) === 'each') };
+  };
+  const source = operandSource(operand);
+  // A collection function over an open read (11.0) reads every present
+  // instance – no one instance is meant, as with `each`.
+  if (source === 'collection') {
+    const read = operandRead(operand);
+    return read && read.projection === projectionName ? { key: JSON.stringify(readTagEntries(read)), each: true } : null;
+  }
+  if (source === 'projection-read') return operand.projection === projectionName ? instance(operand.tags) : null;
+  if (source !== 'alias-property') return null;
+  const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
+  if (!binding) return null;
+  if (binding.projection === projectionName && !operand.property) return instance(binding.tags);
+  if (binding.group && operand.property
+      && qualifiedProjectionName(binding.group, operand.property) === projectionName) return instance(binding.tags);
+  return null;
+}
+
+// The comparisons every run of a command checks, as the machine can
+// read them: its top-level rules', an `and` split into its parts. What
+// else it decides by – an `or`, a branch's condition, a rule inside a
+// branch – is `other`: whether it holds depends on the run, so a
+// command deciding by one over the projection cannot be placed.
+function lifecycleConditions(body) {
+  const sure = [];
+  const other = [];
+  const split = (condition) => {
+    if (condition && Array.isArray(condition.all)) condition.all.forEach(split);
+    else if (isCompoundCondition(condition)) other.push(...conditionLeaves(condition));
+    else if (condition) sure.push(condition);
+  };
+  for (const step of commandSteps(body)) if (stepKind(step) === 'rule') split(step.condition);
+  const top = new Set([...sure, ...other]);
+  for (const leaf of commandConditionLeaves(body)) if (!top.has(leaf)) other.push(leaf);
+  return { sure, other };
+}
+
+// What one command's conditions say about the projection: whether they
+// read it, the states they allow (null: unconstrained), and whether a
+// rule over it could not be read. Several rules intersect.
+function lifecycleConstraint(conditions, body, projectionName, states) {
   let allowed = null;
-  for (const condition of body.conditions || []) {
+  let reads = false;
+  let unreadable = false;
+  for (const condition of conditions) {
+    if (!condition) continue;
     for (const side of ['leftHandSide', 'rightHandSide']) {
-      const operand = condition[side];
-      if (operandSource(operand) !== 'alias-property') continue;
-      if (!aliases.has(operand.alias) || operand.property !== lifecycle.property) continue;
+      if (!lifecycleReadOf(condition[side], body, projectionName)) continue;
+      reads = true;
       const other = condition[side === 'leftHandSide' ? 'rightHandSide' : 'leftHandSide'];
-      const these = lifecycleAllowedStates(condition, lifecycle, other);
-      if (these === null) continue;
+      const these = lifecycleAllowedStates(condition, states, other);
+      if (these === null) { unreadable = true; continue; }
       allowed = allowed === null ? these : allowed.filter((state) => these.includes(state));
     }
   }
-  return { binds: true, states: allowed };
+  return { reads, states: allowed, unreadable };
 }
 
-// Every entity's machine, plus the entities that do not yield one and
-// why – an entity whose lifecycle cannot be read is not an error, it is
-// simply not drawable, and the page should say so rather than silently
-// thin out.
+// Why a command cannot be placed on the machine, or null when it can:
+// it reads two instances of the projection (which one moves?), reads it
+// through `each`, or has a rule over it `lifecycleAllowedStates` cannot
+// read.
+function lifecycleUnplaced(body, projectionName, states) {
+  const { sure: conditions, other } = lifecycleConditions(body);
+  if (lifecycleRulesOver(other, body, projectionName).length) return 'unreadable';
+  const instances = new Set();
+  let each = false;
+  for (const condition of conditions) {
+    if (!condition) continue;
+    for (const side of ['leftHandSide', 'rightHandSide']) {
+      const read = lifecycleReadOf(condition[side], body, projectionName);
+      if (!read) continue;
+      instances.add(read.key);
+      each = each || read.each;
+    }
+  }
+  if (each || instances.size > 1) return 'ambiguous';
+  if (lifecycleConstraint(conditions, body, projectionName, states).unreadable) return 'unreadable';
+  return null;
+}
+
+// The machine, or null when the projection has no lifecycle. `body` is
+// the projection as it is being edited – the stored one by default.
 //
-// Per machine:
-//   compact               a boolean lifecycle: two states, existence
-//                         and nothing else, which the page draws in one
-//                         row rather than as a diagram;
-//   states / initial      off `lifecycleOf` and the projection's initial
-//                         value;
-//   transitions           `{event, target, publishers, sources,
-//                         unguarded, conventional}` – `sources` is the
-//                         union of the publishing commands' allowed
-//                         states; a transition only unguarded
-//                         publishers reach is drawn from the initial
-//                         state (`conventional: true`);
-//   perState              state -> the commands allowed there, each
-//                         `{command, movesTo, unguarded}`;
-//   terminal              states no drawn transition leaves – with the
-//                         conventional arrows counted, so "terminal"
-//                         matches what the page draws;
-//   opaque                events whose handler touches the lifecycle in
-//                         a way this cannot read (a computed value, an
-//                         operation other than `set`).
-function lifecycleMachines(model) {
-  const machines = [];
-  const excluded = [];
-  for (const entityName of Object.keys(model['entity-definitions'])) {
-    const lifecycle = lifecycleOf(model, entityName);
-    if (!lifecycle) {
-      excluded.push({ entity: entityName, reason: lifecycleRefusal(model, entityName) });
+//   transitions  `{event, guard, target, sources, conventional,
+//                unguarded, unpublished}` – one per handler, or per
+//                arm of a branched one (`guard` its `if …` / `else`,
+//                '' for none); `sources` the union of where its
+//                publishers may emit it; with none to read, it is drawn from the
+//                initial state (`conventional`), and `unguarded` names
+//                the publishers nothing guards;
+//   opaque       events whose handler sets a state this cannot read;
+//   unplaced     `{command, reason}` – commands left off the machine;
+//   neverSet     states neither the start nor any arrow reaches;
+//   terminal     reached states no arrow leaves – none claimed while
+//                anything is opaque or unplaced, since an unread arrow
+//                may be the one that leaves;
+//   perState     `[{state, commands: [{command, movesTo, unguarded}]}]`.
+function lifecycleMachine(model, projectionName, body = projectionsOf(model)[projectionName]) {
+  const lifecycle = lifecycleOf(model, body);
+  if (!lifecycle || !lifecycle.states) return null;
+  const members = lifecycle.states;
+  // An initial value that names no member is drawn as the empty state.
+  const initial = body.initialValue === undefined ? null : lifecycleStateOperand(body.initialValue, members);
+  const start = initial === undefined ? null : initial;
+  const handlers = (body.handlers || []).filter((handler) => handler && handler.event);
+  // A branched handler (11.0) is an arrow per arm that sets a state,
+  // labelled with what it is applied under.
+  const arms = handlers.flatMap(handlerArms);
+  const targetOf = (arm) => (arm.operation === 'set' ? lifecycleStateOperand(arm.value, members) : undefined);
+  const states = start === null || arms.some((arm) => targetOf(arm) === null)
+    ? [null, ...members] : members;
+  const commands = model['command-definitions'] || {};
+
+  const unplaced = [];
+  for (const [command, commandBody] of Object.entries(commands)) {
+    const reason = commandBody && lifecycleUnplaced(commandBody, projectionName, states);
+    if (reason) unplaced.push({ command, reason });
+  }
+  const isPlaced = (command) => !unplaced.some((entry) => entry.command === command);
+
+  const transitions = [];
+  const opaque = [];
+  for (const handler of arms) {
+    const target = targetOf(handler);
+    if (target === undefined) {
+      if (!opaque.includes(handler.event)) opaque.push(handler.event);
       continue;
     }
-    const { projection, states } = lifecycle;
-
-    const initialOperand = projection.initialValue;
-    const initial = lifecycle.isBoolean
-      ? (typeof initialOperand === 'boolean' ? String(initialOperand) : null)
-      : (operandSource(initialOperand) === 'enum-member'
-        && states.includes(String(initialOperand.enumMember))
-        ? String(initialOperand.enumMember) : null);
-
-    const transitions = [];
-    const opaque = [];
-    for (const handler of projection.handlers || []) {
-      if (!handler || !handler.event) continue;
-      const target = handler.operation !== 'set' ? null
-        : (lifecycle.isBoolean
-          ? (typeof handler.value === 'boolean' ? String(handler.value) : null)
-          : (operandSource(handler.value) === 'enum-member'
-            ? String(handler.value.enumMember) : null));
-      if (target === null || !states.includes(target)) {
-        opaque.push(handler.event);
-        continue;
-      }
-      const publishers = publishersOf(model, handler.event).map(({ command }) => ({
-        command,
-        sources: lifecycleConstraint(
-          model, model['command-definitions'][command], entityName, lifecycle
-        ).states,
-      }));
-      const sources = [...new Set(publishers.flatMap((p) => p.sources || []))];
-      const unguarded = publishers.some((p) => p.sources === null);
-      const conventional = !sources.length && unguarded && initial !== null && initial !== target;
-      transitions.push({
-        event: handler.event, target, publishers, unguarded, conventional,
-        sources: conventional ? [initial] : sources,
-        unpublished: !publishers.length,
-      });
-    }
-
-    const perState = {};
-    for (const state of states) perState[state] = [];
-    for (const [commandName, body] of Object.entries(model['command-definitions'])) {
-      const constraint = lifecycleConstraint(model, body, entityName, lifecycle);
-      if (!constraint.binds) continue;
-      const moved = transitions.find((t) =>
-        (body.publishes || []).some((emission) => emission && emission.name === t.event));
-      const entry = {
-        command: commandName,
-        movesTo: moved ? moved.target : null,
-        unguarded: constraint.states === null,
-      };
-      for (const state of constraint.states === null ? states : constraint.states) {
-        perState[state].push(entry);
+    const publishers = publishersOf(model, handler.event);
+    const sources = new Set();
+    const unguarded = [];
+    for (const { command, emission } of publishers) {
+      if (!isPlaced(command)) continue;
+      const constraint = lifecycleConstraint(lifecycleConditions(commands[command]).sure, commands[command], projectionName, states);
+      if (constraint.states === null) {
+        if (!unguarded.includes(command)) unguarded.push(command);
+      } else {
+        for (const state of constraint.states) sources.add(state);
       }
     }
-
-    const leads = new Set();
-    for (const t of transitions) {
-      for (const from of t.sources) if (from !== t.target) leads.add(from);
-    }
-
-    machines.push({
-      entity: entityName,
-      property: lifecycle.property,
-      projection: lifecycle.projectionName,
-      valueType: lifecycle.valueType,
-      isBoolean: lifecycle.isBoolean,
-      compact: lifecycle.isBoolean,
-      states, initial, transitions, opaque, perState,
-      terminal: states.filter((state) => !leads.has(state)),
+    const conventional = !sources.size;
+    transitions.push({
+      event: handler.event,
+      guard: handler.guard,
+      target,
+      sources: conventional ? [start] : states.filter((state) => sources.has(state)),
+      conventional,
+      unguarded,
+      unpublished: !publishers.length,
     });
   }
-  return { machines, excluded };
+  // An arrow with nothing to read its source from starts at the initial
+  // state – unless it leads back there, where that would be no move at
+  // all: then it comes from every other state the machine reaches, so
+  // `set false` after `set true` is still drawn.
+  const reachedBefore = new Set([start, ...transitions.map((t) => t.target)]);
+  for (const transition of transitions) {
+    if (!transition.conventional || transition.target !== start) continue;
+    transition.sources = states.filter((state) => state !== start && reachedBefore.has(state));
+  }
+
+  const handled = new Set(handlers.map((handler) => handler.event));
+  const perState = states.map((state) => ({ state, commands: [] }));
+  for (const [command, commandBody] of Object.entries(commands)) {
+    if (!commandBody || !isPlaced(command)) continue;
+    const moving = commandEmissions(commandBody).filter((emission) => handled.has(emission.name));
+    const constraint = lifecycleConstraint(lifecycleConditions(commandBody).sure, commandBody, projectionName, states);
+    if (!moving.length && constraint.states === null) continue;
+    const entry = {
+      command,
+      movesTo: [...new Set(transitions
+        .filter((t) => moving.some((emission) => emission.name === t.event)).map((t) => t.target))],
+      unguarded: !!moving.length && constraint.states === null,
+    };
+    for (const slot of perState) {
+      if (constraint.states === null || constraint.states.includes(slot.state)) slot.commands.push(entry);
+    }
+  }
+
+  const reached = new Set([start, ...transitions.map((t) => t.target)]);
+  const leaves = new Set(transitions.flatMap((t) => t.sources.filter((state) => state !== t.target)));
+  const complete = !opaque.length && !unplaced.length;
+  return {
+    projection: projectionName,
+    kind: lifecycle.kind,
+    states,
+    initial: start,
+    transitions,
+    opaque,
+    unplaced,
+    neverSet: states.filter((state) => !reached.has(state)),
+    terminal: complete ? states.filter((state) => reached.has(state) && !leaves.has(state)) : [],
+    perState,
+  };
 }
 
-// The initial state leads; the rest keep the enum's declared order,
-// which is the order the modeller wrote the lifecycle in.
-function lifecycleOrder(machine) {
-  if (machine.initial === null) return machine.states;
-  return [machine.initial, ...machine.states.filter((s) => s !== machine.initial)];
+// A command's rules that read the projection – either side of them, in
+// place or through an alias – out of `conditions` (comparisons).
+function lifecycleRulesOver(conditions, body, projectionName) {
+  return conditions.filter((condition) => condition
+    && ['leftHandSide', 'rightHandSide'].some((side) => lifecycleReadOf(condition[side], body, projectionName)));
+}
+
+// The movements of a projection that has no states to draw, or null
+// when it has a machine (or no lifecycle at all).
+//
+//   initial    its initial value, as stored;
+//   handlers   `{event, guard, operation, value, appendedBy:
+//              [{command, rules}]}` – one per handler, or per arm of a
+//              branched one, `guard` what it is applied under; a
+//              command appending that event, with its rules over the
+//              value;
+//   readers    `{command, rules}` – commands with a rule over it that
+//              append nothing moving it: where the value matters.
+//
+// No command is called unguarded here: a counter is ordinarily guarded
+// through another projection (subscribing, by the capacity), so a mark
+// would be noise.
+function lifecycleMovements(model, projectionName, body = projectionsOf(model)[projectionName]) {
+  const lifecycle = lifecycleOf(model, body);
+  if (!lifecycle || lifecycle.kind !== 'movements') return null;
+  const commands = model['command-definitions'] || {};
+  const handlers = (body.handlers || []).filter((handler) => handler && handler.event);
+  const handled = new Set(handlers.map((handler) => handler.event));
+  return {
+    projection: projectionName,
+    kind: lifecycle.kind,
+    initial: body.initialValue === undefined ? null : body.initialValue,
+    handlers: handlers.flatMap(handlerArms).map((handler) => ({
+      event: handler.event,
+      guard: handler.guard,
+      operation: handler.operation,
+      value: handler.value,
+      appendedBy: Object.entries(commands).flatMap(([command, commandBody]) => {
+        const emissions = commandEmissions(commandBody).filter((emission) => emission.name === handler.event);
+        if (!emissions.length) return [];
+        const rules = lifecycleRulesOver(commandConditionLeaves(commandBody), commandBody, projectionName);
+        return [{ command, rules }];
+      }),
+    })),
+    readers: Object.entries(commands).flatMap(([command, commandBody]) => {
+      if (!commandBody) return [];
+      if (commandEmissions(commandBody).some((emission) => handled.has(emission.name))) return [];
+      const rules = lifecycleRulesOver(commandConditionLeaves(commandBody), commandBody, projectionName);
+      return rules.length ? [{ command, rules }] : [];
+    }),
+  };
 }
 
 // ---------- event model ----------
@@ -1489,32 +1187,19 @@ function lifecycleOrder(machine) {
 // id is one card across both lanes – the fact a stream-per-aggregate
 // model would have to split in two, which is the whole case for DCB.
 //
-// A definition holds no time, so the order is derived, along the
-// lifecycles: a command that brings something into being comes first,
-// one that only works on what exists next, and one that moves a thing
-// further along – or back to where it started, which ends it – after
-// that. Feature order breaks every tie, which is all it is for a model
-// without lifecycles.
+// A definition holds no time, so the order is the features' – the
+// order the rail lists them in – and, within one, the order the
+// commands were written in: an author writes the creating command
+// first far more often than the rail's alphabet puts it there. (It
+// used to follow the entities' lifecycles; those went with entities,
+// 11.0.)
 function eventModel(model) {
   const commands = model['command-definitions'];
-  const CREATES = 1;
-  const WORKS_ON = 1.5;
-  const rank = {};
-  for (const machine of lifecycleMachines(model).machines) {
-    const order = lifecycleOrder(machine);
-    for (const transition of machine.transitions) {
-      const step = order.indexOf(transition.target);
-      if (step < 0) continue;
-      const position = step === 0 ? order.length : Math.max(step, CREATES);
-      for (const { command } of transition.publishers) {
-        rank[command] = Math.max(rank[command] === undefined ? -Infinity : rank[command], position);
-      }
-    }
-  }
-  const featureOrder = featureGroups(model).flatMap((group) => group.commands);
-  const ordered = Object.keys(commands)
-    .map((name) => ({ name, rank: rank[name] === undefined ? WORKS_ON : rank[name], at: featureOrder.indexOf(name) }))
-    .sort((a, b) => a.rank - b.rank || a.at - b.at)
+  const features = featureGroups(model).map((group) => group.name);
+  const written = Object.keys(commands);
+  const ordered = written
+    .map((name, at) => ({ name, at, feature: features.indexOf(featureOf(commands[name])) }))
+    .sort((a, b) => a.feature - b.feature || a.at - b.at)
     .map((entry) => entry.name);
 
   const lanes = [];
@@ -1535,18 +1220,19 @@ function eventModel(model) {
   const untagged = [];
   for (const name of ordered) {
     const body = commands[name];
-    const emits = (body.publishes || []).filter((emission) => emission && emission.name);
-    const events = emits.map((emission) => {
-      const tags = tagsOf(emission.name);
-      const event = { name: emission.name, tags, guarded: !!(emission.when && emission.when.length), lanes: tags.map(laneOf) };
+    // Every event any run appends, each once – two arms of a branch may
+    // append the same one.
+    const emits = uniq(commandEmissions(body).map((emission) => emission.name).filter(Boolean));
+    const events = emits.map((name) => {
+      const tags = tagsOf(name);
+      const event = { name, tags, lanes: tags.map(laneOf) };
       if (!tags.length) untagged.push(event);
       return event;
     });
     columns.push({
       kind: 'command', command: name,
       payload: body.properties || [],
-      rules: (body.conditions || []).length,
-      guards: emits.reduce((n, emission) => n + (emission.when ? emission.when.length : 0), 0),
+      rules: commandRules(body).length,
       reads: (body.boundary || []).map((binding) => binding.alias),
       events,
     });
@@ -1554,20 +1240,20 @@ function eventModel(model) {
     for (const event of events) {
       const fresh = new Map();
       for (const effect of effectsOf(model, event.name)) {
-        const key = effect.entity + '.' + effect.property.name;
-        if (shown.has(key)) continue;
-        shown.add(key);
-        if (!fresh.has(effect.entity)) fresh.set(effect.entity, []);
-        fresh.get(effect.entity).push(effect.property.name);
+        if (shown.has(effect.projectionName)) continue;
+        shown.add(effect.projectionName);
+        if (!fresh.has(effect.group)) fresh.set(effect.group, []);
+        fresh.get(effect.group).push(effect.property.name);
       }
       // In lane order, so the read models under a two-tag event come
       // in the order its lanes do.
-      const laneRank = (entity) => {
-        const at = lanes.indexOf(idTypeOf(model, entity));
+      const laneRank = (group) => {
+        const tag = groupTagOf(model['group-definitions'][group]);
+        const at = tag ? lanes.indexOf(tag.tagType) : -1;
         return at < 0 ? lanes.length : at;
       };
-      for (const [entity, properties] of [...fresh].sort((a, b) => laneRank(a[0]) - laneRank(b[0]))) {
-        columns.push({ kind: 'read', entity, properties, from: event.name });
+      for (const [group, properties] of [...fresh].sort((a, b) => laneRank(a[0]) - laneRank(b[0]))) {
+        columns.push({ kind: 'read', group, properties, from: event.name });
       }
       for (const { projection } of projectionsHandling(model, event.name)) {
         if (shown.has(projection)) continue;
@@ -1593,19 +1279,16 @@ function eventModel(model) {
 // way a city's main interchanges do.
 
 // The projections a command's decision reads – named by a binding or
-// in place, or through an entity's properties – in the order its
-// query items list them. A derived projection is itself the read.
+// in place, or through a group's alias – in the order its query items
+// list them, a grouped one under its qualified name. A derived
+// projection is itself the read.
 function metroReadProjections(model, body) {
   const out = [];
-  const projections = model['projection-definitions'];
+  const projections = projectionsOf(model);
   for (const item of deriveDcb(model, body).items) {
     if (item.projection) { out.push(item.projection); continue; }
-    const binding = (body.boundary || []).find((b) => b && b.alias === item.alias);
-    const entity = binding && model['entity-definitions'][binding.entity];
-    for (const property of item.readProperties || []) {
-      const bound = entity && (entity.properties || []).find((p) => p && p.name === property);
-      if (bound) out.push(bound.projection);
-    }
+    if (!item.group) continue;
+    for (const property of item.readProperties || []) out.push(qualifiedProjectionName(item.group, property));
   }
   return uniq(out).filter((name) => projections[name]);
 }
@@ -1621,13 +1304,13 @@ function metroCommandMap(model) {
   const commands = Object.entries(model['command-definitions']).map(([name, body]) => ({
     command: name,
     reads: metroReadProjections(model, body),
-    emits: uniq((body.publishes || []).map((e) => e && e.name).filter((n) => n && events[n])),
+    emits: uniq(commandEmissions(body).map((e) => e.name).filter((n) => n && events[n])),
   }));
   const read = new Set(commands.flatMap((c) => c.reads));
   const appended = new Set(commands.flatMap((c) => c.emits));
   const stations = [
     ...commands.map((c) => ({ name: c.command, kind: 'command', lines: [] })),
-    ...Object.keys(model['projection-definitions']).filter((n) => read.has(n)).map((name) => ({ name, kind: 'projection', lines: [] })),
+    ...Object.keys(projectionsOf(model)).filter((n) => read.has(n)).map((name) => ({ name, kind: 'projection', lines: [] })),
     ...Object.keys(events).filter((n) => appended.has(n)).map((name) => ({ name, kind: 'event', lines: [] })),
   ];
   const at = (kind, name) => stations.findIndex((s) => s.kind === kind && s.name === name);
@@ -2025,137 +1708,6 @@ function metroOffset(points, offset) {
   return out;
 }
 
-// ---------- promoting a lifecycle ----------
-//
-// Whether a boolean property is a *one-way door*: every handler sets it
-// away from where it starts, and none sets it back.
-//
-// This is the whole discriminator behind the promotion suggestion, and
-// it is worth being exact about why. `exists && !archived` folds into a
-// three-state lifecycle soundly, because archiving never un-archives –
-// the states are successive and a thing is in exactly one of them.
-// `exists && !isPublic` must not: a course can be existent-and-public
-// or existent-and-private, those are not stages, and collapsing them
-// into one enum destroys a dimension the model was using. Monotonicity
-// is the readable difference. A property nothing sets at all is not a
-// door either way, so it does not qualify.
-function isMonotoneBoolean(model, entityName, propertyName) {
-  const { binding, projection } = entityPropertyTarget(model, entityName, propertyName);
-  if (!binding || !projection) return false;
-  if (projection.valueType !== 'boolean' || projection.isList) return false;
-  if (scriptOf(projection) || derivedOf(projection)) return false;
-  if (typeof projection.initialValue !== 'boolean') return false;
-  const handlers = (projection.handlers || []).filter((handler) => handler && handler.event);
-  if (!handlers.length) return false;
-  return handlers.every((handler) => handler.operation === 'set'
-    && typeof handler.value === 'boolean'
-    && handler.value !== projection.initialValue);
-}
-
-// Which of an entity's properties could be designated its lifecycle:
-// single-valued, folded (not scripted or derived), and holding either a
-// boolean or an enum – the two things that have states to be in.
-//
-// This is what the designation picker offers, and it is deliberately
-// the same test `lifecycleOf` applies, so the picker can never offer a
-// property that would then fail to resolve.
-function lifecycleCandidates(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  if (!entity) return [];
-  return (entity.properties || []).filter((binding) => {
-    const projection = model['projection-definitions'][binding.projection];
-    if (!projection || projection.isList) return false;
-    if (scriptOf(projection) || derivedOf(projection)) return false;
-    return projection.valueType === 'boolean' || !!enumMembersFor(model, projection.valueType);
-  }).map((binding) => binding.name);
-}
-
-// What the one-click existence lifecycle would do for this entity:
-// `'create'` the `exists` boolean, `'designate'` the one it already has
-// (the round trip after removing a lifecycle, which leaves the property
-// behind), or `null` when `exists` is taken by something that cannot
-// be one – then the option is not offered at all, rather than inventing
-// `exists2`. The projection name is uniquified like any property's;
-// the property name is what conditions read, so it is not.
-function existenceLifecycleOffer(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  if (!entity) return null;
-  const existing = (entity.properties || []).find((p) => p && p.name === LIFECYCLE_PROPERTY);
-  if (!existing) return 'create';
-  const projection = model['projection-definitions'][existing.projection];
-  return projection && projection.valueType === 'boolean'
-    && lifecycleCandidates(model, entityName).includes(LIFECYCLE_PROPERTY) ? 'designate' : null;
-}
-
-// The monotone booleans of one entity that `body` guards – the raw
-// material of a merge. In the entity's own declaration order, with the
-// designated lifecycle first when it is one of them, because existence
-// is always the first stage of anything.
-function guardedMonotoneBooleans(model, body, entityName, alias) {
-  const found = new Set();
-  const walk = (condition) => {
-    const operand = condition.leftHandSide;
-    if (operandSource(operand) !== 'alias-property') return;
-    if (operand.alias !== alias || !operand.property) return;
-    if (isMonotoneBoolean(model, entityName, operand.property)) found.add(operand.property);
-  };
-  for (const condition of body.conditions || []) walk(condition);
-  for (const emission of body.publishes || []) {
-    for (const condition of emission.when || []) walk(condition);
-  }
-  return orderedMonotoneBooleans(model, entityName, found);
-}
-
-// Declaration order, lifecycle first. Shared by the rule wizard's offer
-// and the entity page's, so the two can never propose different
-// progressions for the same booleans.
-function orderedMonotoneBooleans(model, entityName, names) {
-  const entity = model['entity-definitions'][entityName];
-  if (!entity) return [];
-  const lifecycle = lifecycleOf(model, entityName);
-  const declared = (entity.properties || []).map((p) => p.name).filter((n) => names.has(n));
-  if (lifecycle && lifecycle.isBoolean && names.has(lifecycle.property)) {
-    return [lifecycle.property, ...declared.filter((n) => n !== lifecycle.property)];
-  }
-  return declared;
-}
-
-// The promotion this command's rules are asking for, or null.
-//
-// Two or more monotone booleans of one entity, guarded by one command.
-// Whether one of them is the designated lifecycle does not matter – what
-// matters is that they are successive one-way doors, which is the same
-// question either way. (It mattered in the first cut of this, and that
-// was a bug: two booleans an author had just added by hand – `registered`
-// and `expelled` – are exactly the shape this is for, and neither of
-// them was the designation.)
-//
-// Still narrow in the way that counts: **monotone**. `registered` and
-// `expelled` are stages; `registered` and `isPublic` are not, and
-// collapsing the second pair into one enum would destroy a dimension.
-// See `isMonotoneBoolean`.
-function lifecycleMergeSuggestion(model, body) {
-  for (const binding of body.boundary || []) {
-    if (!binding || !binding.entity) continue;
-    const booleans = guardedMonotoneBooleans(model, body, binding.entity, binding.alias);
-    if (booleans.length < 2) continue;
-    return { entity: binding.entity, alias: binding.alias, booleans };
-  }
-  return null;
-}
-
-// The same offer, for the entity's own page – where an author who has
-// just added two booleans by hand is actually looking, and where no
-// command need exist yet. Every monotone boolean the entity has, not
-// only the ones some command guards.
-function entityMergeCandidates(model, entityName) {
-  const entity = model['entity-definitions'][entityName];
-  if (!entity) return [];
-  const monotone = new Set((entity.properties || []).map((p) => p.name)
-    .filter((name) => isMonotoneBoolean(model, entityName, name)));
-  return orderedMonotoneBooleans(model, entityName, monotone);
-}
-
 // ---------- features ----------
 //
 // A feature groups the commands that make it up. It is not a definition
@@ -2204,79 +1756,76 @@ function featureGroups(model) {
   }));
 }
 
-// Events no feature emits, and entities nothing reads – the loose ends
-// a command-centred view would otherwise hide.
+// Events no feature emits – the loose ends a command-centred view
+// would otherwise hide.
 function orphans(model) {
   const emitted = new Set();
-  const boundEntities = new Set();
   for (const body of Object.values(model['command-definitions'])) {
-    for (const e of body.publishes || []) emitted.add(e.name);
-    for (const b of body.boundary || []) boundEntities.add(b.entity);
+    for (const e of commandEmissions(body)) emitted.add(e.name);
   }
   return {
     events: Object.keys(model['event-definitions']).filter((n) => !emitted.has(n)),
-    entities: Object.keys(model['entity-definitions']).filter((n) => !boundEntities.has(n)),
   };
 }
 
-// Everything that happens to one property: which features move it, and
-// which features consult it. The inspector needs both halves to answer
-// "is this still earning its place?".
-function propertyUsage(model, entityName, propertyName) {
-  const { binding, projection } = entityPropertyTarget(model, entityName, propertyName);
-  // `property` is what a caller renders: the binding's name over the
-  // bound projection's shape, which between them is everything the old
-  // single definition carried.
-  const property = binding ? { ...binding, ...(projection || {}) } : undefined;
-  const changedBy = [];
-  const readBy = [];
-  for (const [command, body] of Object.entries(model['command-definitions'])) {
-    for (const emission of body.publishes || []) {
-      const handler = ((projection && projection.handlers) || []).find((x) => x.event === emission.name);
-      if (handler) changedBy.push({ command, event: emission.name, handler });
-    }
-    const aliases = (body.boundary || []).filter((b) => b.entity === entityName).map((b) => b.alias);
-    let reads = false;
-    forEachCommandOperand(body, (operand) => {
-      if (operandSource(operand) === 'alias-property'
-          && aliases.includes(operand.alias) && operand.property === propertyName) reads = true;
-    });
-    if (reads) readBy.push(command);
-  }
-  return { property, binding, projection, changedBy, readBy };
-}
-
-// Which commands read a projection, however they reach it: directly by
-// name when nothing binds it, and through an entity alias when
-// something does. One question rather than two, because a projection
-// does not know which of the two it is – that is the whole point of a
-// property being a binding.
+// Which commands read a projection, however they reach it: by name –
+// an alias's read or one in place – or, for a grouped one, as the
+// member of a group alias (`course.capacity`, `course` bound to the
+// group). One question rather than two, because the member read *is*
+// the qualified read, spelled through the alias.
 function projectionReaders(model, projectionName) {
-  const owners = boundAs(model, projectionName);
+  const split = splitQualifiedName(projectionName);
   const readers = [];
   for (const [command, body] of Object.entries(model['command-definitions'])) {
-    // An alias's read, or one in place – the same read either way.
-    let reads = (body.boundary || []).some((b) => b.projection === projectionName)
+    let reads = (body.boundary || []).some((b) => b && b.projection === projectionName)
       || inlineReads(body).some(({ read }) => read.projection === projectionName);
-    if (!reads) {
-      // Every (alias, property) pair that lands on this projection: an
-      // alias bound to an entity that calls it something, under the
-      // name that entity calls it.
-      const pairs = new Set();
-      for (const binding of body.boundary || []) {
-        if (!binding.entity) continue;
-        for (const owner of owners) {
-          if (owner.entity === binding.entity) pairs.add(binding.alias + '\0' + owner.property);
-        }
-      }
+    if (!reads && split) {
+      const aliases = new Set((body.boundary || [])
+        .filter((b) => b && b.group === split.group).map((b) => b.alias));
       forEachCommandOperand(body, (operand) => {
         if (operandSource(operand) === 'alias-property'
-            && pairs.has(operand.alias + '\0' + operand.property)) reads = true;
+            && aliases.has(operand.alias) && operand.property === split.local) reads = true;
       });
     }
     if (reads) readers.push(command);
   }
   return readers;
+}
+
+// ---------- groups ----------
+//
+// What the `+ group` form offers and proposes. A group is read by one
+// tag, `{name, tagType}`, so the tags a model already reads things by
+// are the likeliest answers: every projection's, every group's, and a
+// tag type nobody reads by yet under the name it would get (`CourseId`
+// → `courseId`). In that order, each once.
+function groupTagChoices(model) {
+  const out = [];
+  const seen = new Set();
+  const add = (tag) => {
+    if (!tag || !tag.name || !tag.tagType) return;
+    const key = tag.name + ':' + tag.tagType;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name: tag.name, tagType: tag.tagType });
+  };
+  for (const body of Object.values(model['projection-definitions'] || {})) projectionTagParams(body).forEach(add);
+  for (const group of Object.values(model['group-definitions'] || {})) add(groupTagOf(group));
+  const typed = new Set(out.map((tag) => tag.tagType));
+  for (const [type, body] of Object.entries(model['custom-type-definitions'] || {})) {
+    if (body && body.isTag && !Array.isArray(body.properties) && !typed.has(type)) {
+      add({ name: type.charAt(0).toLowerCase() + type.slice(1), tagType: type });
+    }
+  }
+  return out;
+}
+
+// The name a group is offered under, read off its tag's type: what the
+// type identifies – `CourseId` → `Course`, `OrderKey` → `Order`.
+function suggestGroupName(tagType) {
+  const type = String(tagType || '');
+  const stem = type.replace(/(Id|ID|Key|Identifier|Number)$/, '');
+  return stem && /^\p{Lu}/u.test(stem) ? stem : type;
 }
 
 // ---------- names ----------
@@ -2304,8 +1853,13 @@ function splitWords(name) {
 }
 
 // `CourseDefined` -> "Course defined". For things with a name of their
-// own: a command, an event, an entity, a value type, a status.
+// own: a command, an event, a group, a value type, a status. A grouped
+// projection's qualified name reads as the group and its member, the
+// way an alias's member does – `Course.subscriptionCount` -> "Course ·
+// subscription count".
 function readable(name) {
+  const split = splitQualifiedName(name);
+  if (split) return memberWords(readable(split.group), split.local);
   const words = splitWords(name);
   if (!words.length) return '';
   return words.map((w, i) => (i === 0 ? w[0].toUpperCase() + w.slice(1) : w.toLowerCase())).join(' ');
@@ -2355,41 +1909,66 @@ function operandWords(operand) {
     return operand.length ? operand.map(operandWords).join(', ') : '[]';
   }
   switch (operandSource(operand)) {
-    case 'alias-property':
+    case 'alias-property': {
       // No property means a bound projection's single value, which the
-      // alias already names.
-      if (!operand.property) return propertyWords(operand.alias);
-      return memberWords(operand.alias, operand.property);
+      // alias already names. A group member's arguments are its own,
+      // so they follow it, the way a read in place's do. A record
+      // value's field (11.0) follows the way a member does.
+      const field = (words) => (operand.field === undefined ? words : memberWords(words, operand.field));
+      if (!operand.property) return field(propertyWords(operand.alias));
+      if (operand.arguments && Object.keys(operand.arguments).length) {
+        return field(memberWords(operand.alias, operand.property) + ' (' + Object.entries(operand.arguments)
+          .map(([name, value]) => `${name} = ${operandWords(value)}`).join(', ') + ')');
+      }
+      return field(memberWords(operand.alias, operand.property));
+    }
     case 'parameter':
       return operand.property
         ? memberWords(propertyWords(operand.parameterName), operand.property)
         : propertyWords(operand.parameterName);
     case 'enum-member': return readable(operand.enumMember);
-    // A path, not a name: the same `event.data.capacity` a scripted
-    // handler writes, so the stored spelling stays – humanizing inside
+    // A path, not a name: the same `event.data.capacity` the code view
+    // writes, so the stored spelling stays – humanizing inside
     // a dotted path reads as a typo. It is also what tells a value the
     // event carried apart from a constant at a glance.
-    case 'event-property': return `event.data.${operand.eventProperty}`;
-    // Both are operand *kinds*, not prose: the schema names them and
-    // nothing an author typed is being unwound here, so they read as
-    // the tokens they are rather than as descriptions of themselves.
-    case 'current-value': return 'currentValue';
+    case 'event-property': return operandText(operand);
+    // An operand *kind*, not prose: the schema names it and nothing an
+    // author typed is being unwound here, so it reads as the token it is
+    // rather than as a description of itself.
     case 'successor': return `successor(${operandWords(operand.successor)})`;
     // A projection read in place, as a call: the name, then the values
     // it gives its tags and arguments – `Developer seniority level
     // (developer)`. The code view's spelling with the words a reader
     // reads; `projectionReadParts` hands the pieces to a renderer.
+    // A grouped one reads as the group's instance and then its member,
+    // `Course (course id) · seats on (slot = slot)` – the code view's
+    // `Course(courseId).seatsOn(slot: slot)`, in words.
     case 'projection-read': {
-      const { name, values } = projectionReadParts(operand);
-      return values.length ? `${name} (${values.map((v) => v.words).join(', ')})` : name;
+      const { name, values, member, memberValues } = projectionReadParts(operand);
+      const call = (head, list) => (list.length ? `${head} (${list.map((v) => v.words).join(', ')})` : head);
+      const read = member === undefined ? call(name, values) : `${call(name, values)} · ${call(member, memberValues)}`;
+      return operand.field === undefined ? read : memberWords(read, operand.field);
     }
     case 'tag-literal': return operandText(operand);
     case 'each': return 'each ' + operandWords(operand.each);
+    // A collection function, an open tag, a where's value and a record
+    // set whole (11.0) read as the code view writes them: constructs
+    // the pages show and leave to the code view to edit.
+    case 'collection':
+    case 'count':
+    case 'open':
+    case 'instance-value':
+    case 'record':
+    // A duration and arithmetic (11.0) too: `15m`, `now + 15m`, each
+    // side in words.
+    case 'duration':
+      return operandText(operand);
+    case 'arithmetic':
+      return `${operandWords(operand.leftHandSide)} ${operand.operator === 'subtract' ? '-' : '+'} ${operandWords(operand.rightHandSide)}`;
     default:
       if (typeof operand === 'string') return `"${operand}"`;
-      // A record a scripted projection folded to is a static value
-      // with no operand shape – it reads as the JSON it is rather
-      // than as "[object Object]".
+      // A record is a static value with no operand shape – it reads as
+      // the JSON it is rather than as "[object Object]".
       if (operand !== null && typeof operand === 'object') return JSON.stringify(operand);
       return String(operand);
   }
@@ -2429,77 +2008,85 @@ const PREDICATE_WORDS = {
   isFalse: ['does not hold', 'holds'],
 };
 
-// A boolean property is named as a predicate, so its false state is
-// that predicate denied. Two shapes cover what the one-click lifecycle
-// and ordinary naming produce – `isArchived` -> "is not archived",
-// `exists` -> "does not exist" – and anything else falls back to a bare
-// "not …", which is graceless but never wrong. This is the one thing
-// the two-state spelling gives up: an enum's states are named, a
-// boolean's have to be said.
-function negatedPredicateWords(words) {
-  if (/^is\b/.test(words)) return words.replace(/^is\b/, 'is not');
-  const single = /^([a-z]{3,})(e?s)$/.exec(words);
-  if (single) return `does not ${single[1]}`;
-  return 'not ' + words;
+// Whether an operand is one no picker offers (11.0): a collection
+// function (`list(…)` among them), a record set whole, arithmetic, an
+// open tag or a where's `value` – shown on the pages, edited where an
+// editor of its own takes it (`collectionEditable`,
+// `arithmeticEditable`) and in the code view otherwise, never dropped.
+// A count of a list, a record value's field and a duration are values
+// the pickers offer (`valueRowsBeyondReads`, a duration typed as one).
+function operandBeyondEditors(operand) {
+  if (Array.isArray(operand)) return operand.some(operandBeyondEditors);
+  const source = operandSource(operand);
+  if (['collection', 'open', 'instance-value', 'record', 'arithmetic'].includes(source)) return true;
+  if (source === 'count') return operandBeyondEditors(operand.count);
+  if (operand && typeof operand === 'object' && operand.field !== undefined
+    && !['projection-read', 'alias-property'].includes(source)) return true;
+  if (source === 'projection-read') return readTagOperands(operand).some(operandBeyondEditors);
+  return false;
 }
 
-// One of a machine's states, in words. An enum state is its member's
-// name; a boolean state has none, so it is said off the property –
-// which is why the page labels the two nodes "exists" and "does not
-// exist" rather than "true" and "false".
-function lifecycleStateWords(machine, state) {
-  if (!machine.isBoolean) return readable(state);
-  const words = propertyWords(machine.property);
-  return state === 'true' ? words : negatedPredicateWords(words);
+// The where comparisons and the arithmetic the editors write: one
+// level, sides the pickers offer or literals.
+const WHERE_PREDICATES = ['equals', 'lessThan', 'lessThanOrEquals', 'greaterThan', 'greaterThanOrEquals'];
+
+function simpleSide(operand) {
+  return operand === null || ['string', 'number', 'boolean'].includes(typeof operand) || !operandBeyondEditors(operand);
 }
 
-// A read of a *boolean* designated lifecycle, or null. This is what
-// licenses saying "the course exists" instead of "course · exists
-// holds": the entity designated that property, so the condition is
-// about the thing's existence and can be said that way. Nothing is
-// stored differently – the condition is an ordinary `isTrue` over an
-// ordinary property, and this only decides how it reads.
-//
-// An enum lifecycle is deliberately not sugared. Its states are named,
-// those names are what the modeller chose, and "document · status is
-// one of Draft, Published" is already the sentence they wrote.
-function existenceRead(model, body, operand) {
-  if (!model || !body) return null;
-  if (operandSource(operand) !== 'alias-property' || !operand.property) return null;
-  const binding = (body.boundary || []).find((b) => b && b.alias === operand.alias);
-  if (!binding || !binding.entity) return null;
-  const lifecycle = lifecycleOf(model, binding.entity);
-  if (!lifecycle || !lifecycle.isBoolean) return null;
-  if (lifecycle.property !== operand.property) return null;
-  return { alias: operand.alias, lifecycle };
+// A collection function the rule editor's collection questions write:
+// a read of a top-level projection, each tag open or a value in scope,
+// a record's field for the numeric ones, and a `where` of comparisons
+// of `value` (or `value.field`), joined and bracketed at any depth.
+function collectionEditable(operand) {
+  if (operandSource(operand) !== 'collection' || !COLLECTION_FUNCTIONS.includes(operand.collect)) return false;
+  const read = operand.read;
+  if (operandSource(read) !== 'projection-read' || read.arguments) return false;
+  if (!readTagOperands(read).every((tag) => operandSource(tag) === 'open' || !operandBeyondEditors(tag))) return false;
+  if (operand.where === undefined) return true;
+  const leaves = conditionLeaves(operand.where);
+  return leaves.length > 0 && leaves.every((leaf) => WHERE_PREDICATES.includes(leaf.predicate)
+    && operandSource(leaf.leftHandSide) === 'instance-value' && simpleSide(leaf.rightHandSide));
+}
+
+// `a + b - c` as its terms, left to right, and the operators between
+// them – the only reading the code view has: a sum on the right of
+// `+` / `-` has no spelling, and stays a term of its own here.
+function arithmeticChain(operand) {
+  const terms = [];
+  const operators = [];
+  let node = operand;
+  while (operandSource(node) === 'arithmetic' && ['add', 'subtract'].includes(node.operator)) {
+    terms.unshift(node.rightHandSide);
+    operators.unshift(node.operator);
+    node = node.leftHandSide;
+  }
+  terms.unshift(node);
+  return { terms, operators };
+}
+
+// `+` / `-` left to right over terms a picker or a typed value gives
+// – a duration among them (`now + 15m`) – or a collection function the
+// collection questions write (`capacity - sum(…)`), as many as written.
+function arithmeticEditable(operand) {
+  if (operandSource(operand) !== 'arithmetic') return false;
+  const { terms } = arithmeticChain(operand);
+  return terms.length >= 2 && terms.every((term) => term !== null && !Array.isArray(term)
+    && operandSource(term) !== 'arithmetic' && (simpleSide(term) || collectionEditable(term)));
+}
+
+// Whether a condition holds an operand no editor here writes: either
+// side may be a collection function or a sum.
+function conditionBeyondEditors(condition) {
+  const editable = (operand) => !operandBeyondEditors(operand) || collectionEditable(operand) || arithmeticEditable(operand);
+  return conditionLeaves(condition).some((leaf) =>
+    !editable(leaf.leftHandSide) || (leaf.rightHandSide !== undefined && !editable(leaf.rightHandSide)));
 }
 
 // A condition as a sentence. Returns parts so a renderer can style the
-// operands without re-parsing the text.
-//
-// `model` and `body` are optional and only buy the existence wording: a
-// caller without them gets the literal reading, which is correct, just
-// less fluent.
+// operands without re-parsing the text. `model` and `body` are accepted
+// for the callers that pass them; the literal reading needs neither.
 function conditionParts(condition, model, body) {
-  const read = existenceRead(model, body, condition.leftHandSide);
-  if (read) {
-    // Only when the condition pins the lifecycle to exactly one of its
-    // two states. Anything else is not "it exists" or "it does not" and
-    // is left to say itself.
-    const states = lifecycleAllowedStates(condition, read.lifecycle, condition.rightHandSide);
-    if (states && states.length === 1) {
-      const words = propertyWords(read.lifecycle.property);
-      return {
-        // No article: every other condition row starts with the bare
-        // alias, and "the course exists" beside "course · capacity is at
-        // most 10" is one sentence pretending to be a different kind of
-        // thing from the other.
-        left: propertyWords(read.alias),
-        verb: states[0] === 'true' ? words : negatedPredicateWords(words),
-        right: null,
-      };
-    }
-  }
   const words = PREDICATE_WORDS[condition.predicate] || [condition.predicate, 'not ' + condition.predicate];
   const verb = words[condition.negate ? 1 : 0];
   const left = operandWords(condition.leftHandSide);
@@ -2510,16 +2097,21 @@ function conditionParts(condition, model, body) {
 // A read in place in pieces: the projection's name, and each value
 // it is read with – tags first, then arguments as `name = value` – with
 // the operand each came from, so a renderer can point back at it.
+//
+// A grouped projection's read splits in two, the way the code view
+// writes it: the group and the tag that picks its instance (`name`,
+// `values`, `group` set), then the member and its own arguments
+// (`member`, `memberValues`).
 function projectionReadParts(operand) {
   const tagWords = (tag) => (operandSource(tag) === 'tag-literal' ? operandText(tag) : operandWords(tag));
-  return {
-    name: readable(operand.projection || '?'),
-    values: [
-      ...readTagOperands(operand).map((tag) => ({ operand: tag, words: tagWords(tag) })),
-      ...Object.entries(operand.arguments || {})
-        .map(([name, value]) => ({ operand: value, words: `${name} = ${operandWords(value)}` })),
-    ],
-  };
+  const tags = readTagOperands(operand).map((tag) => ({ operand: tag, words: tagWords(tag) }));
+  const args = Object.entries(operand.arguments || {})
+    .map(([name, value]) => ({ operand: value, words: `${name} = ${operandWords(value)}` }));
+  const split = splitQualifiedName(operand.projection);
+  if (split) {
+    return { name: readable(split.group), group: split.group, values: tags, member: propertyWords(split.local), memberValues: args };
+  }
+  return { name: readable(operand.projection || '?'), values: [...tags, ...args] };
 }
 
 // The message a rule is refused with when its author wrote none: the
@@ -2537,8 +2129,7 @@ function derivedRejection(model, body, condition) {
     ? { ...condition, predicate: 'equalsAny', leftHandSide: condition.rightHandSide, rightHandSide: condition.leftHandSide }
     : condition;
   const p = conditionParts(said, model, body);
-  // Only where the sentence named the operand itself – "course exists"
-  // already said the lifecycle property its own way.
+  // Only where the sentence named the operand itself.
   const words = (operand, fallback) => {
     if (fallback !== operandWords(operand)) return fallback;
     if (operandSource(operand) === 'projection-read') return readable(operand.projection || '?');
@@ -2569,46 +2160,61 @@ function requirementVerb(verb) {
   return ['must', base, ...rest].join(' ');
 }
 
+// A loop's head (11.0) in words: `for each shareId in Share active as
+// owner(customerId, *)`.
+function loopWords(loop) {
+  return `for each ${loopNames(loop).join(', ')} in ${operandWords(loop.in)}`;
+}
+
 // A condition as one plain sentence – the same words `conditionParts`
 // hands the slice page's rule editor, joined into a string for a
 // read-only overview that has nowhere to hang per-operand styling.
 function ruleSentence(model, body, condition) {
+  // Joined comparisons (11.0) read joined, `and` binding tighter.
+  if (isCompoundCondition(condition)) {
+    const all = Array.isArray(condition.all);
+    return conditionMembers(condition).map((part) => {
+      const text = ruleSentence(model, body, part);
+      const bracket = isCompoundCondition(part) && (Array.isArray(part.any) || all === Array.isArray(part.all));
+      return bracket ? `(${text})` : text;
+    }).join(all ? ' and ' : ' or ');
+  }
   const p = conditionParts(condition, model, body);
   const quantifier = quantifierWords(model, body, condition);
   return (quantifier ? quantifier + ', ' : '') + p.left + ' ' + p.verb + (p.right ? ' ' + p.right : '');
 }
 
 function effectParts(effect) {
-  // A standalone projection (`projectionsHandling`) is its own subject;
-  // an entity property is named through its entity.
-  const subject = effect.entity
-    ? memberWords(readable(effect.entity), effect.property.name)
+  // A top-level projection (`projectionsHandling`) is its own subject;
+  // a grouped one is named through its group.
+  const subject = effect.group
+    ? memberWords(readable(effect.group), effect.property.name)
     : readable(effect.projection);
-  // A scripted handler has no operation and no operand to name – the
-  // code is both, and nothing here reads it.
-  if (effect.handler.code !== undefined) {
-    return { subject, verb: 'scripted', object: null };
-  }
   return {
     subject,
     // The operation's own token, as the Code view spells it – see
     // _The interface register_ in docs/design-notes.md.
     verb: effect.handler.operation,
     object: operandWords(effect.handler.value),
+    // A branched handler (11.0): each arm, what it is applied under and
+    // what it does – shown, and edited in the code view.
+    arms: isConditionalHandler(effect.handler)
+      ? handlerArms(effect.handler).map((arm) => ({ guard: arm.guard, verb: arm.operation, object: operandWords(arm.value), value: arm.value }))
+      : null,
   };
 }
 
 // A binding, in words: what it is and how the command found it.
 function readParts(model, body, binding) {
   if (binding.projection) {
-    const projection = model['projection-definitions'][binding.projection] || {};
+    const projection = projectionsOf(model)[binding.projection] || {};
     return {
       alias: binding.alias,
       projection: binding.projection,
       plural: false,
       // What it is read by – a value for each tag it declares, in the
-      // command's scope or a literal with its type – and the values a
-      // script's code reads besides.
+      // command's scope or a literal with its type – and the arguments
+      // it takes besides.
       tags: readTagEntries(binding).map(([name, operand]) => ({
         name,
         operand,
@@ -2620,15 +2226,20 @@ function readParts(model, body, binding) {
       })),
     };
   }
+  // A group alias: the instance its one tag picks, and nothing else –
+  // arguments are given per member read, never to the group.
+  const tags = readTagEntries(binding);
   return {
     alias: binding.alias,
-    entity: binding.entity,
+    group: binding.group,
     plural: isFannedOut(model, body, binding),
-    from: operandWords(binding.id),
-    excluding: binding.excluding !== undefined ? operandWords(binding.excluding) : null,
-    // What the command hands a scripted property it reads.
-    arguments: Object.entries(binding.arguments || {})
-      .map(([name, operand]) => ({ name, words: operandWords(operand) })),
+    from: tags.length ? operandWords(tags[0][1]) : '?',
+    tags: tags.map(([name, operand]) => ({
+      name,
+      operand,
+      words: operandSource(operand) === 'tag-literal' ? operandText(operand) : operandWords(operand),
+    })),
+    arguments: [],
   };
 }
 
@@ -2643,12 +2254,12 @@ function typeLabel(member) {
 
 // ---------- what a thing looks like ----------
 //
-// An entity is named in a dozen places – the rail, a read, a change, a
-// loose end – and a page with five kinds of thing on it is scanned by
-// shape long before it is read by name. So every entity carries one
-// mark, and the mark goes wherever the entity does.
+// A group is named in a dozen places – the projections list, a read, a
+// change – and a page with five kinds of thing on it is scanned by
+// shape long before it is read by name. So a group carries one mark,
+// and the mark goes wherever the group does.
 //
-// An entity's mark is authored and only authored. An unmarked entity
+// A group's mark is authored and only authored. An unmarked group
 // carries no glyph: a hashed stand-in was tried and did not earn its
 // place – a shape nobody chose says nothing about the thing, so every
 // page paid a column of noise for a legibility that never arrived. What
@@ -2679,8 +2290,8 @@ function iconPrefix(icon, separator) {
   return icon ? icon + (separator === undefined ? ' ' : separator) : '';
 }
 
-function entityIcon(model, name) {
-  return chosenIcon(model, 'entity-definitions', name);
+function groupIcon(model, name) {
+  return chosenIcon(model, 'group-definitions', name);
 }
 
 const COMMAND_FALLBACK_ICON = '➜';
@@ -2704,7 +2315,7 @@ function commandIcon(model, name) {
 // stops two commands recording the same fact.
 function commandsPublishing(model, eventName) {
   return Object.entries(model['command-definitions'] || {})
-    .filter(([, body]) => (body.publishes || []).some((emission) => emission.name === eventName))
+    .filter(([, body]) => commandEmissions(body).some((emission) => emission.name === eventName))
     .map(([name]) => name);
 }
 
@@ -2722,12 +2333,10 @@ function eventIcon(model, name) {
   return borrowed || EVENT_FALLBACK_ICON;
 }
 
-// Shown beside the type, never behind a gate: a value
-// arrived at by code, or worked out from other projections, is a
-// different kind of claim from one arrived at by a declaration, and a
-// rule reading it should say so on the page.
-function scriptLabel(property) {
-  if (property && property.script) return 'scripted';
+// Shown beside the type, never behind a gate: a value worked out from
+// other projections is a different kind of claim from one folded by
+// declared handlers, and a rule reading it should say so on the page.
+function kindLabel(property) {
   if (property && property.derived) return 'derived';
   return null;
 }

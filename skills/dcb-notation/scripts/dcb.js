@@ -4,7 +4,8 @@
 // own code (playground-core.js), so what passes here is what the
 // playground and dcb.events accept. Plain Node, nothing to install.
 //
-//   node dcb.js check <file> [--cover A,B]   # problems, then each command's boundary
+//   node dcb.js check <file> [--cover A,B] [--strict]
+//                                            # problems, notes, then each command's boundary
 //   node dcb.js conflicts <file>             # for each command, which commands can invalidate it
 //   node dcb.js replay <file> <export> [--map Old=New,…] [--read Projection=value,…]
 //                                            # stored events (NDJSON) against the model
@@ -17,6 +18,11 @@
 // here anything left to fix is a problem and exits 1. `--cover` narrows
 // one check only: scenario coverage is required of the commands it names,
 // so an edit answers for what it changed, and gaps elsewhere are listed.
+// Notes (11.0) are documentation and never a problem: `check` counts the
+// `@unresolved` ones ("Model is incomplete: N unresolved", exit 0 –
+// `--strict` makes it a problem) and lists each command's `@assumption`
+// and `@external` notes for the hand-over. `replay` masks the values of
+// a `@sensitive` type it prints.
 // ============================================================
 'use strict';
 
@@ -66,8 +72,11 @@ function load(playground, file) {
   if (file.endsWith('.json')) {
     const envelope = JSON.parse(raw);
     sandboxSteps = (envelope.sandbox && envelope.sandbox.steps) || [];
-    const { modelId, skipped } = playground.importModelFromEnvelope(envelope);
+    const { modelId, skipped, converted } = playground.importModelFromEnvelope(envelope);
     for (const skip of skipped) problems.push(`skipped on import: ${JSON.stringify(skip)}`);
+    // What an older document said differently, or said that 11.0 cannot
+    // – a command left out among them – never silently.
+    for (const note of converted) problems.push(`converted on import: ${note.name}: ${note.note}`);
     model = playground.projectState()[modelId];
     text = playground.modelToSource(model);
   }
@@ -76,7 +85,8 @@ function load(playground, file) {
     if (d.severity === 'error') problems.push(`${file}:${d.line}:${d.col} ${d.message}`);
   }
   if (!parsed.name) problems.push(`${file}: no model "…" line`);
-  if (problems.some((p) => !p.startsWith('skipped')) || !parsed.name) return { model: null, text, parsed, problems, sandboxSteps };
+  const onImport = (p) => p.startsWith('skipped') || p.startsWith('converted');
+  if (problems.some((p) => !onImport(p)) || !parsed.name) return { model: null, text, parsed, problems, sandboxSteps };
   if (!model) {
     const id = playground.createDcbModel(parsed.name);
     // Scenarios are judged below, with their lines, not refused here.
@@ -86,28 +96,40 @@ function load(playground, file) {
   return { model, text, parsed, problems, sandboxSteps };
 }
 
-// What the commands' scenarios leave unshown: a command nothing runs to
-// success, and a rejection message no scenario reaches.
-function coverageGaps(model) {
+// What the commands' scenarios leave unshown: one scenario is owed per
+// way a command succeeds – each branch that emits, or plain success
+// without branches – and one per rejection message (`commandCoverageGaps`).
+function coverageGaps(playground, model) {
   const gaps = [];
-  const scenarios = Object.values(model['scenario-definitions']);
-  for (const [name, body] of Object.entries(model['command-definitions'])) {
-    const outcomes = scenarios.filter((s) => s.command === name).map((s) => s.then || {});
-    if (!outcomes.some((then) => then.outcome === 'published')) gaps.push({ name, gap: 'no scenario shows it succeed' });
-    for (const message of new Set((body.conditions || []).map((rule) => rule.rejection))) {
-      if (!outcomes.some((then) => then.rejection === message)) gaps.push({ name, gap: `no scenario shows "${message}"` });
-    }
+  for (const name of Object.keys(model['command-definitions'])) {
+    const { succeeds, rejections } = playground.commandCoverageGaps(model, name);
+    for (const owed of succeeds) gaps.push({ name, gap: `no scenario shows it ${playground.successOwedText(owed)}` });
+    for (const message of rejections) gaps.push({ name, gap: `no scenario shows "${message}"` });
   }
   return gaps;
 }
 
+// Why a broken scenario cannot run, as one cause many share: a value
+// its type does not admit, a field read that was left out – or, where
+// nothing generalises, the reason itself.
+function brokenCause(reason) {
+  const refused = reason.match(/, which (.+?) does not admit: /);
+  if (refused) return `a value ${refused[1]} does not admit`;
+  const unspecified = reason.match(/^Reads unspecified field ("[^"]*") of (\S+)/);
+  if (unspecified) return `reads unspecified field ${unspecified[1]} of ${unspecified[2]}`;
+  return reason.replace(/^(Given step \d+|Expected event \d+) /, '');
+}
+
 function checkProblems(playground, file, { model, parsed }, cover) {
   const problems = [];
+  const causes = new Map();
   const report = playground.sourceScenarioReport(model, parsed);
   // "Drifted" is the playground's word for a scenario that once held. Here
   // it may never have: this run may be the first.
   for (const p of [...report.errors, ...report.warnings]) {
     problems.push(`${file}:${p.line}:${p.col} scenario: ${p.message.replace(/^Drifted – the model now does:/, 'Does not hold – the model does:')}`);
+    const broken = p.message.match(/^(?:Broken – |No outcome – cannot run: )([\s\S]*)$/);
+    if (broken) causes.set(brokenCause(broken[1]), (causes.get(brokenCause(broken[1])) || 0) + 1);
   }
   for (const a of playground.modelAdvisories(model)) problems.push(`${a.name}: ${a.message}`);
   for (const line of playground.modelToSource(model).split('\n')) {
@@ -119,19 +141,63 @@ function checkProblems(playground, file, { model, parsed }, cover) {
   for (const name of cover || []) {
     if (!model['command-definitions'][name]) problems.push(`--cover names "${name}", which this model does not define`);
   }
-  const gaps = coverageGaps(model);
+  const gaps = coverageGaps(playground, model);
   const required = gaps.filter(({ name }) => !cover || cover.includes(name));
   problems.push(...required.map(({ name, gap }) => `command ${name}: ${gap}`));
-  return { problems, otherGaps: gaps.filter((gap) => !required.includes(gap)) };
+  // A cause many scenarios share – a type's constraint 11.0 holds them
+  // to, mostly – is said once, counted, after the list.
+  const summary = [...causes].filter(([, count]) => count > 1).map(([cause, count]) => `${count} broken scenarios: ${cause}`);
+  return { problems, summary, otherGaps: gaps.filter((gap) => !required.includes(gap)) };
 }
 
+// Every `@unresolved` note (11.0), as `kind name: text`, the model's
+// definitions in order – grouped projections under their group.
+function unresolvedNotes(model) {
+  const out = [];
+  const kinds = [['custom-type-definitions', 'type'], ['event-definitions', 'event'], ['group-definitions', 'group'],
+    ['projection-definitions', 'projection'], ['command-definitions', 'command']];
+  for (const [collection, label] of kinds) {
+    for (const [name, body] of Object.entries(model[collection] || {})) {
+      for (const note of (body && body.unresolved) || []) out.push(`${label} ${name}: ${note}`);
+      for (const inner of (label === 'group' && body.projections) || []) {
+        for (const note of (inner && inner.unresolved) || []) out.push(`projection ${name}.${inner.name}: ${note}`);
+      }
+    }
+  }
+  return out;
+}
+
+// Each command's notes for the hand-over: what was assumed and what the
+// layer around the commands checks, then what is open.
+function commandNotes(model) {
+  const lines = [];
+  for (const [name, body] of Object.entries(model['command-definitions'])) {
+    const notes = [
+      ...(body.assumptions || []).map((note) => `assumption: ${note}`),
+      ...(body.externalRules || []).map((note) => `external: ${note}`),
+      ...(body.unresolved || []).map((note) => `unresolved: ${note}`),
+    ];
+    if (notes.length) lines.push(`${name}:`, ...notes.map((note) => `  ${note}`));
+  }
+  return lines;
+}
+
+// Each command's boundary, one line per read (`boundaryReads`), so an
+// audit names the rule each line serves: the projection read, what
+// reads it – a rule by its message, `emit`, … or `nothing` – and its
+// query item. A group's members each get a line of their own, though
+// the store is asked them as one item.
 function boundaryLines(playground, model) {
   const lines = [];
   for (const [name, body] of Object.entries(model['command-definitions'])) {
     const summary = playground.boundarySummary(model, body);
     lines.push(`${name}: ${summary.words}; appends with tags ${summary.writes.join(', ') || 'none'}`);
-    for (const item of summary.items) {
-      lines.push(`  ${item.types.join(' | ') || 'any type'} [${item.tags.join(', ') || 'no tag'}]${item.fannedOut ? ' per element' : ''}`);
+    for (const read of playground.boundaryReads(model, body)) {
+      const readers = read.readers.length ? read.readers.join(', ') : 'nothing';
+      for (const item of read.items) {
+        lines.push(`  ${read.label}${item.via ? ` via ${item.via}` : ''} ← ${readers}: `
+          + `${item.types.join(' | ') || 'any type'} [${item.tags.join(', ') || 'no tag'}]${item.fannedOut ? ' per element' : ''}`);
+      }
     }
   }
   return lines;
@@ -173,7 +239,7 @@ function conflictLines(playground, model) {
     const items = playground.boundarySummary(model, body).items;
     const found = new Set();
     for (const [other, otherBody] of commands) {
-      for (const eventName of new Set((otherBody.publishes || []).map((emission) => emission && emission.name))) {
+      for (const eventName of new Set(playground.commandEmissions(otherBody).map((emission) => emission.name))) {
         const event = model['event-definitions'][eventName];
         if (!event) continue;
         const carried = new Set(playground.eventTagLeaves(model, event).map((leaf) => leaf.identifierType));
@@ -216,22 +282,21 @@ function modelEventName(model, type, map) {
   return map[pascal] || pascal;
 }
 
-// Why a value does not fit a property's declared type, or null. The type's
-// own constraints count here: stored values, unlike scenario values, are real.
-function valueProblem(model, property, value) {
-  if (property.isList) return Array.isArray(value) ? null : 'not a list';
-  const custom = (model['custom-type-definitions'] || {})[property.propertyType];
-  const schema = custom ? (custom.schema || {}) : { type: property.propertyType };
-  const type = schema.type;
-  const actual = Array.isArray(value) ? 'array' : typeof value;
-  if (type === 'integer' ? !Number.isInteger(value) : (type && type !== actual)) return `not of type ${type}`;
-  if (schema.minimum !== undefined && value < schema.minimum) return `below ${schema.minimum}`;
-  if (schema.maximum !== undefined && value > schema.maximum) return `above ${schema.maximum}`;
-  if (schema.minLength !== undefined && value.length < schema.minLength) return `shorter than ${schema.minLength}`;
-  if (schema.maxLength !== undefined && value.length > schema.maxLength) return `longer than ${schema.maxLength}`;
-  if (schema.pattern !== undefined && !new RegExp(schema.pattern, 'u').test(value)) return `does not match ${schema.pattern}`;
-  if (schema.enum !== undefined && !schema.enum.includes(value)) return 'not in its enum';
-  return null;
+// A value as `replay` prints it: what a `@sensitive` type holds (11.0)
+// masked – personal data has no business in a terminal – a list's
+// elements and a record's fields included.
+function masked(model, typeName, value) {
+  if (value === null || value === undefined) return value;
+  const types = model['custom-type-definitions'] || {};
+  const type = types[typeName];
+  if (Array.isArray(value)) return value.map((element) => masked(model, typeName, element));
+  if (type && type.isSensitive === true) return '•••';
+  if (type && Array.isArray(type.properties) && typeof value === 'object') {
+    const out = { ...value };
+    for (const field of type.properties) if (field && field.name in out) out[field.name] = masked(model, field.propertyType, out[field.name]);
+    return out;
+  }
+  return value;
 }
 
 function replay(playground, model, exportFile, map, reads) {
@@ -258,12 +323,20 @@ function replay(playground, model, exportFile, map, reads) {
     }
     for (const property of definition.properties || []) {
       const value = exported.data[property.name];
-      if (value === undefined || value === null) {
-        if (!property.isOptional) mismatch(`${name}.${property.name}: required, but ${value === null ? 'null' : 'missing'}`);
-        continue;
+      if ((value === undefined || value === null) && !property.isOptional) {
+        mismatch(`${name}.${property.name}: required, but ${value === null ? 'null' : 'missing'}`);
       }
-      const problem = valueProblem(model, property, value);
-      if (problem) mismatch(`${name}.${property.name}: ${problem}`);
+    }
+    // The one check of a value against its type, the one a scenario's
+    // values get (payloadValueProblems, model.js): a list's elements and
+    // a record's fields included, and no value printed.
+    for (const { name: field, problem } of playground.payloadValueProblems(model, definition.properties, exported.data)) {
+      mismatch(`${name}.${field}: a value ${problem}`);
+    }
+    // A datetime without its offset names no instant; a duration is ISO
+    // 8601 in days, hours, minutes and seconds (11.0).
+    for (const { name: field, problem } of playground.payloadTimeProblems(model, definition.properties, exported.data)) {
+      mismatch(`${name}.${field}: ${problem.replace(/"[^"]*"/, 'a value')}`);
     }
   }
   const out = [`${events.length} event(s) of ${Object.keys(counts).length} model type(s)`];
@@ -283,7 +356,8 @@ function replay(playground, model, exportFile, map, reads) {
     const given = values ? values.split(',') : [];
     if (given.length !== params.length) { reported.push(`  ${spec}: needs ${params.length} tag value(s)`); continue; }
     const tags = Object.fromEntries(params.map((param, at) => [param.name, given[at]]));
-    reported.push(`  ${spec}: ${JSON.stringify(playground.foldProjection(model, events, projection, { tags }))}`);
+    const value = playground.foldProjection(model, events, projection, { tags });
+    reported.push(`  ${spec}: ${JSON.stringify(masked(model, definition.valueType, value))}`);
   }
   console.log([...out, ...reported].join('\n'));
   return Object.keys(unknown).length || Object.keys(mismatches).length || unreadable ? 1 : 0;
@@ -300,12 +374,15 @@ function main() {
   const args = process.argv.slice(2);
   const reads = takeOption(args, '--read');
   const map = Object.fromEntries(takeOption(args, '--map').flatMap((pairs) => pairs.split(',')).map((pair) => pair.split('=')));
+  const strictAt = args.indexOf('--strict');
+  const strict = strictAt >= 0;
+  if (strict) args.splice(strictAt, 1);
   const coverAt = args.indexOf('--cover');
   const cover = coverAt < 0 ? null : (args.splice(coverAt, 2)[1] || '').split(',').filter(Boolean);
   const [verb, file, ...rest] = args;
   const replaying = verb === 'replay';
   if (!['check', 'print', 'json', 'link', 'conflicts', 'replay'].includes(verb) || !file || rest.length !== (replaying ? 1 : 0) || (cover && !cover.length)) {
-    console.error('usage: dcb.js check <file> [--cover Command,…] | print|json|link|conflicts <file> | replay <file> <export> [--map Old=New,…] [--read Projection=value,…]');
+    console.error('usage: dcb.js check <file> [--cover Command,…] [--strict] | print|json|link|conflicts <file> | replay <file> <export> [--map Old=New,…] [--read Projection=value,…]');
     return 2;
   }
   const playground = loadPlayground(fs.readFileSync(file, 'utf8'));
@@ -315,6 +392,7 @@ function main() {
     console.error(loaded.problems.join('\n'));
     return 1;
   }
+  if (verb !== 'check' && loaded.problems.length) console.error(loaded.problems.join('\n'));
   if (verb === 'conflicts') {
     console.log(conflictLines(playground, model).join('\n'));
   } else if (replaying) {
@@ -329,12 +407,17 @@ function main() {
     console.log(PLAYGROUND_URL + '#model=' + zlib.gzipSync(JSON.stringify(playground.buildShareEnvelope(model, []))).toString('base64url')
       + (playground.experimentalFeatures(model).length ? '&experimental' : ''));
   } else {
-    const { problems: found, otherGaps } = checkProblems(playground, file, loaded, cover);
-    const problems = [...loaded.problems, ...found];
-    if (problems.length) console.error(problems.join('\n') + `\n\n${problems.length} problem(s)\n`);
+    const { problems: found, summary, otherGaps } = checkProblems(playground, file, loaded, cover);
+    const unresolved = unresolvedNotes(model);
+    const incomplete = unresolved.length ? [`Model is incomplete: ${unresolved.length} unresolved`, ...unresolved.map((note) => `  ${note}`)] : [];
+    const problems = [...loaded.problems, ...found, ...(strict && incomplete.length ? [incomplete.join('\n')] : [])];
+    if (problems.length) console.error(problems.join('\n') + (summary.length ? `\n\n${summary.join('\n')}` : '') + `\n\n${problems.length} problem(s)\n`);
     if (otherGaps.length) console.log('Not covered, outside --cover:\n' + otherGaps.map(({ name, gap }) => `  command ${name}: ${gap}`).join('\n') + '\n');
     const notes = vocabularyNotes(model);
     if (notes.length) console.log('Worth a look:\n' + notes.map((note) => `  ${note}`).join('\n') + '\n');
+    if (incomplete.length && !strict) console.log(incomplete.join('\n') + '\n');
+    const handOver = commandNotes(model);
+    if (handOver.length) console.log('Notes per command:\n' + handOver.map((line) => `  ${line}`).join('\n') + '\n');
     const scenarios = Object.keys(model['scenario-definitions']).length + Object.keys(model['projection-scenario-definitions']).length;
     if (!problems.length) console.log(`${scenarios} scenario(s) hold\n`);
     console.log(boundaryLines(playground, model).join('\n'));

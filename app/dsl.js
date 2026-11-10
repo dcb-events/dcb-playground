@@ -54,19 +54,57 @@
 // never left off, which is what keeps a read apart from an enum member
 // by sight. A value has to be of the tag's declared type; a literal
 // says its type anyway, `CourseStatus(CourseId("c1"))`, so the text
-// shows which tag it fills. A scripted projection declares what it
-// takes besides after its tags, `scripted projection X (tag courseId:
+// shows which tag it fills. A projection declares what it takes
+// besides after its tags, `derived projection X (tag courseId:
 // CourseId, days: integer)`, and a read gives those after the tags
 // too. `each` before a value reads once per element of a list. A read may sit anywhere an
 // operand does – `require CourseStatus(courseId) == Existent`, an
 // emission's `courseId: CourseNumbering()`, another read's value
 // `OwnedCourses(CourseOwner(courseId))` – and an `alias` only names
 // one; written twice, it is one query. A call is a read when a
-// projection is declared by its name and a tag literal otherwise,
-// settled once every declaration is known. An entity (experimental) is
-// declared the same way, `entity Course (tag courseId: CourseId)`, and
-// read `Course(courseId)` – `Course(each …)` for many, its scripted
-// properties' arguments given by name after the identifier.
+// projection or a group is declared by its name and a tag literal
+// otherwise, settled once every declaration is known.
+//
+// **A group owns projections that share one partition tag** (11.0):
+//
+//   @icon("📚")
+//   group Course (tag courseId: CourseId) {
+//     projection capacity: integer = 0 {
+//       on CourseDefined => set event.data.capacity
+//     }
+//
+//     derived projection remaining: integer {
+//       capacity - subscriptionCount
+//     }
+//   }
+//
+// Inside it each projection is spelled as at the top level minus the
+// tag header – the group's one tag, explicit in its own header, is
+// theirs. A derived one names its siblings bare, `capacity`, and has
+// the tag's name in scope for reads outside the group,
+// `Other(courseId)`. Outside, a projection of the group is read through
+// it: `Course(courseId).capacity` in place, or `alias course =
+// Course(courseId)` and then `course.capacity` – `Course(each
+// courseIds)` for many. Its arguments go on the projection, by name,
+// never on the group: `course.seatsOn(slot: s)`. A group is a name
+// and nothing more – reading `course.capacity` queries `capacity`'s
+// events alone – so the alias reads as the read of an instance it is
+// not, and the editor says what it adds beside it. A grouped projection
+// may also be named on its own, `alias capacity =
+// Course(courseId).capacity`, the stored shape of an alias bound to it.
+// `entity`, its `lifecycle` and `excluding` were 10.0's; each is an
+// error that says what replaced it.
+//
+// **The casing rule.** A capitalised name is a declaration that can be
+// named from anywhere: a type, an event, a group, a top-level
+// projection, a command, an enum member. A lowercase one is reached
+// through something in scope: an alias, a property or field, a tag or
+// parameter name, a projection of a group – `course.capacity` through
+// the alias, `capacity` among its siblings. It is what lets the parser
+// tell `Existent` (a member) from `existent` (a name) by sight, and why
+// a group's projections are lowercase: `course.Capacity` would be the
+// one `x.Y` in the language, and a bare sibling `Capacity` would read
+// as an enum member.
 //
 // The read is a function application, and spelled as one on purpose: a
 // projection is a pure function of the log, its tags and its arguments.
@@ -83,7 +121,7 @@
 // JSON does not store. Where a convenience would have needed inference
 // it was left out: an alias is always written, since the schema stores
 // it. A fan-out is marked where the schema marks it, `{each: …}`, on a
-// projection read's tag and an entity read's identifier alike. A read's
+// projection read's tag and a group read's alike. A read's
 // values are positional in the text and named in the stored shape –
 // which is why the printer and the parser take what each projection
 // declares (`sourceNamesOf`), and why a read of a projection the text
@@ -114,11 +152,76 @@
 // that is how the model stores it and how the pages show it. The
 // research note is docs/research/2026-10-03-code-view-language.md.
 //
+// **A command's body is its steps, in the order they run** (11.0):
+// `require … else reject "…"`, `emit E { … }`, and `if c => …  else
+// if c => …  else => …`, whose arm is one `emit` or `reject "…"`, or a
+// block `{ … }` of steps – the wire format's `steps`, statement for
+// statement, so the printer writes them as stored and the parser reads
+// them back in written order (`step`). A condition joins comparisons
+// with `and` and `or`, `and` binding tighter; a bracketed group stays
+// a group, so a run of one joiner is one list and the printer brackets
+// only what precedence would otherwise regroup. `not` stays a
+// comparison's, never a group's. The aliases sit at the top: a read is
+// made where a step first needs it, wherever it is declared.
+//
+// **A fan-out emit is a step too** (11.0): `for each x in source =>
+// emit E { … }`, or a block `{ … }` of `emit`s and `if`s whose arms
+// are each one `emit` or `reject` (`loop`) – `for each (a, b) in
+// P(c, *, *)` for two open tags. The source is a read leaving a tag
+// open (the one other place `*` may stand), `list(P(x, *))`, a list
+// projection or a list parameter. The names are read as payload properties are – the
+// wire format stores them as `{parameterName}` – and over an open read
+// `value` is the instance's value, `value.field` a record's field: a
+// word only inside such a loop. A loop inside a loop, a `require`
+// inside one and a block arm are errors where they are written; a
+// stored loop holding one prints as JSON. A loop's names are the
+// language service's `loopVariable`s, renamed like a payload property.
+//
+// **A handler may branch the same way** (11.0): `on E { if c => op
+// else if c => op  else => op }`, each `if` a chain of its own, so
+// separate `if`s all apply and an `else` continues the chain above it
+// (`branchedHandler`). One operation per branch – a second would act on
+// the same value, so it is a second `if`, and a block is an error. A
+// comparison is `event.data.x` (or a record's `event.data.x.y`) `==` or
+// `!=` one of the projection's tags or a literal; a read of another
+// projection, or of `state`, is an error where it is written – the
+// condition picks what one event does, it never widens what a fold
+// reads, and it never narrows the query.
+//
+// **Time is data** (11.0): `datetime` and `duration` are built-in
+// types, and a number straight followed by a unit is a duration
+// literal – `30s`, `15m`, `24h`, `7d`, `1h30m` – lexed as one token and
+// stored as the ISO 8601 duration it names, units as written (`PT15M`),
+// so it prints back as typed; a month, a fraction or an unknown unit is
+// an error where it is written. A datetime literal is a string,
+// `"2026-01-01T10:00:00Z"`, checked where a datetime is expected. The
+// clock is a parameter, `now: datetime`. `type Deadline = datetime`
+// stores the string format, `{type: 'string', format: 'date-time'}`.
+//
+// **Lists from open reads, counts as values** (the 11.0 acceptance):
+// `list(P(x, *))` is a collection function like `sum`, `{collect:
+// 'list'}`, the one open tag's values. `count(xs)` of a list is
+// `{count: operand}` wherever a value goes – except `count(xs) == 3`
+// (and `!=`, `<`, `>`), which reads back as the count predicate it was
+// always stored as, so no stored rule changes; a count operand stored
+// in that one position prints as JSON. Which `count(…)` is meant shows
+// inside the parentheses: a `*` in the read directly inside, or a
+// `where`, makes it the collection function. A handler's value may be
+// a record's field one hop into the event, `event.data.signUp.email`.
+//
+// **A `///` line is stored, a `//` line is not** (11.0): doc comments
+// right above a definition or the `model "…"` line are its
+// description, one line each. Annotations in front of a definition are
+// the notes – `@assumption("…")`, `@external("…")`, `@unresolved("…")`,
+// repeatable – and the marks `@deprecated` (an event) and `@sensitive`
+// (a type), beside `@icon`, `@feature` and `@tagSchema`; one table,
+// `SOURCE_ANNOTATIONS`, says where each goes and what it fills. None
+// is read by evaluation.
+//
 // **A few spellings are the schema's own tokens**, matching the
-// interface's technical register: `currentValue`, `successor(x)`,
-// `event.data.x` (the path a scripted handler writes), the predicate
-// words `contains` / `containsAny` / `startsWith` / `endsWith`, and the
-// script fields `initialState` / `exposes`. The rest are what a
+// interface's technical register: `successor(x)`, `event.data.x`, and
+// the predicate words `contains` / `containsAny` / `startsWith` /
+// `endsWith`. The rest are what a
 // developer would type: `==`, `<`, `in [..]` / `in xs`, `count(x)`,
 // `is empty`, `X[]` for a list, `name?:` for an optional property, and
 // `X(…)` for a read.
@@ -131,25 +234,25 @@
 // like an expression invites `state + 2 * event.data.n`, which no
 // operation stores. The vocabulary is closed because it is analysed,
 // not only run – what an editor offers per type (`operationsFor`),
-// whether a boolean only ever moves one way (`isMonotoneBoolean`),
-// which event moves a lifecycle – and a keyword shows that edge where
+// which event moves an enum or a boolean on (the Lifecycle tab's
+// `lifecycleMachine`) – and a keyword shows that edge where
 // an expression would hide it. Arithmetic *between* values is a derived
 // projection's (9.0): `derived projection Left (…): integer { Cap(x) -
 // Taken(x) }`, one operator – `+`, `-`, `*`, `min(a, b)`, `max(a, b)` –
 // over two projections or literals, outside any fold, so the fold arms
-// stay keywords. What neither says is what a script is for (experimental):
-// its arms are expressions over `state`, `event` and `args`, behind a
-// door that says analysis stops there. Expect the list to stay short:
+// stay keywords. A command's rule and emission add and subtract too
+// (11.0), left to right and without brackets – `Cap(x) - sum(…) >=
+// seats`, `expiresAt: now + 15m` – which is all a rule over time and a
+// remainder needs; `*`, `min` and `max` stay a derived projection's. What neither says goes unsaid: the scripted projection
+// that once said it, behind a door where analysis stopped, went in
+// 11.0 (`"scripted" is gone` is the error). Expect the list to stay short:
 // each new operation is a major (a reader fails on one it does not
 // know) and has to earn its place by being analysable – a
 // duplicate-free append is the candidate in sight.
 //
 // **What kind a projection is, it says in front**: `derived projection`
 // holds one expression in its block, a comparison or a computation, and
-// no initial value; `scripted projection` takes arguments after its
-// tags and holds `initialState`, `exposes` and code arms. The header
-// already knows what the block may hold, so an argument on anything but
-// a script is an error at the header, not after the block.
+// no initial value. The header already knows what the block may hold.
 //
 // **Operand names resolve per command.** A bare or dotted lowercase
 // name is an alias when some `alias` in the same command declares it
@@ -226,8 +329,8 @@
 // `sourceSymbols` walks the bodies and resolves each marked name to the
 // one thing it means – `member CourseStatus Existent`, never a word
 // that happens to match – so a rename (`sourceRename`) touches exactly
-// those tokens, and refuses rather than guess: over a script or json
-// body the name may also hide in, a member whose enum the text cannot
+// those tokens, and refuses rather than guess: over a json body the
+// name may also hide in, a member whose enum the text cannot
 // tell, or a result that would not read back the same. A read in place
 // can be named by an alias (`sourceIntroduceAlias`), proved the same
 // way: the command reads back as it was. Completion
@@ -235,8 +338,8 @@
 // it, since a text being typed rarely parses there. And beside every
 // `alias` it says how many event types that alias adds to the append
 // condition, and names them on hover (`sourceReadQueries`) – only the
-// used properties' – since `alias course = Course(courseId)` otherwise
-// reads as the whole entity; and beside each command, what it reads in
+// used projections' – since `alias course = Course(courseId)` otherwise
+// reads as the whole group; and beside each command, what it reads in
 // all (`sourceCommandQueries`), in the same words.
 // ============================================================
 
@@ -245,7 +348,7 @@ const SOURCE_EXTENSION = '.dcb';
 const SOURCE_KINDS = [
   'custom-type-definition',
   'event-definition',
-  'entity-definition',
+  'group-definition',
   'projection-definition',
   'command-definition',
 ];
@@ -253,7 +356,7 @@ const SOURCE_KINDS = [
 const SOURCE_KEYWORD = {
   'custom-type-definition': 'type',
   'event-definition': 'event',
-  'entity-definition': 'entity',
+  'group-definition': 'group',
   'projection-definition': 'projection',
   'command-definition': 'command',
 };
@@ -261,7 +364,7 @@ const SOURCE_KEYWORD = {
 const SOURCE_SECTION = {
   'custom-type-definition': 'Types',
   'event-definition': 'Events',
-  'entity-definition': 'Entities',
+  'group-definition': 'Groups',
   'projection-definition': 'Projections',
   'command-definition': 'Commands',
 };
@@ -270,16 +373,40 @@ const SOURCE_SECTION = {
 // object out: JSON Schema's own `type` keywords.
 const SOURCE_BASE_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array', 'null'];
 
-// Which annotation goes on which kind, and the body field it fills.
+// A time a value type may be (11.0), `type Deadline = datetime`: the
+// JSON Schema format of the string it is.
+const SOURCE_TIME_FORMATS = { datetime: 'date-time', duration: 'duration' };
+
+// Which annotation goes on which kind, and the body field it fills –
+// in the order they print. A `flag` takes no text and stores true; a
+// `repeat` is a note (11.0), given once per line and stored as a list.
+// Notes go on every definition and say nothing a run reads: an
+// assumption taken where the brief was silent, a rule the layer around
+// the commands checks, a question still open (dcb-events.github.io#109).
+const SOURCE_NOTE_KINDS = ['custom-type-definition', 'event-definition', 'group-definition', 'projection-definition', 'command-definition'];
 const SOURCE_ANNOTATIONS = {
-  icon: ['entity-definition', 'event-definition', 'command-definition'],
-  feature: ['command-definition'],
-  tagSchema: ['custom-type-definition'],
+  icon: { kinds: ['group-definition', 'event-definition', 'command-definition'], field: 'icon' },
+  feature: { kinds: ['command-definition'], field: 'feature' },
+  tagSchema: { kinds: ['custom-type-definition'], field: 'tagSchema' },
+  sensitive: { kinds: ['custom-type-definition'], field: 'isSensitive', flag: true },
+  deprecated: { kinds: ['event-definition'], field: 'isDeprecated', flag: true },
+  assumption: { kinds: SOURCE_NOTE_KINDS, field: 'assumptions', repeat: true },
+  external: { kinds: SOURCE_NOTE_KINDS, field: 'externalRules', repeat: true },
+  unresolved: { kinds: SOURCE_NOTE_KINDS, field: 'unresolved', repeat: true },
 };
+// What a grouped projection may carry: its notes, never a mark of its own.
+const SOURCE_GROUPED_ANNOTATIONS = ['assumption', 'external', 'unresolved'];
+// The fields a description and the notes fill, which every printer
+// writes in front of what it prints (`sourceAnnotations`).
+const SOURCE_NOTE_FIELDS = ['description', ...Object.values(SOURCE_ANNOTATIONS).filter((a) => a.flag || a.repeat).map((a) => a.field)];
 
 const SOURCE_IDENT_RE = /^[\p{L}_][\p{L}\p{M}\p{Nd}_]*$/u;
 const SOURCE_MEMBER_RE = /^\p{Lu}[\p{L}\p{M}\p{Nd}_]*$/u;
-const SOURCE_DECL_STARTS = ['@', 'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'derived', 'scripted', 'projection', 'command'];
+// `entity` is 10.0's, still a start so that an old text's error stays
+// on its own declaration.
+const SOURCE_DECL_STARTS = ['@', 'model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'entity', 'untagged', 'derived', 'scripted', 'projection', 'command'];
+// A grouped projection's local name, and a group's member read by it.
+const SOURCE_LOCAL_RE = /^\p{Ll}[\p{L}\p{M}\p{Nd}]*$/u;
 // What a derived projection computes with, spelled as the symbols a
 // developer would type; `min` and `max` are calls, `min(a, b)`.
 const SOURCE_OPERATORS = { '+': 'add', '-': 'subtract', '*': 'multiply' };
@@ -303,11 +430,12 @@ function sourcePut(target, key, value) {
 const SOURCE_PUNCT = ['=>', '==', '!=', '<=', '>=', '<', '>', '=', '{', '}', '(', ')', '[', ']', ',', ':', '.', '?', '@', '+', '-', '*'];
 const SOURCE_NUMBER_RE = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
 const SOURCE_WORD_RE = /[\p{L}_][\p{L}\p{M}\p{Nd}_]*/uy;
+const SOURCE_DURATION_RE = /-?[\d.]+[\p{L}_][\p{L}\p{M}\p{Nd}_]*/uy;
 
 // Whether a token closes a value, so a `-` straight after it subtracts
 // rather than starting a negative number: `A(x) -1`, `3 -1`.
 function endsValue(token) {
-  return !!token && ((token.t === 'punct' && (token.v === ')' || token.v === ']')) || token.t === 'number');
+  return !!token && ((token.t === 'punct' && (token.v === ')' || token.v === ']')) || token.t === 'number' || token.t === 'duration');
 }
 
 function lexSource(text) {
@@ -317,6 +445,7 @@ function lexSource(text) {
   let line = 1;
   let col = 1;
   let lastLine = 0;
+  let doc = [];
   const advanceTo = (stop) => {
     while (i < stop) {
       if (text[i] === '\n') { line += 1; col = 1; } else col += 1;
@@ -332,6 +461,13 @@ function lexSource(text) {
     const start = { line, col };
     if (text.startsWith('//', i)) {
       const end = text.indexOf('\n', i);
+      // A doc comment (11.0), `/// …`, rides on the token after it: the
+      // declaration that token starts stores it as its description, and
+      // anywhere else it is an ordinary comment.
+      if (text.startsWith('///', i) && !text.startsWith('////', i)) {
+        const line = text.slice(i + 3, end < 0 ? text.length : end).replace(/\r$/, '');
+        doc.push(line.startsWith(' ') ? line.slice(1) : line);
+      }
       advanceTo(end < 0 ? text.length : end);
       continue;
     }
@@ -342,6 +478,9 @@ function lexSource(text) {
       continue;
     }
     let token;
+    // A fenced block was a scripted handler's code until 11.0. It is
+    // still read as one token, so the parser can say where a handler
+    // tries to run code rather than stumble over the backticks.
     if (text.startsWith('```', i)) {
       const end = text.indexOf('```', i + 3);
       const value = text.slice(i + 3, end < 0 ? text.length : end);
@@ -371,11 +510,24 @@ function lexSource(text) {
     } else if ((c >= '0' && c <= '9') || (c === '-' && text[i + 1] >= '0' && text[i + 1] <= '9' && !endsValue(tokens[tokens.length - 1]))) {
       SOURCE_NUMBER_RE.lastIndex = i;
       const match = SOURCE_NUMBER_RE.exec(text);
-      advanceTo(i + match[0].length);
-      token = { t: 'number', v: Number(match[0]) };
-      // Past what a double holds, a number reads as Infinity – and is
-      // stored as null, JSON having no Infinity.
-      if (!Number.isFinite(token.v)) report('This number is too large to store.', start);
+      // A number straight followed by a letter is a duration (11.0):
+      // `15m`, `7d`, `1h30m` – the ISO 8601 duration it stores, its
+      // units as written. Anything else so written is an error here.
+      if (/[\p{L}_]/u.test(text[i + match[0].length] || '')) {
+        SOURCE_DURATION_RE.lastIndex = i;
+        const raw = SOURCE_DURATION_RE.exec(text)[0];
+        advanceTo(i + raw.length);
+        const read = raw.startsWith('-') ? { error: `"${raw}" – a duration is never negative; subtract it instead: now - ${raw.slice(1)}.` }
+          : durationFromLiteral(raw);
+        if (read.error) report(read.error, start);
+        token = { t: 'duration', v: read.value === undefined ? null : read.value, raw };
+      } else {
+        advanceTo(i + match[0].length);
+        token = { t: 'number', v: Number(match[0]) };
+        // Past what a double holds, a number reads as Infinity – and is
+        // stored as null, JSON having no Infinity.
+        if (!Number.isFinite(token.v)) report('This number is too large to store.', start);
+      }
     } else if (/[\p{L}_]/u.test(String.fromCodePoint(text.codePointAt(i)))) {
       SOURCE_WORD_RE.lastIndex = i;
       const match = SOURCE_WORD_RE.exec(text);
@@ -392,6 +544,7 @@ function lexSource(text) {
     token.endLine = line;
     token.endCol = col;
     token.first = start.line !== lastLine;
+    if (doc.length) { token.doc = doc; doc = []; }
     lastLine = line;
     tokens.push(token);
   }
@@ -416,18 +569,19 @@ class SourceError extends Error {
 function describeToken(token) {
   if (token.t === 'eof') return 'the end of the text';
   if (token.t === 'string') return 'a string';
+  if (token.t === 'duration') return `the duration ${token.raw}`;
   if (token.t === 'code') return 'a code block';
   return `"${token.v}"`;
 }
 
-// The text, read back: `{ name, collections, spans, diagnostics,
-// implicit }`. `collections` holds one ordered `{ name: body }` map per
-// source kind – the shape `replaceDefinitions` takes. `spans` says
-// where each definition sits (1-based, Monaco's convention), for
-// markers, navigation and the outline. `implicit` names the identifier
-// types synthesized for entities whose type the text never declared:
-// writing `entity Tenant {}` should not also require `tag type TenantId
-// = string`, any more than creating one on its page does.
+// The text, read back: `{ name, collections, spans, diagnostics }`.
+// `collections` holds one ordered `{ name: body }` map per source kind
+// – the shape `replaceDefinitions` takes. `spans` says where each
+// definition sits (1-based, Monaco's convention), for markers,
+// navigation and the outline; a group's projections have spans of
+// their own, under their qualified names (`Course.capacity`), ahead of
+// their group's, so the innermost is found first. Nothing is
+// synthesized: a group's tag type is written, as everything else is.
 //
 // Errors never stop the read: a declaration that fails is reported
 // and skipped to the next line that starts one, so a typo in one
@@ -442,7 +596,7 @@ function parseModelSource(text, options = {}) {
     const collections = {};
     for (const kind of SOURCE_KINDS) collections[kind] = {};
     return {
-      name: null, collections, spans: [], implicit: [], scenarios: [], groups: [], marks: new WeakMap(),
+      name: null, collections, spans: [], scenarios: [], groups: [], marks: new WeakMap(),
       diagnostics: [{
         severity: 'error', message: 'This text could not be read: it is nested too deeply.',
         line: 1, col: 1, endLine: 1, endCol: 2,
@@ -456,7 +610,7 @@ function parseModelSourceText(text, options) {
   const collections = {};
   for (const kind of SOURCE_KINDS) collections[kind] = {};
   const result = {
-    name: null, collections, spans: [], diagnostics, implicit: [], scenarios: [], groups: [], marks: new WeakMap(),
+    name: null, collections, spans: [], diagnostics, scenarios: [], groups: [], marks: new WeakMap(),
   };
   let at = 0;
 
@@ -502,6 +656,15 @@ function parseModelSourceText(text, options) {
     if (++depth > SOURCE_MAX_DEPTH) fail(`This is nested more than ${SOURCE_MAX_DEPTH} levels deep.`);
   };
   const leave = (value) => { depth -= 1; return value; };
+  // Whether the read about to be parsed may leave a tag open (`*`,
+  // 11.0): only the one a collection function collects, never one
+  // nested inside it.
+  let openAllowed = false;
+  // The loop being read (11.0): null outside one; inside, whether its
+  // source is an open read – where `value` is the instance's value.
+  let loopRead = null;
+  // The command being read: what a loop's names may not shadow.
+  let commandRead = null;
   const ident = (what) => (peek().t === 'ident' ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
   const declName = (what) => (peek().t === 'ident' || peek().t === 'string'
     ? next() : fail(`Expected ${what}, found ${describeToken(peek())}.`));
@@ -509,20 +672,29 @@ function parseModelSourceText(text, options) {
   // word followed by a name, or an annotation – ends whatever block is
   // still open, so a missing "}" is reported where it is missing
   // rather than as nonsense about the declaration below it. "Plainly",
-  // because `type: string` is a property called type.
-  const startsDeclaration = () => {
+  // because `type: string` is a property called type. A projection
+  // named in lowercase is one of a group's, and starts a declaration
+  // only within the group (`inner`).
+  const startsDeclaration = (inner = false) => {
     const token = peek();
     if (!token.first) return false;
-    if (token.t === 'punct') return token.v === '@' && peek(1).t === 'ident';
+    // In a group, a note goes on the projection below it (11.0).
+    if (token.t === 'punct') return token.v === '@' && peek(1).t === 'ident' && !(inner && SOURCE_GROUPED_ANNOTATIONS.includes(peek(1).v));
     // `tag courseId: CourseId` is an event's property, marked.
     if (token.v === 'tag') return ['type', 'enum', 'record'].includes(peek(1).v);
-    if (token.v === 'untagged') return ['projection', 'derived', 'scripted'].includes(peek(1).v);
-    if (token.v === 'derived' || token.v === 'scripted') return peek(1).v === 'projection' || peek(1).v === 'untagged';
+    let k = 0;
+    while (['untagged', 'derived', 'scripted'].includes(peek(k).v) && k < 3) k += 1;
+    if (k && peek(k).v !== 'projection') return false;
+    if (k || token.v === 'projection') {
+      const name = peek(k + 1);
+      const local = name.t === 'ident' && SOURCE_LOCAL_RE.test(name.v);
+      return local ? inner : name.t === 'ident' || name.t === 'string';
+    }
     return token.t === 'ident' && SOURCE_DECL_STARTS.includes(token.v)
       && (peek(1).t === 'ident' || peek(1).t === 'string');
   };
-  const guardBlock = (close) => {
-    if (!startsDeclaration()) return;
+  const guardBlock = (close, inner = false) => {
+    if (!startsDeclaration(inner)) return;
     const end = last();
     fail(`Expected "${close}" before the next declaration.`,
       { line: end.endLine, col: end.endCol, endLine: end.endLine, endCol: end.endCol + 1 });
@@ -532,7 +704,7 @@ function parseModelSourceText(text, options) {
   // ---------- values ----------
 
   // JSON, read off the token stream – the schema object of a `type`,
-  // a script's `initialState`, a definition's fallback body. Keys may
+  // a definition's fallback body. Keys may
   // be bare words as well as strings; the printer writes them bare.
   const jsonValue = () => {
     const token = peek();
@@ -608,7 +780,9 @@ function parseModelSourceText(text, options) {
   };
 
   // A name in a command, resolved once the whole command is read –
-  // which `alias` declares it is not known until then.
+  // which `alias` declares it is not known until then. A group's
+  // projection takes its arguments where it is named, by name:
+  // `course.seatsOn(slot: s)`.
   const nameRef = () => {
     const headToken = next();
     const ref = { '%ref': [headToken.v] };
@@ -617,8 +791,27 @@ function parseModelSourceText(text, options) {
       const property = ident('a property name');
       ref['%ref'].push(property.v);
       mark(ref, 'property', property);
+      if (is('(')) ref['%args'] = memberArguments(property, commandOperand);
+      // A record value's field (11.0), of a group's projection:
+      // `course.address.city`.
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        ref['%field'] = field.v;
+        mark(ref, 'field', field);
+      }
     }
     return ref;
+  };
+
+  // `(slot: s, days: 3)` after a group's projection: its arguments, each
+  // by name – a read of a top-level projection gives them in order, but
+  // a member has no order to give them in beside the group's tag.
+  const memberArguments = (member, valueOf) => {
+    const open = peek();
+    const { values, named } = callArguments(valueOf);
+    if (values.length) fail(`A group's projection takes its arguments by name: ${member.v}(name: …).`, open);
+    return named || {};
   };
 
   // An operand in a command. A capitalised name followed by `(` is a
@@ -629,6 +822,22 @@ function parseModelSourceText(text, options) {
   // payload property.
   const commandOperand = () => {
     const token = peek();
+    if (token.t === 'duration') return durationLiteral();
+    if (startsCollection()) return collection(commandOperand);
+    if (startsCount()) return countOf(commandOperand);
+    // `value` inside a loop over an open read (11.0): the instance's.
+    if (loopRead && loopRead.value && token.t === 'ident' && token.v === 'value' && !is('(', 1)) {
+      next();
+      const out = { instanceValue: true };
+      mark(out, 'value', token);
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        out.field = field.v;
+        mark(out, 'field', field);
+      }
+      return out;
+    }
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)
         && !['true', 'false', 'null', 'enum'].includes(token.v)) {
       if (is('(', 1)) return call(commandOperand);
@@ -642,24 +851,97 @@ function parseModelSourceText(text, options) {
     return literalValue();
   };
 
-  // `Name(a, each b, key: c)`: the values in order – `each` marking the
-  // one a read fans out over – and `key: value` pairs, which only an
-  // entity read takes (its scripted properties' arguments).
+  // A value a rule compares or an emission writes (11.0): an operand,
+  // or operands added and subtracted, left to right – `now + 15m`,
+  // `CourseCapacity(courseId) - sum(…)`. Only there: a read's values and
+  // a where's sides are never computed.
+  const commandValue = () => {
+    let value = commandOperand();
+    while (is('+') || is('-')) {
+      const op = next();
+      enter();
+      value = { operator: SOURCE_OPERATORS[op.v], leftHandSide: value, rightHandSide: commandOperand() };
+      depth -= 1;
+      mark(value, 'operator', op);
+    }
+    return value;
+  };
+  // What an emission field takes: a value, or a record built whole
+  // (#5), `{ room, row: shelf.row }` – each field a value, as an
+  // emission field's, and never a record of its own: one level.
+  const emittedValue = () => {
+    if (!is('{')) return commandValue();
+    const open = next();
+    enter();
+    const record = argumentList('}', () => {
+      if (is('{')) fail('A record field takes a value – a record built in an emission holds no record of its own.');
+      return commandValue();
+    });
+    const out = { record };
+    mark(out, 'record', open);
+    return leave(out);
+  };
+  // `15m`, `7d`, `1h30m` (11.0): the ISO 8601 duration it stores. A
+  // misspelt one was reported where it was lexed.
+  const durationLiteral = () => {
+    const token = next();
+    const out = { duration: token.v };
+    mark(out, 'duration', token);
+    return out;
+  };
+
+  // `Name(a, each b)`: the values in order – `each` marking the one a
+  // read fans out over – and, after a group's, the projection read of
+  // it and that projection's arguments: `Course(courseId).seatsOn(slot:
+  // s)`. `key: value` pairs in the first parentheses are read only to
+  // be refused where the call is settled.
   const call = (valueOf) => {
     const callee = next();
-    const out = { '%call': callee.v, ...callArguments(valueOf) };
+    const out = { '%call': callee.v, ...callArguments(valueOf, callee) };
     mark(out, 'callee', callee);
+    readMember(out, valueOf);
     // Its closing parenthesis: a read's extent, for introducing an
     // alias for it (`sourceIntroduceAlias`).
     mark(out, 'close', last());
     return out;
   };
-  const callArguments = (valueOf) => {
+  const readMember = (out, valueOf) => {
+    if (!is('.') || peek(1).t !== 'ident') return;
+    next();
+    const member = next();
+    out['%member'] = member.v;
+    mark(out, 'member', member);
+    if (is('(')) out['%memberArgs'] = memberArguments(member, valueOf);
+    // A record value's field after a group's projection (11.0):
+    // `Course(courseId).address.city`.
+    if (is('.') && peek(1).t === 'ident') {
+      next();
+      const field = next();
+      out['%field'] = field.v;
+      mark(out, 'field', field);
+    }
+  };
+  const callArguments = (valueOf, callee = null) => {
+    const allowOpen = openAllowed;
+    openAllowed = false;
     expect('(');
     enter();
     const out = { values: [] };
     while (!is(')')) {
       guardBlock(')');
+      // `*` leaves a tag open (11.0) – in the read a collection
+      // function collects, and nowhere else.
+      if (is('*') && (is(',', 1) || is(')', 1))) {
+        const star = next();
+        if (!allowOpen) {
+          fail(`An open read is no value of its own – ${callee ? callee.v : 'P'}(…, *) goes inside count, sum, min, max, average, any or all.`, star);
+        }
+        const open = { open: true };
+        mark(open, 'open', star);
+        out.values.push(open);
+        if (!accept(',')) break;
+        continue;
+      }
       if (peek().t === 'ident' && is(':', 1)) {
         const key = next();
         next();
@@ -683,6 +965,116 @@ function parseModelSourceText(text, options) {
     return leave(out);
   };
 
+  // ---------- collection functions (11.0) ----------
+  //
+  // `sum(P(x, *))`, `count(P(x, *) where value > 2)`: a function of the
+  // set, over a read that leaves a tag open – that read alone may – and
+  // an optional `where` over `value` (`value.field` of a record), the
+  // names in scope and literals. `list(P(x, *))` (G1) is the open tag's
+  // values. `count(xs)` over a list is a count (G3) – a value, or, as
+  // `count(xs) == 3`, the count predicate it always was – and `min(a,
+  // b)` / `max(a, b)` stay a derived projection's computation: which
+  // one it is shows inside the parentheses (`collectionAhead`): a `*`
+  // in the read directly inside, or a `where`.
+  const collectionAhead = () => {
+    let level = 0;
+    for (let i = at + 1; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token.t === 'eof') return false;
+      if (token.t === 'punct' && (token.v === '(' || token.v === '[' || token.v === '{')) level += 1;
+      else if (token.t === 'punct' && (token.v === ')' || token.v === ']' || token.v === '}')) {
+        level -= 1;
+        if (level === 0) return false;
+      } else if (level === 1 && token.t === 'ident' && token.v === 'where') return true;
+      else if (level === 2 && token.t === 'punct' && token.v === '*') {
+        const before = tokens[i - 1];
+        const after = tokens[i + 1];
+        if (before && before.t === 'punct' && (before.v === '(' || before.v === ',')
+          && after && after.t === 'punct' && (after.v === ')' || after.v === ',')) return true;
+      }
+    }
+    return false;
+  };
+  const startsCollection = () => peek().t === 'ident' && COLLECTION_FUNCTIONS.includes(peek().v) && is('(', 1)
+    && (['sum', 'average', 'any', 'all', 'list'].includes(peek().v) || collectionAhead());
+  // `count(xs)` of a list (G3), as a value: `{count: operand}`.
+  const startsCount = () => is('count') && is('(', 1) && !collectionAhead();
+  const countOf = (valueOf) => {
+    const word = next();
+    next();
+    enter();
+    const out = { count: valueOf() };
+    expect(')', '")" closing count(…)');
+    mark(out, 'count', word);
+    return leave(out);
+  };
+  const collection = (valueOf) => {
+    const fn = next();
+    next();
+    enter();
+    const token = peek();
+    if (!(token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1))) {
+      fail(`${fn.v}(…) collects a projection read with a tag left open: ${fn.v}(P(x, *)).`, token);
+    }
+    openAllowed = true;
+    const read = call(valueOf);
+    openAllowed = false;
+    const out = { collect: fn.v, read };
+    mark(out, 'collect', fn);
+    // In a command, a where's names resolve as the command's do – an
+    // alias among them – once the command is read.
+    const inCommand = valueOf === commandOperand;
+    if (accept('where')) out.where = anyCondition(() => condition(() => whereOperand(inCommand)));
+    expect(')', `")" closing ${fn.v}(…)${out.where ? '' : ', or where and a condition'}`);
+    mark(out, 'close', last());
+    return leave(out);
+  };
+  // A `where`'s side: `value`, `value.field`, a name in scope – a
+  // parameter, `x.field` of a record one, and in a command an alias
+  // already bound, `partner` or `address.city`: a value, not a read
+  // made inside the where – or a literal. Never a read.
+  const whereOperand = (inCommand) => {
+    const token = peek();
+    if (token.t === 'duration') return durationLiteral();
+    const never = () => fail('A where reads value, parameters, aliases and literals – never a projection.', token);
+    if (token.t === 'ident' && token.v === 'value') {
+      next();
+      const out = { instanceValue: true };
+      mark(out, 'value', token);
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        out.field = field.v;
+        mark(out, 'field', field);
+      }
+      return out;
+    }
+    if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && (is('(', 1) || is('.', 1))) never();
+    if (token.t === 'ident' && !startsLiteral()) {
+      if (COLLECTION_FUNCTIONS.includes(token.v) && is('(', 1)) never();
+      if (inCommand) {
+        const ref = nameRef();
+        if (ref['%args'] !== undefined || is('(')) never();
+        return ref;
+      }
+      next();
+      const out = { parameterName: token.v };
+      // Marked both ways: a derived projection's own parameter, or a
+      // command's payload property.
+      mark(out, 'parameter', token);
+      mark(out, 'head', token);
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const property = next();
+        out.property = property.v;
+        mark(out, 'property', property);
+      }
+      if (is('(')) never();
+      return out;
+    }
+    return literalValue();
+  };
+
   // `X tagged …` and `X with (…)` were the draft of 8.0; a read gives
   // its values in parentheses now, in the order the projection declares.
   const oldReadSpelling = (target) => fail(
@@ -691,10 +1083,13 @@ function parseModelSourceText(text, options) {
   // A derived projection's operand: another projection's value – read
   // with the values it declares, each one of this projection's own
   // parameters by name or a literal – one of its own parameters by name
-  // (10.0), or an enum member or a literal. Settled like a command's
-  // (`settle`).
+  // (10.0), or an enum member or a literal. In a group, a lowercase name
+  // may be a sibling instead, `capacity` or `seatsOn(slot: 3)`; which it
+  // is, is settled like a command's names (`settle`).
   const derivedOperand = () => {
     const token = peek();
+    if (startsCollection()) return collection(derivedValue);
+    if (startsCount()) return countOf(derivedOperand);
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1)) return call(derivedValue);
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v)) {
       next();
@@ -702,10 +1097,25 @@ function parseModelSourceText(text, options) {
       mark(ref, 'pascal', token);
       return ref;
     }
+    if (token.t === 'ident' && !startsLiteral()) {
+      next();
+      const local = { '%local': token.v };
+      mark(local, 'local', token);
+      if (is('(')) local['%memberArgs'] = memberArguments(token, derivedValue);
+      mark(local, 'close', last());
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        local['%field'] = field.v;
+        mark(local, 'field', field);
+      }
+      return local;
+    }
     return derivedValue();
   };
   const derivedValue = () => {
     const token = peek();
+    if (token.t === 'duration') return durationLiteral();
     if (token.t === 'ident' && SOURCE_MEMBER_RE.test(token.v) && is('(', 1)) return call(literalValue);
     if (token.t === 'ident' && !startsLiteral()) {
       next();
@@ -721,7 +1131,7 @@ function parseModelSourceText(text, options) {
   // way a rule is.
   const derivedExpression = () => {
     for (const word of SOURCE_OPERATOR_CALLS) {
-      if (!is(word) || !is('(', 1)) continue;
+      if (!is(word) || !is('(', 1) || collectionAhead()) continue;
       next(); next();
       const leftHandSide = derivedOperand();
       expect(',', `"," and the other side of ${word}(…)`);
@@ -729,7 +1139,7 @@ function parseModelSourceText(text, options) {
       expect(')');
       return { leftHandSide, operator: word, rightHandSide };
     }
-    if (!is('not') && !(is('count') && is('(', 1))) {
+    if (!is('not')) {
       const from = at;
       const leftHandSide = derivedOperand();
       const op = peek();
@@ -737,6 +1147,9 @@ function parseModelSourceText(text, options) {
         next();
         return { leftHandSide, operator: SOURCE_OPERATORS[op.v], rightHandSide: derivedOperand() };
       }
+      // One operand alone is the value it holds (11.0): a collection's
+      // result, a record's field.
+      if (is('}') || is('scenarios') || is('scenario')) return { leftHandSide };
       at = from;
     }
     return condition(derivedOperand);
@@ -748,9 +1161,20 @@ function parseModelSourceText(text, options) {
       const property = ident('an event property');
       const operand = { eventProperty: property.v };
       mark(operand, 'eventProperty', property);
+      // One field of a record-typed property (11.0), as a condition and
+      // a tag path read it: `event.data.signUp.emailAddress`.
+      if (is('.') && peek(1).t === 'ident') {
+        next();
+        const field = next();
+        operand.property = field.v;
+        mark(operand, 'property', field);
+        if (is('.')) fail('A handler reads one field of a record-typed property – event.data.<property>.<field>, one hop.');
+      }
       return operand;
     }
-    if (accept('currentValue')) return { currentValue: true };
+    if (is('currentValue')) {
+      fail('"currentValue" is gone – a handler\'s value comes from the event (event.data.x), a literal or successor(…).');
+    }
     if (is('successor') && is('(', 1)) {
       next(); next();
       enter();
@@ -758,9 +1182,26 @@ function parseModelSourceText(text, options) {
       expect(')');
       return leave({ successor: inner });
     }
+    // A record, set whole (11.0): every field by name, each an event
+    // field or a literal.
+    if (is('{')) {
+      next();
+      enter();
+      const record = {};
+      while (!is('}')) {
+        guardBlock('}');
+        const key = ident('a field of the record');
+        mark(record, 'key:' + key.v, key);
+        expect(':', `":" and the value of ${key.v} – a record is set whole, { field: …, … }`);
+        sourcePut(record, key.v, handlerOperand());
+        if (!accept(',')) break;
+      }
+      expect('}', '"}" or ","');
+      return leave({ record });
+    }
     return literalValue();
   };
-  const startsHandlerOperand = () => startsLiteral() || is('event') || is('currentValue') || is('successor');
+  const startsHandlerOperand = () => startsLiteral() || is('event') || is('currentValue') || is('successor') || is('{');
 
   // `name: operand` pairs – or a bare `name`, short for `name: name`.
   const argumentList = (close, operand) => {
@@ -787,16 +1228,21 @@ function parseModelSourceText(text, options) {
   const condition = (operand) => {
     let negate = false;
     while (accept('not')) negate = !negate;
-    if (is('count') && is('(', 1)) {
+    // `count(xs) == 3`, `!=`, `<` and `>` stay the count predicate,
+    // stored as they always were; anything else – `<=`, arithmetic, a
+    // count on the right – reads `count(xs)` as a value (G3).
+    if (is('count') && is('(', 1) && !collectionAhead()) {
+      const from = at;
       next(); next();
       const leftHandSide = operand();
       expect(')');
       const op = peek();
-      let predicate = SOURCE_COUNT_PREDICATES[op.v];
-      if (op.t === 'punct' && op.v === '!=') { predicate = 'countEquals'; negate = !negate; }
-      if (op.t !== 'punct' || !predicate) fail(`Expected ==, !=, < or > after count(…), found ${describeToken(op)}.`);
-      next();
-      return finish({ leftHandSide, predicate, rightHandSide: operand() }, negate);
+      const predicate = op.t === 'punct' ? (op.v === '!=' ? 'countEquals' : SOURCE_COUNT_PREDICATES[op.v]) : null;
+      if (predicate) {
+        next();
+        return finish({ leftHandSide, predicate, rightHandSide: operand() }, op.v === '!=' ? !negate : negate);
+      }
+      at = from;
     }
     const leftHandSide = operand();
     if (accept('is')) {
@@ -832,6 +1278,138 @@ function parseModelSourceText(text, options) {
   };
   const finish = (rule, negate) => (negate ? { ...rule, negate: true } : rule);
 
+  // A command's condition (11.0): comparisons joined by `and` and `or`,
+  // `and` binding tighter, brackets grouping. A run of one joiner is one
+  // list, `{all: […]}` or `{any: […]}`; a bracketed group stays a group,
+  // so what is printed is what was written.
+  //
+  // `leaf` reads one comparison – a command's by default; a handler's
+  // condition joins its own comparisons the same way.
+  const commandComparison = () => condition(commandValue);
+  const anyCondition = (leaf = commandComparison) => {
+    enter();
+    const parts = [allCondition(leaf)];
+    while (accept('or')) parts.push(allCondition(leaf));
+    return leave(parts.length === 1 ? parts[0] : { any: parts });
+  };
+  const allCondition = (leaf) => {
+    const parts = [conditionTerm(leaf)];
+    while (accept('and')) parts.push(conditionTerm(leaf));
+    return parts.length === 1 ? parts[0] : { all: parts };
+  };
+  const conditionTerm = (leaf) => {
+    if (is('not') && is('(', 1)) fail('"not" goes before one comparison – a bracketed group cannot be negated; say its opposite.');
+    if (!accept('(')) return leaf();
+    const inner = anyCondition(leaf);
+    expect(')', '")" closing the group');
+    // A group of one comparison says nothing the comparison does not.
+    return inner;
+  };
+
+  // ---------- a handler's branches (11.0) ----------
+  //
+  // `on E { if c => op  else if c => op  else => op }`: each `if`
+  // starts a chain of its own, so separate `if`s all apply and an
+  // `else` continues the chain before it. One operation per branch. A
+  // comparison is an event field – `event.data.x`, a record's field
+  // `event.data.x.y` – `==` or `!=` one of the projection's tags
+  // (`scope.tags`) or a literal; a read of a projection, or of the
+  // state, is an error where it is written.
+  const handlerOperation = (inBranch) => {
+    if (inBranch && is('{')) fail('One operation per branch – a second one is a second if, so a branch holds no block.');
+    if (peek().t === 'code') {
+      fail('A handler runs no code in 11.0 – it is an operation: set, increment, decrement, append or remove.');
+    }
+    const op = ident('an operation (set, increment, decrement, append, remove)');
+    if (!OPERATIONS.includes(op.v)) {
+      fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
+    }
+    const out = { operation: op.v };
+    // `set x.field = …` would update one field of a record – composite
+    // state, which stays refused (11.0).
+    if (peek().t === 'ident' && !startsHandlerOperand() && (is('.', 1) || is('=', 1))) {
+      fail('A record is replaced whole – set it to an event field holding one, or to { field: …, … } naming every required field.');
+    }
+    if (startsHandlerOperand()) out.value = handlerOperand();
+    if (inBranch && peek().t === 'ident' && OPERATIONS.includes(peek().v)) {
+      fail('One operation per branch – a second one is a second if.');
+    }
+    return out;
+  };
+  const handlerConditionSide = (scope, left) => {
+    const token = peek();
+    if (is('event') && is('.', 1)) {
+      if (!left) fail('A handler\'s condition compares an event field with one of the projection\'s tags or a literal – not with another field.');
+      next(); expect('.'); expect('data', '"data" – an event value is read as event.data.<property>'); expect('.');
+      const property = ident('an event property');
+      const operand = { eventProperty: property.v };
+      mark(operand, 'eventProperty', property);
+      if (accept('.')) {
+        const field = ident('a field of the record');
+        operand.property = field.v;
+        mark(operand, 'property', field);
+      }
+      return operand;
+    }
+    if (token.t === 'ident' && /^\p{Lu}/u.test(token.v) && (is('(', 1) || is('.', 1))) {
+      fail('A handler\'s condition reads the event and the projection\'s tags – never another projection.', token);
+    }
+    if (token.t === 'ident' && !SOURCE_MEMBER_RE.test(token.v) && !['true', 'false', 'null'].includes(token.v)) {
+      if (!scope.tags.includes(token.v)) {
+        if (token.v === 'state') fail('A handler\'s condition never reads the projection\'s own state – only the event and its tags.', token);
+        if (is('(', 1)) fail('A handler\'s condition reads the event and the projection\'s tags – never another projection.', token);
+        fail(`"${token.v}" is no tag of ${scope.name} – a condition compares with `
+          + `${scope.tags.length ? scope.tags.join(', ') + ' or ' : ''}a literal.`, token);
+      }
+      if (left) fail(`A handler's condition starts with the event field it tests: if event.data.… == ${token.v}.`, token);
+      next();
+      const operand = { parameterName: token.v };
+      mark(operand, 'parameter', token);
+      return operand;
+    }
+    if (left) fail(`A handler's condition starts with the event field it tests (event.data.…), found ${describeToken(token)}.`);
+    if (token.t === 'duration') return durationLiteral();
+    return literalValue();
+  };
+  const handlerComparison = (scope) => () => {
+    if (is('not')) fail('A handler\'s condition says != for "not equal" – "not" is a command\'s.');
+    const leftHandSide = handlerConditionSide(scope, true);
+    const op = peek();
+    if (op.t !== 'punct' || (op.v !== '==' && op.v !== '!=')) {
+      fail(`A handler's condition compares with == or != – found ${describeToken(op)}.`, op);
+    }
+    next();
+    const rightHandSide = handlerConditionSide(scope, false);
+    return finish({ leftHandSide, predicate: 'equals', rightHandSide }, op.v === '!=');
+  };
+  const branchedHandler = (eventToken, scope) => {
+    const handler = { event: eventToken.v, steps: [] };
+    mark(handler, 'event', eventToken);
+    expect('{');
+    enter();
+    while (!is('}')) {
+      guardBlock('}', true);
+      if (is('else')) fail('"else" follows an if – this one has none before it.');
+      if (!is('if')) fail(`Expected if or "}" in the branches of ${eventToken.v}, found ${describeToken(peek())}.`);
+      next();
+      const step = { branches: [] };
+      for (;;) {
+        const condition = anyCondition(handlerComparison(scope));
+        expect('=>', '"=>" and the operation the branch applies');
+        step.branches.push({ condition, ...handlerOperation(true) });
+        if (!is('else')) break;
+        next();
+        if (accept('if')) continue;
+        expect('=>', '"=>" and the operation the else branch applies – or "else if"');
+        step.otherwise = handlerOperation(true);
+        break;
+      }
+      handler.steps.push(step);
+    }
+    expect('}');
+    return leave(handler);
+  };
+
   // ---------- declarations ----------
 
   const propertyList = (close) => {
@@ -854,8 +1432,8 @@ function parseModelSourceText(text, options) {
   };
 
   // A projection's header, `(tag courseId: CourseId, days: integer)`:
-  // the tags it is read by, marked `tag`, then – only for a script – the
-  // values its code takes besides. Tags first, since a read gives them in
+  // the tags it is read by, marked `tag`, then its arguments – the
+  // values a read gives besides. Tags first, since a read gives them in
   // this order.
   const projectionParameterList = () => {
     expect('(');
@@ -918,15 +1496,39 @@ function parseModelSourceText(text, options) {
     return body;
   };
 
-  const annotate = (kind, body, annotations) => {
-    for (const { name, value, token } of annotations) {
-      const allowed = Object.prototype.hasOwnProperty.call(SOURCE_ANNOTATIONS, name) ? SOURCE_ANNOTATIONS[name] : null;
-      if (!allowed) fail(`There is no @${name} – the annotations are @icon, @feature and @tagSchema.`, token);
-      if (!allowed.includes(kind)) fail(`A ${SOURCE_KEYWORD[kind]} carries no @${name}.`, token);
-      if (body[name] !== undefined) fail(`@${name} is given twice.`, token);
-      body[name] = value;
+  // `annotations` are what `declaration` read before the keyword, with
+  // the doc comment above them as `{doc}` (11.0), stored as the
+  // description.
+  const annotate = (kind, body, annotations, { grouped = false } = {}) => {
+    for (const { name, value, token, doc } of annotations) {
+      if (doc !== undefined) { body.description = doc; continue; }
+      const spec = Object.prototype.hasOwnProperty.call(SOURCE_ANNOTATIONS, name) ? SOURCE_ANNOTATIONS[name] : null;
+      if (!spec) fail(`There is no @${name} – the annotations are ${Object.keys(SOURCE_ANNOTATIONS).map((a) => '@' + a).join(', ')}.`, token);
+      if (grouped && !SOURCE_GROUPED_ANNOTATIONS.includes(name)) fail(`A projection in a group carries no @${name} – only its notes.`, token);
+      if (!spec.kinds.includes(kind)) fail(`${/^[aeiou]/.test(SOURCE_KEYWORD[kind]) ? 'An' : 'A'} ${SOURCE_KEYWORD[kind]} carries no @${name}.`, token);
+      if (spec.flag && value !== undefined) fail(`@${name} takes nothing: @${name}.`, token);
+      if (!spec.flag && value === undefined) fail(`@${name} takes its text: @${name}("…").`, token);
+      if (spec.repeat) { (body[spec.field] = body[spec.field] || []).push(value); continue; }
+      if (body[spec.field] !== undefined) fail(`@${name} is given twice.`, token);
+      body[spec.field] = spec.flag ? true : value;
     }
     return body;
+  };
+
+  // A doc comment and the annotations in front of a declaration, the
+  // doc comment first: `[{doc}, {name, value, token}, …]`.
+  const leadingAnnotations = () => {
+    const annotations = peek().doc ? [{ doc: peek().doc.join('\n') }] : [];
+    while (accept('@')) {
+      const token = ident('an annotation name');
+      let value;
+      if (accept('(')) {
+        value = string('a string');
+        expect(')');
+      }
+      annotations.push({ name: token.v, value, token });
+    }
+    return annotations;
   };
 
   const customType = (start, annotations, isTag) => {
@@ -952,13 +1554,16 @@ function parseModelSourceText(text, options) {
       while (!is('}')) {
         guardBlock('}');
         const nameToken = ident('a field name');
+        // `name?: T` (11.0): a field that may be left out, read as null.
+        const isOptional = !!accept('?');
         expect(':');
         const typeToken = ident('a type');
-        const field = { name: nameToken.v, propertyType: typeToken.v };
+        const field = { name: nameToken.v, propertyType: typeToken.v, ...(isOptional ? { isOptional: true } : {}) };
         mark(field, 'name', nameToken);
         mark(field, 'propertyType', typeToken);
         properties.push(field);
-        if (is('[') || is('?')) fail('A record field is always one required value – a list or an optional field cannot be zipped.');
+        if (is('[')) fail('A record field is one value – a list field cannot be zipped.');
+        if (is('?')) fail(`An optional field is written ${nameToken.v}?: ${typeToken.v}.`);
         if (!accept(',') && peek().t !== 'ident') break;
       }
       expect('}', '"}" or ","');
@@ -968,6 +1573,12 @@ function parseModelSourceText(text, options) {
       if (is('{')) body = { schema: jsonValue() };
       else {
         const base = ident('a base type');
+        // A time (11.0): the string of its format, `type Deadline = datetime`.
+        if (SOURCE_TIME_FORMATS[base.v]) {
+          body = { schema: { type: 'string', format: SOURCE_TIME_FORMATS[base.v] } };
+          if (isTag) body.isTag = true;
+          return define('custom-type-definition', nameToken, annotate('custom-type-definition', body, annotations), start);
+        }
         if (!SOURCE_BASE_TYPES.includes(base.v)) {
           fail(`A value type is one of ${SOURCE_BASE_TYPES.join(', ')} – or a JSON Schema object – `
             + `not "${base.v}". (A record of fields is written "record ${nameToken.v} { … }".)`, base);
@@ -1033,52 +1644,84 @@ function parseModelSourceText(text, options) {
     return define('event-definition', nameToken, annotate('event-definition', body, annotations), start);
   };
 
-  const entityDecl = (start, annotations) => {
+  // `group Course (tag courseId: CourseId) { … }`: the one tag its
+  // projections are read by, said in its header with nothing inferred,
+  // then the projections themselves, each spelled as at the top level
+  // minus its own tag header. An empty block is a group still to be
+  // filled, which the advisories mention and the text allows.
+  const groupDecl = (start, annotations) => {
     next();
-    const nameToken = declName('an entity name');
-    if (is('json')) return define('entity-definition', nameToken, annotate('entity-definition', jsonBody(), annotations), start);
-    const body = {};
-    // `(tag courseId: CourseId)` – the one tag an instance is read by,
-    // named. The defaults, `<Name>Id` named `<name>Id`, are the entity
-    // tracking its own name and are stored as absent, which is how the
-    // model keeps them.
-    const lowered = nameToken.v.charAt(0).toLowerCase() + nameToken.v.slice(1);
-    if (!is('(')) {
-      fail(`Say what ${nameToken.v} is tagged by: entity ${nameToken.v} (tag ${lowered}Id: ${nameToken.v}Id).`, peek());
-    }
+    const nameToken = declName('a group name');
+    if (is('json')) return define('group-definition', nameToken, annotate('group-definition', jsonBody(), annotations), start);
+    const body = annotate('group-definition', {}, annotations);
+    const lowered = String(nameToken.v).charAt(0).toLowerCase() + String(nameToken.v).slice(1);
+    const example = `group ${nameToken.v} (tag ${lowered}Id: ${nameToken.v}Id)`;
+    if (!is('(')) fail(`Say what ${nameToken.v}'s projections are read by – one tag: ${example}.`, peek());
     next();
-    expect('tag', '"tag" – an entity is read by one tag, its identifier');
-    const idName = ident('the name of its tag');
+    if (!is('tag')) fail(`A group is read by one tag, named: ${example}.`);
+    next();
+    const tagName = ident('the name of its tag');
     expect(':');
-    const typeToken = ident('the identifier type');
-    expect(')', '")" – an entity has one tag');
-    if (typeToken.v !== nameToken.v + 'Id') body.identifierType = typeToken.v;
-    if (idName.v !== typeToken.v.charAt(0).toLowerCase() + typeToken.v.slice(1)) body.identifierName = idName.v;
-    mark(body, 'identifierType', typeToken);
-    mark(body, 'identifierName', idName);
-    expect('{');
-    body.properties = [];
+    const tagType = ident('the tag\'s type');
+    if (is(',')) fail(`A group has one tag – a projection read by several stays outside any group.`);
+    expect(')', '")" – a group has one tag');
+    body.tag = { name: tagName.v, tagType: tagType.v };
+    mark(body.tag, 'name', tagName);
+    mark(body.tag, 'tagType', tagType);
+    expect('{', `"{" and its projections – ${example} { projection … }`);
+    body.projections = [];
+    const group = { name: nameToken.v, body };
     while (!is('}')) {
-      guardBlock('}');
-      if (is('lifecycle') && peek(1).t === 'ident' && !is('=', 1)) {
-        next();
-        if (body.lifecycle !== undefined) fail('An entity has one lifecycle.', last());
-        const lifecycle = ident('the lifecycle property');
-        body.lifecycle = lifecycle.v;
-        mark(body, 'lifecycle', lifecycle);
-      } else {
-        const nameToken = ident('a property name, or "lifecycle"');
-        expect('=', '"=" and the projection this property is');
-        const projectionToken = ident('a projection name');
-        const property = { name: nameToken.v, projection: projectionToken.v };
-        mark(property, 'name', nameToken);
-        mark(property, 'projection', projectionToken);
-        body.properties.push(property);
+      let k = 0;
+      while (['untagged', 'derived', 'scripted'].includes(peek(k).v) && k < 3) k += 1;
+      // A name that is no local one is reported and read on, unless the
+      // line is plainly a top-level projection – untagged, or with a tag
+      // in its header – after a group left open.
+      const named = is('projection', k) && peek(k + 1).t === 'ident' ? peek(k + 1) : null;
+      const topLevel = is('untagged') || (is('(', k + 2) && is('tag', k + 3));
+      if (named && peek().first && !SOURCE_LOCAL_RE.test(named.v) && !topLevel) {
+        const local = named.v.charAt(0).toLowerCase() + named.v.slice(1);
+        diagnostics.push({
+          severity: 'error',
+          message: SOURCE_MEMBER_RE.test(named.v)
+            ? `${named.v} is capitalised – a projection in a group is named in lowerCamel, as it is read `
+              + `(projection ${local} …); a top-level one goes after the group's "}".`
+            : `A projection in a group is named in lowerCamel, letters and digits – it is read as ${nameToken.v}(…).name.`,
+          line: named.line, col: named.col, endLine: named.endLine, endCol: named.endCol,
+        });
+      } else guardBlock('}', is('@'));
+      const at = peek();
+      if (is('lifecycle')) {
+        fail('A group has no lifecycle – a lifecycle is an ordinary projection its rules read: projection status: … { … }.');
       }
-      accept(',');
+      if (at.t === 'ident' && is('=', 1)) {
+        fail(`A group owns its projections – declare ${at.v} in it: projection ${at.v}: … { … }.`);
+      }
+      if (is('scenarios') || is('scenario')) {
+        fail('Scenarios sit in the block of the projection they are about, inside the group.');
+      }
+      const annotations = leadingAnnotations();
+      const untagged = is('untagged') ? next() : null;
+      if (untagged) fail(`A group's projections are read by its tag, ${tagName.v} – an untagged projection stays outside it.`, untagged);
+      if (is('scripted')) fail('"scripted" is gone – 11.0 runs no code: a projection is folded by its handlers\' operations, or derived.');
+      const kind = is('derived') && is('projection', 1) ? next() : null;
+      if (!is('projection')) {
+        fail(`Expected projection or derived projection, found ${describeToken(peek())}.`);
+      }
+      projectionDecl(at, annotations, null, kind, group);
     }
     expect('}');
-    return define('entity-definition', nameToken, annotate('entity-definition', body, annotations), start);
+    return define('group-definition', nameToken, body, start);
+  };
+
+  // `entity` was 10.0's: a name over top-level projections, read as the
+  // thing it was not. A group owns its projections instead.
+  const entityDecl = () => {
+    const keyword = next();
+    const name = peek().t === 'ident' ? peek().v : 'Course';
+    const lowered = name.charAt(0).toLowerCase() + name.slice(1);
+    fail(`"entity" is gone – a group owns the projections it names: group ${name} (tag ${lowered}Id: ${name}Id) `
+      + '{ projection status: … }.', keyword);
   };
 
   // `untagged` before `projection` says the projection folds the whole
@@ -1086,28 +1729,37 @@ function parseModelSourceText(text, options) {
   // an error with both fixes – the partition is too easy to forget for
   // the text to assume one.
   //
-  // `derived` or `scripted` right before `projection` says what kind it
-  // is, so the header already knows what the block may hold: a script
-  // takes arguments after its tags, a derived projection holds one
-  // expression and no initial value.
-  const projectionDecl = (start, annotations, untagged, kind) => {
+  // `derived` right before `projection` says what kind it is, so the
+  // header already knows what the block may hold: one expression and no
+  // initial value.
+  //
+  // In a group (`group`, the one being read), a projection is named in
+  // lowerCamel, declares no tags – the group's is its – and is kept in
+  // the group's body rather than declared on its own; its span, and the
+  // block its scenarios name, go by its qualified name.
+  const projectionDecl = (start, annotations, untagged, kind, group = null) => {
     const keyword = next();
-    const nameToken = declName('a projection name');
+    // In a group, a name that is no local one was reported by the group.
+    const nameToken = group ? ident('the projection\'s name') : declName('a projection name');
+    const qualified = group ? `${group.name}.${nameToken.v}` : nameToken.v;
     const derivedKind = !!kind && kind.v === 'derived';
-    const scriptedKind = !!kind && kind.v === 'scripted';
+    if (group && is('json')) fail('A projection in a group is spelled out – the group as a whole may be json.');
     if (is('json')) {
       if (untagged) fail('A json body says its own tags – drop "untagged".', untagged);
       if (kind) fail(`A json body says what it is – drop "${kind.v}".`, kind);
       return define('projection-definition', nameToken, annotate('projection-definition', jsonBody(), annotations), start);
     }
-    annotate('projection-definition', {}, annotations);
-    const body = {};
-    // What a read gives besides the tags is an argument (10.0): a script
-    // reads it, a derived projection compares or computes with it. A
-    // declared one's handlers cannot, which is the advisories' to say.
+    const body = annotate('projection-definition', {}, annotations, { grouped: !!group });
+    // What a read gives besides the tags is an argument (10.0): a derived
+    // projection compares or computes with it. A declared one's handlers
+    // cannot, which is the advisories' to say.
     const header = is('(') ? projectionParameterList() : { tags: [], args: [] };
+    if (group && header.tags.length) {
+      fail(`${qualified} is read by its group's tag, ${group.body.tag.name} – it declares none of its own. `
+        + 'A projection read by other tags stays outside the group.', (marksOf(header.tags[0]) || {}).name);
+    }
     if (untagged && header.tags.length) fail(`${nameToken.v} is declared untagged and tagged by ${header.tags.map((t) => t.name).join(', ')} – one or the other.`, untagged);
-    if (!untagged && !header.tags.length) {
+    if (!group && !untagged && !header.tags.length) {
       const lowered = nameToken.v.charAt(0).toLowerCase() + nameToken.v.slice(1);
       diagnostics.push({
         severity: 'error',
@@ -1119,7 +1771,7 @@ function parseModelSourceText(text, options) {
         },
       });
     }
-    body.tags = header.tags;
+    if (!group) body.tags = header.tags;
     if (header.args.length) body.arguments = header.args.map((a) => a.argument);
     expect(':', '":" and the type it holds');
     const valueType = ident('the type it holds');
@@ -1129,78 +1781,68 @@ function parseModelSourceText(text, options) {
     if (is('=') && derivedKind) fail(`A derived projection has no initial value – before any event it is what its operands start at.`);
     if (accept('=')) body.initialValue = literalValue();
     if (is('derived')) {
-      fail(`"derived" goes in front, and what it derives in the block: derived projection ${nameToken.v} (…): `
+      fail(`"derived" goes in front, and what it derives in the block: derived projection ${nameToken.v}${group ? '' : ' (…)'}: `
         + `${body.valueType} { … }.`);
     }
     if (derivedKind) {
-      expect('{', `"{" and what it derives – derived projection ${nameToken.v} (…): ${body.valueType} { A(…) - B(…) }`);
+      expect('{', `"{" and what it derives – derived projection ${nameToken.v}${group ? '' : ' (…)'}: ${body.valueType} { A(…) - B(…) }`);
       body.derived = derivedExpression();
     }
     if (derivedKind || accept('{')) {
       const handlers = [];
-      let script = scriptedKind ? {} : null;
-      const scriptField = (key, value) => {
-        script = script || {};
-        if (script[key] !== undefined) fail(`${key} is given twice.`, last());
-        script[key] = value;
-      };
-      const owner = { kind: 'projection-definition', name: nameToken.v };
-      let group = null;
+      const owner = { kind: 'projection-definition', name: qualified };
+      let scenarios = null;
       const bare = [];
       while (!is('}')) {
-        guardBlock('}');
-        if (group && !is('scenarios')) fail('The scenarios group comes last – nothing follows it in the block.');
+        guardBlock('}', !!group);
+        if (scenarios && !is('scenarios')) fail('The scenarios group comes last – nothing follows it in the block.');
         if (derivedKind && !is('scenarios') && !is('scenario')) {
           fail(`A derived projection's block holds what it derives, then its scenarios – found ${describeToken(peek())}.`);
         }
-        if (!scriptedKind && (is('initialState') || is('exposes'))) {
-          fail(`Only a scripted projection has ${peek().v} – scripted projection ${nameToken.v} (…).`);
-        }
         if (accept('on')) {
           const eventToken = ident('an event name');
-          const event = eventToken.v;
-          expect('=>');
-          if (peek().t === 'code') {
-            const handler = { event, code: next().v };
-            mark(handler, 'event', eventToken);
-            mark(handler, 'code', last());
-            handlers.push(handler);
-          } else {
-            const op = ident('an operation (set, increment, decrement, append, remove) or a ```code``` block');
-            if (!OPERATIONS.includes(op.v)) {
-              fail(`"${op.v}" is not an operation – set, increment, decrement, append or remove.`, op);
-            }
-            const handler = { event, operation: op.v };
-            mark(handler, 'event', eventToken);
-            if (startsHandlerOperand()) handler.value = handlerOperand();
-            handlers.push(handler);
+          if (is('{')) {
+            const tags = group ? [group.body.tag && group.body.tag.name].filter(Boolean) : header.tags.map((tag) => tag.name);
+            handlers.push(branchedHandler(eventToken, { name: qualified, tags }));
+            continue;
           }
-        } else if (is('script')) {
-          fail(`"script" goes in front now, as "scripted": scripted projection ${nameToken.v} (…).`);
-        } else if (accept('initialState')) {
-          mark(body, 'initialState', peek());
-          scriptField('initialState', jsonValue());
-        } else if (accept('exposes')) {
-          const exposed = ident('the exposed field');
-          mark(body, 'exposes', exposed);
-          scriptField('exposes', exposed.v);
+          expect('=>', '"=>" and an operation, or "{" and its branches');
+          const handler = { event: eventToken.v };
+          mark(handler, 'event', eventToken);
+          Object.assign(handler, handlerOperation(false));
+          handlers.push(handler);
         } else if (is('scenarios')) {
-          group = scenariosGroup(owner, group);
+          scenarios = scenariosGroup(owner, scenarios);
         } else if (is('scenario')) {
           bare.push(scenarioDecl(peek(), owner));
         } else {
-          fail(`Expected "on"${scriptedKind ? ', initialState, exposes' : ''} or scenarios, found ${describeToken(peek())}.`);
+          fail(`Expected "on" or scenarios, found ${describeToken(peek())}.`);
         }
       }
       const endAt = at;
       expect('}');
       ungrouped(bare, endAt);
       if (!derivedKind) body.handlers = handlers;
-      if (script) body.script = script;
-    } else if (scriptedKind) {
-      body.script = {};
     }
-    return define('projection-definition', nameToken, body, start);
+    if (!group) return define('projection-definition', nameToken, body, start);
+    if (group.body.projections.some((inner) => inner.name === nameToken.v)) {
+      diagnostics.push({
+        severity: 'error', message: `${group.name} already has a projection named ${nameToken.v} – one of the two has to go.`,
+        line: nameToken.line, col: nameToken.col, endLine: nameToken.endLine, endCol: nameToken.endCol,
+      });
+      return null;
+    }
+    const inner = { name: nameToken.v, ...body };
+    copyMarks(body, inner);
+    mark(inner, 'declName', nameToken);
+    group.body.projections.push(inner);
+    const end = last();
+    result.spans.push({
+      kind: 'projection-definition', name: qualified, group: group.name,
+      line: start.line, col: start.col, endLine: end.endLine, endCol: end.endCol,
+      nameLine: nameToken.line, nameCol: nameToken.col, nameEndCol: nameToken.endCol,
+    });
+    return inner;
   };
 
   const commandDecl = (start, annotations) => {
@@ -1214,8 +1856,8 @@ function parseModelSourceText(text, options) {
     // as a whole (`sourceCommandQueries`) – not a name.
     mark(body, 'open', expect('{'));
     body.boundary = [];
-    body.conditions = [];
-    body.publishes = [];
+    body.steps = [];
+    commandRead = body;
     const owner = { kind: 'command-definition', name: nameToken.v };
     let group = null;
     const bare = [];
@@ -1226,16 +1868,21 @@ function parseModelSourceText(text, options) {
       if (readToken) {
         const aliasToken = ident('the name of the alias');
         const alias = aliasToken.v;
-        const isOptional = !!accept('?');
+        if (is('?')) fail(`"${alias}?" is gone – 11.0 has no optional reads: a read needs a value for each of its tags.`);
         expect('=');
-        const target = ident('an entity or a projection');
+        const target = ident('a group or a projection');
         // Which of the two it is, is settled once every declaration is
         // known (after the parse): the spelling is the same.
         const binding = { '%target': target.v };
         mark(binding, 'target', target);
         if (is('tagged') || is('with')) oldReadSpelling(target);
-        if (is('(')) Object.assign(binding, { '%call': callArguments(commandOperand) });
-        if (accept('excluding')) binding.excluding = commandOperand();
+        if (is('(')) {
+          Object.assign(binding, { '%call': callArguments(commandOperand) });
+          readMember(binding, commandOperand);
+        }
+        if (is('excluding')) {
+          fail('"excluding" is gone – a fan-out reads every element of its list; a rule over it says what to leave out.');
+        }
         binding.alias = alias;
         mark(binding, 'alias', aliasToken);
         // The statement's extent, for what the editor says about the
@@ -1243,33 +1890,15 @@ function parseModelSourceText(text, options) {
         // resolves or renames them.
         mark(binding, 'statement', readToken);
         mark(binding, 'statementEnd', last());
-        if (isOptional) binding.isOptional = true;
         body.boundary.push(binding);
-      } else if (accept('require')) {
-        // The message is required, as in Weltenwanderer: it is what the
-        // command is refused with, and what a scenario names the refusal by.
-        const rule = condition(commandOperand);
-        expect('else', '"else reject" and the message the command is refused with');
-        expect('reject', '"reject" and the message the command is refused with');
-        mark(rule, 'rejection', peek());
-        rule.rejection = string('the message the command is refused with, in quotes');
-        body.conditions.push(rule);
-      } else if (accept('emit')) {
-        const eventToken = ident('an event name');
-        const emission = { name: eventToken.v };
-        mark(emission, 'name', eventToken);
-        if (accept('{')) emission.parameters = argumentList('}', commandOperand);
-        if (accept('when')) {
-          emission.when = [condition(commandOperand)];
-          while (accept('and')) emission.when.push(condition(commandOperand));
-        }
-        body.publishes.push(emission);
+      } else if (startsStep()) {
+        body.steps.push(step());
       } else if (is('scenarios')) {
         group = scenariosGroup(owner, group);
       } else if (is('scenario')) {
         bare.push(scenarioDecl(peek(), owner));
       } else {
-        fail(`Expected alias, require, emit or scenarios, found ${describeToken(peek())}.`);
+        fail(`Expected alias, require, emit, if, for each or scenarios, found ${describeToken(peek())}.`);
       }
     }
     const endAt = at;
@@ -1279,9 +1908,151 @@ function parseModelSourceText(text, options) {
     return define('command-definition', nameToken, body, start);
   };
 
+  // ---------- a command's steps ----------
+  //
+  // Read top-down, as they run (11.0): `require … else reject "…"`,
+  // `emit E { … }`, `if … => …` with its `else if` / `else` arms, and –
+  // inside an arm – `reject "…"`. An arm is one emission or one
+  // `reject`, or a block `{ … }` of steps. A top-level `reject` parses,
+  // to be advised: it would refuse every time.
+  const STEP_STARTS = ['require', 'emit', 'if', 'reject', 'for'];
+  const startsStep = () => STEP_STARTS.some((word) => is(word) && (word !== 'for' || is('each', 1)));
+  const step = () => {
+    const start = peek();
+    if (is('for') && is('each', 1)) return loop();
+    if (accept('require')) {
+      // The message is required, as in Weltenwanderer: it is what the
+      // command is refused with, and what a scenario names the refusal by.
+      const rule = { condition: anyCondition() };
+      expect('else', '"else reject" and the message the command is refused with');
+      expect('reject', '"reject" and the message the command is refused with');
+      mark(rule, 'rejection', peek());
+      rule.rejection = string('the message the command is refused with, in quotes');
+      mark(rule, 'statement', start);
+      return rule;
+    }
+    if (accept('emit')) {
+      const eventToken = ident('an event name');
+      const emission = { name: eventToken.v };
+      mark(emission, 'name', eventToken);
+      if (accept('{')) emission.parameters = argumentList('}', emittedValue);
+      if (is('when')) {
+        fail('"when" on an emission is gone – 11.0 has no guarded emissions: "if … => emit …" emits under a condition.');
+      }
+      return emission;
+    }
+    if (accept('reject')) {
+      const out = {};
+      mark(out, 'rejection', peek());
+      out.reject = string('the message the command is refused with, in quotes');
+      return out;
+    }
+    expect('if');
+    enter();
+    const branch = { branches: [] };
+    mark(branch, 'statement', start);
+    for (;;) {
+      const condition = anyCondition();
+      expect('=>', '"=>" and what the branch does');
+      branch.branches.push({ condition, steps: armBody() });
+      if (!is('else')) break;
+      next();
+      if (accept('if')) continue;
+      expect('=>', '"=>" and what the else branch does – or "else if"');
+      branch.otherwise = armBody();
+      break;
+    }
+    return leave(branch);
+  };
+  // What an arm does: one emission or `reject`, or a block of steps –
+  // inside a loop, one emission or `reject`.
+  const armBody = () => {
+    if (loopRead && is('{')) fail('A branch inside a for each holds one emit or one reject.');
+    if (accept('{')) {
+      const steps = [];
+      while (!is('}')) {
+        guardBlock('}');
+        if (is('alias')) fail('An alias is read at the top of the command, not inside a branch.');
+        if (!startsStep()) fail(`Expected require, emit, if, reject or "}", found ${describeToken(peek())}.`);
+        steps.push(step());
+      }
+      expect('}');
+      return steps;
+    }
+    if (is('emit') || is('reject')) return [step()];
+    return fail(`Expected emit, reject or a block "{ … }" after "=>", found ${describeToken(peek())}.`);
+  };
+
+  // ---------- a fan-out emit (11.0) ----------
+  //
+  // `for each x in source => emit …`, or a block of `emit`s and `if`
+  // branches whose arms each hold one emission or one `reject`. Two
+  // names in parentheses for an open read leaving two tags open. The
+  // names are in scope inside, as parameters are; over an open read,
+  // so is `value`. A loop never nests.
+  const loop = () => {
+    const start = next();
+    if (loopRead) fail('A for each inside another is refused – a loop does not nest.', start);
+    next();
+    const nameTokens = [];
+    if (accept('(')) {
+      do nameTokens.push(ident('the name of an open tag\'s value')); while (accept(','));
+      expect(')', '")" or ","');
+    } else nameTokens.push(ident('the name of the element'));
+    const out = { forEach: nameTokens.map((token) => token.v) };
+    nameTokens.forEach((token, i) => mark(out, `name:${i}`, token));
+    mark(out, 'statement', start);
+    for (const token of nameTokens) {
+      const clash = commandRead && (commandRead.properties || []).some((p) => p.name === token.v) ? 'a payload property'
+        : commandRead && (commandRead.boundary || []).some((b) => b.alias === token.v) ? 'an alias' : null;
+      if (clash) {
+        diagnostics.push({
+          severity: 'error', message: `${token.v} already names ${clash} – a loop's name is its own.`,
+          line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
+        });
+      }
+    }
+    expect('in', '"in" and what the loop runs over – an open read P(x, *), a list projection or a list parameter');
+    const sourceStart = peek();
+    openAllowed = SOURCE_MEMBER_RE.test(sourceStart.v) && is('(', 1);
+    let source;
+    try { source = commandOperand(); } finally { openAllowed = false; }
+    out.in = source;
+    const opens = (source && Array.isArray(source.values) ? source.values : []).some((v) => v && v.open === true);
+    enter();
+    loopRead = { value: opens };
+    try {
+      if (accept('=>')) {
+        if (!is('emit')) fail('Expected emit after "=>" – a for each emits once per element, or runs a block "{ … }" of if branches.');
+        out.steps = [step()];
+      } else {
+        expect('{', '"=>" and what to emit per element, or "{" and its branches');
+        out.steps = [];
+        while (!is('}')) {
+          guardBlock('}');
+          if (is('for') && is('each', 1)) step();
+          if (!is('if') && !is('emit')) {
+            fail(`A for each holds emit and if … => emit – a loop emits; "if not … => reject" refuses from inside one.`);
+          }
+          out.steps.push(step());
+        }
+        expect('}');
+      }
+    } finally {
+      loopRead = null;
+    }
+    return leave(out);
+  };
+
   const resolveCommandNames = (body) => {
     const aliases = new Set(body.boundary.map((b) => b.alias));
-    const parameters = new Set(body.properties.map((p) => p.name));
+    // A loop's names (11.0) are read as parameters are.
+    const loopNamesIn = (steps) => (Array.isArray(steps) ? steps : []).flatMap((one) => {
+      if (!one || typeof one !== 'object') return [];
+      if (Array.isArray(one.forEach)) return one.forEach;
+      return [...(one.branches || []).flatMap((arm) => loopNamesIn(arm && arm.steps)), ...loopNamesIn(one.otherwise)];
+    });
+    const parameters = new Set([...body.properties.map((p) => p.name), ...loopNamesIn(body.steps)]);
     const resolve = (value) => {
       if (Array.isArray(value)) return value.map(resolve);
       if (value === null || typeof value !== 'object') return value;
@@ -1291,13 +2062,33 @@ function parseModelSourceText(text, options) {
         const out = asRead
           ? (property === undefined ? { alias: head } : { alias: head, property })
           : (property === undefined ? { parameterName: head } : { parameterName: head, property });
+        if (value['%args'] !== undefined) {
+          if (!asRead) {
+            const token = (marksOf(value) || {}).property;
+            diagnostics.push({
+              severity: 'error', message: `${head} is a payload property – only a group's projection takes arguments.`,
+              line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
+            });
+          }
+          out.arguments = resolve(value['%args']);
+        }
+        if (value['%field'] !== undefined) {
+          if (!asRead) {
+            const token = (marksOf(value) || {}).field;
+            diagnostics.push({
+              severity: 'error', message: `${head}.${property} is a field of a payload property – it has no fields of its own.`,
+              line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
+            });
+          }
+          out.field = value['%field'];
+        }
         return copyMarks(value, out);
       }
       const out = {};
       for (const key of Object.keys(value)) sourcePut(out, key, resolve(value[key]));
       return copyMarks(value, out);
     };
-    for (const key of ['boundary', 'conditions', 'publishes']) body[key] = resolve(body[key]);
+    for (const key of ['boundary', 'steps']) body[key] = resolve(body[key]);
   };
 
   // ---------- scenarios ----------
@@ -1383,6 +2174,28 @@ function parseModelSourceText(text, options) {
       if (!accept(',')) break;
     }
     expect(')', '")" or ","');
+    // A group's projection, `Course(CourseId("c1")).seatsOn(slot: "x")`:
+    // the group's tag in the first parentheses, the projection's
+    // arguments by name after it.
+    if (is('.') && peek(1).t === 'ident') {
+      next();
+      const member = next();
+      item.projection = `${name.v}.${member.v}`;
+      item.memberToken = member;
+      if (is('(')) {
+        next();
+        item.named = {};
+        while (!is(')')) {
+          const key = ident('an argument name');
+          expect(':', `":" – a group's projection takes its arguments by name`);
+          mark(item.named, 'key:' + key.v, key);
+          sourcePut(item.named, key.v, scenarioValue());
+          mark(item.named, 'value:' + key.v, memberToken);
+          if (!accept(',')) break;
+        }
+        expect(')', '")" or ","');
+      }
+    }
     if (accept('==')) {
       item.value = scenarioValue();
       item.valueToken = memberToken;
@@ -1499,7 +2312,7 @@ function parseModelSourceText(text, options) {
           subjectToken = item.subjectToken;
           body.projection = item.projection;
           // Named against the projection once every declaration is known.
-          record.call = { values: item.values, tokens: item.valueTokens, callee: item.subjectToken };
+          record.call = { values: item.values, tokens: item.valueTokens, callee: item.subjectToken, named: item.named };
           body.given = given;
           if ('value' in item) body.then = item.value;
         } else if (block && block.kind === 'projection-definition') {
@@ -1516,6 +2329,7 @@ function parseModelSourceText(text, options) {
       }
       if (projections.length) {
         mark(body, 'projection', projections[0].subjectToken);
+        mark(body, 'member', projections[0].memberToken);
         if ('value' in projections[0]) mark(body, 'then', projections[0].valueToken);
       }
     }
@@ -1591,18 +2405,13 @@ function parseModelSourceText(text, options) {
 
   const declaration = () => {
     const start = peek();
-    const annotations = [];
-    while (accept('@')) {
-      const token = ident('an annotation name');
-      expect('(');
-      const value = string('a string');
-      expect(')');
-      annotations.push({ name: token.v, value, token });
-    }
+    const all = leadingAnnotations();
+    const annotations = all.filter((a) => a.doc === undefined);
     if (accept('model')) {
       if (annotations.length) fail('A model carries no annotations.', annotations[0].token);
       if (result.name !== null) fail('The model is named once.', last());
       result.name = string('the model\'s name, in quotes');
+      if (all.length) result.description = all[0].doc;
       return;
     }
     if (is('scenarios')) {
@@ -1613,21 +2422,27 @@ function parseModelSourceText(text, options) {
       if (annotations.length) fail('A scenario carries no annotations.', annotations[0].token);
       return topLevelBare.push(scenarioDecl(start, null));
     }
+    return definitionAfter(start, all);
+  };
+
+  const definitionAfter = (start, annotations) => {
     const isTag = !!accept('tag');
     if (isTag && !is('type') && !is('enum') && !is('record')) {
       fail(`Expected type, enum or record after "tag", found ${describeToken(peek())}.`);
     }
     if (is('type') || is('enum') || is('record')) return customType(start, annotations, isTag);
     const untagged = accept('untagged');
-    const kind = (is('derived') || is('scripted')) && (is('projection', 1) || is('untagged', 1)) ? next() : null;
+    if (is('scripted')) fail('"scripted" is gone – 11.0 runs no code: a projection is folded by its handlers\' operations, or derived.');
+    const kind = is('derived') && (is('projection', 1) || is('untagged', 1)) ? next() : null;
     if (kind && is('untagged')) fail(`"untagged" comes first: untagged ${kind.v} projection …`);
     const lead = kind || untagged;
     if (lead && !is('projection')) fail(`Expected projection after "${lead.v}", found ${describeToken(peek())}.`);
     if (is('projection')) return projectionDecl(start, annotations, untagged, kind);
     if (is('event')) return eventDecl(start, annotations);
-    if (is('entity')) return entityDecl(start, annotations);
+    if (is('group')) return groupDecl(start, annotations);
+    if (is('entity')) return entityDecl();
     if (is('command')) return commandDecl(start, annotations);
-    return fail(`Expected a declaration – type, enum, record, event, entity, projection or command – `
+    return fail(`Expected a declaration – type, enum, record, event, group, projection or command – `
       + `found ${describeToken(peek())}.`);
   };
 
@@ -1635,6 +2450,8 @@ function parseModelSourceText(text, options) {
   while (peek().t !== 'eof') {
     const from = at;
     depth = 0;
+    loopRead = null;
+    commandRead = null;
     try {
       declaration();
     } catch (caught) {
@@ -1655,20 +2472,31 @@ function parseModelSourceText(text, options) {
   }
   ungrouped(topLevelBare);
 
-  // A read names its target the same way whether it is an entity or a
+  // A read names its target the same way whether it is a group or a
   // projection, a call is a read or a tag literal by whether its name is
-  // a projection, and a bare capitalised name an enum member – all
-  // settled here, once every declaration in the text (and, for a
+  // a projection or a group, a lowercase name in a group's derived
+  // projection a sibling or a parameter by whether the group has a
+  // projection of that name, and a bare capitalised name an enum member
+  // – all settled here, once every declaration in the text (and, for a
   // fragment, every one handed in) is known. Resolving by name, the way
   // an operand resolves to an alias or a payload property: nothing about
   // the stored shape is guessed. A read's values are given in the order
   // its projection declares them – tags, then its arguments – and
-  // stored by name.
+  // stored by name; a group's projection takes the group's tag in the
+  // first parentheses and its arguments by name.
+  const has = (object, key) => !!object && Object.prototype.hasOwnProperty.call(object, key);
   const declares = (kind, option, name) =>
-    Object.prototype.hasOwnProperty.call(collections[kind], name)
-    || (Array.isArray(options[option]) && options[option].includes(name));
+    has(collections[kind], name) || (Array.isArray(options[option]) && options[option].includes(name));
+  const declaresGroup = (name) => declares('group-definition', 'groupNames', name);
+  const groupTagName = (name) => {
+    if (has(collections['group-definition'], name)) {
+      const tag = groupTagOf(collections['group-definition'][name]);
+      return tag && typeof tag.name === 'string' ? tag.name : null;
+    }
+    return (options.groupTags && has(options.groupTags, name) && options.groupTags[name]) || null;
+  };
   const parametersOf = (name) => {
-    if (Object.prototype.hasOwnProperty.call(collections['projection-definition'], name)) {
+    if (has(collections['projection-definition'], name)) {
       const body = collections['projection-definition'][name] || {};
       return {
         tags: projectionTagParams(body).map((tag) => tag.name),
@@ -1693,9 +2521,14 @@ function parseModelSourceText(text, options) {
       report(token, `${name} takes ${count(slots.length, 'value')}`
         + `${slots.length ? ` (${slots.map(([, key]) => key).join(', ')})` : ''} – this gives ${values.length}.`);
     }
+    const isOpen = (value) => !!value && typeof value === 'object' && value.open === true;
+    if (values.length && params.tags.length && values.slice(0, params.tags.length).every(isOpen)) {
+      report(token, `${name}(${values.map((v) => (isOpen(v) ? '*' : '…')).join(', ')}) leaves every tag open – at least one stays bound.`);
+    }
     values.forEach((value, index) => {
       if (!slots[index]) return;
       const [where, key] = slots[index];
+      if (where === 'arguments' && isOpen(value)) report(token, `${key} is an argument of ${name} – only a tag is left open.`);
       if (where === 'arguments' && value && typeof value === 'object' && value.each !== undefined) {
         report(token, `"each" fans a read out over one of its tags – ${key} is an argument.`);
       }
@@ -1705,19 +2538,76 @@ function parseModelSourceText(text, options) {
     mark(read, 'projection', token);
     return read;
   };
+  // `Course(courseId).capacity(…)`, settled: the group's one tag, keyed
+  // by its name, and the projection's own arguments as written. `target`
+  // carries the parse's `%member` and `%memberArgs`; `named` is what the
+  // group's own parentheses held by name, which is refused.
+  const groupRead = (name, values, named, target, token) => {
+    const marked = marksOf(target) || {};
+    const member = target['%member'];
+    const read = { projection: `${name}.${member}` };
+    if (!declaresGroup(name)) {
+      report(token, declares('projection-definition', 'projectionNames', name)
+        ? `${name} is a projection, not a group – it is read as ${name}(…), with nothing after it.`
+        : `${name} is no group – a "." after a read names a projection of a group: Course(courseId).capacity.`);
+    } else {
+      const tag = groupTagName(name);
+      if (named) report(token, `Arguments go on the projection, not on the group: ${name}(…).${member}(name: …).`);
+      if (!tag) report(token, `${name} declares no tag to read it by.`);
+      else if (values.length !== 1) report(token, `${name} is read by its one tag, ${tag} – this gives ${count(values.length, 'value')}.`);
+      if (tag && values.length) {
+        read.tags = {};
+        sourcePut(read.tags, tag, values[0]);
+      }
+      if (values.some((v) => v && typeof v === 'object' && v.open === true)) {
+        report(token, `${name}'s projections are read by its one tag, ${tag || '…'} – it never opens; `
+          + 'an open read collects a top-level projection tagged by several.');
+      }
+    }
+    if (target['%memberArgs'] !== undefined) read.arguments = settle(target['%memberArgs']);
+    mark(read, 'projection', token);
+    mark(read, 'member', marked.member);
+    return read;
+  };
   const isLiteral = (value) => value === null || ['string', 'number', 'boolean'].includes(typeof value);
   const settle = (value) => {
-    if (Array.isArray(value)) return value.map(settle);
+    if (Array.isArray(value)) return value.map((v) => settle(v));
     if (!value || typeof value !== 'object') return value;
     if (value['%call'] !== undefined) {
       const name = value['%call'];
-      const token = (marksOf(value) || {}).callee;
-      const values = value.values.map(settle);
+      const marked = marksOf(value) || {};
+      const token = marked.callee;
+      const values = value.values.map((v) => settle(v));
       if (value.named) for (const key of Object.keys(value.named)) value.named[key] = settle(value.named[key]);
+      // `P(x).city`: a field of the record a projection holds (11.0).
+      if (value['%member'] !== undefined && !declaresGroup(name) && declares('projection-definition', 'projectionNames', name)) {
+        if (value.named) report(token, `A read gives its values in order, as ${name} declares them – no names.`);
+        if (value['%memberArgs'] !== undefined || value['%field'] !== undefined) {
+          report(marked.member, `${name}(…).${value['%member']} reads a field of the record ${name} holds – a field takes no arguments and has no fields.`);
+        }
+        const read = readOf(name, values, value.named ? null : token);
+        read.field = value['%member'];
+        mark(read, 'field', marked.member);
+        mark(read, 'close', marked.close);
+        return read;
+      }
+      if (value['%member'] !== undefined) {
+        const read = groupRead(name, values, value.named, value, token);
+        if (value['%field'] !== undefined) {
+          read.field = value['%field'];
+          mark(read, 'field', marked.field);
+        }
+        mark(read, 'close', marked.close);
+        return read;
+      }
+      if (declaresGroup(name)) {
+        report(token, `${name} is a group – read one of its projections: ${name}(…).name.`);
+        return { projection: name };
+      }
       if (declares('projection-definition', 'projectionNames', name)) {
         if (value.named) report(token, `A read gives its values in order, as ${name} declares them – no names.`);
         const read = readOf(name, values, value.named ? null : token);
-        mark(read, 'close', (marksOf(value) || {}).close);
+        mark(read, 'close', marked.close);
         return read;
       }
       // `CourseId("c1")`: a tag literal, its type and one value.
@@ -1750,6 +2640,36 @@ function parseModelSourceText(text, options) {
     for (const key of Object.keys(value)) value[key] = settle(value[key]);
     return value;
   };
+  // A side of a derived projection's expression: a lowercase name is a
+  // sibling when its group has a projection of that name, and one of
+  // this projection's own parameters – the group's tag among them –
+  // otherwise.
+  const settleDerived = (value, group) => {
+    if (!value || typeof value !== 'object' || value['%local'] === undefined) return settle(value);
+    const name = value['%local'];
+    const marked = marksOf(value) || {};
+    const sibling = !!group && groupProjections(group).some((inner) => inner.name === name);
+    if (sibling) {
+      const read = { projection: name };
+      if (value['%memberArgs'] !== undefined) read.arguments = settle(value['%memberArgs']);
+      if (value['%field'] !== undefined) {
+        read.field = value['%field'];
+        mark(read, 'field', marked.field);
+      }
+      mark(read, 'projection', marked.local);
+      mark(read, 'close', marked.close);
+      return read;
+    }
+    if (value['%field'] !== undefined) report(marked.field, `${name} is a parameter – only a read's record value has fields.`);
+    if (value['%memberArgs'] !== undefined) {
+      report(marked.local, group
+        ? `${name} is no projection of this group – a sibling is read by its name, a top-level projection by its capitalised one.`
+        : `${name}(…) would read a sibling, and only a projection in a group has siblings.`);
+    }
+    const own = { parameterName: name };
+    mark(own, 'parameter', marked.local);
+    return own;
+  };
   for (const body of Object.values(collections['command-definition'])) {
     if (!body || !Array.isArray(body.boundary)) continue;
     body.boundary = body.boundary.map((binding) => {
@@ -1757,57 +2677,87 @@ function parseModelSourceText(text, options) {
       const target = binding['%target'];
       const token = (marksOf(binding) || {}).target;
       const called = binding['%call'];
-      const values = called ? called.values.map(settle) : [];
+      const values = called ? called.values.map((v) => settle(v)) : [];
       const named = called && called.named;
       if (named) for (const key of Object.keys(named)) named[key] = settle(named[key]);
       const out = { alias: binding.alias };
       if (!called) {
         report(token, `${target} is read with its values in parentheses – ${target}(…), empty for an untagged projection.`);
       }
-      if (declares('entity-definition', 'entityNames', target)) {
-        out.entity = target;
-        if (called && values.length !== 1) {
-          report(token, `${target} is an entity, read by its identifier – one value: ${target}(…).`);
+      if (binding['%member'] !== undefined) {
+        // A group's projection bound on its own: a projection read.
+        Object.assign(out, groupRead(target, values, named, binding, token));
+      } else if (declaresGroup(target)) {
+        out.group = target;
+        const tag = groupTagName(target);
+        if (named) report(token, `Arguments go on the projection, not on the group: ${binding.alias}.name(…: …).`);
+        if (!tag) report(token, `${target} declares no tag to read it by.`);
+        else if (called && values.length !== 1) {
+          report(token, `${target} is a group, read by its one tag, ${tag} – this gives ${count(values.length, 'value')}.`);
         }
-        out.id = values[0];
-        if (named) out.arguments = named;
-        if (binding.excluding !== undefined) out.excluding = settle(binding.excluding);
+        out.tags = {};
+        if (tag && values.length) sourcePut(out.tags, tag, values[0]);
       } else {
         const read = readOf(target, values, called && !named ? token : null);
         out.projection = target;
         if (read.tags) out.tags = read.tags;
         if (read.arguments) out.arguments = read.arguments;
         if (named) report(token, `A read gives its values in order, as ${target} declares them – no names.`);
-        if (binding.excluding !== undefined) {
-          report(token, `${target} is a projection – "excluding" narrows an entity's fan-out.`);
-        }
       }
-      if (binding.isOptional) out.isOptional = true;
       copyMarks(binding, out);
-      mark(out, out.entity !== undefined ? 'entity' : 'projection', token);
+      mark(out, out.group !== undefined ? 'group' : 'projection', token);
       return out;
     });
   }
+  // `address.city` through an alias of a projection reads a field of
+  // the record it holds (11.0) – through a group's, `course.capacity`
+  // names a projection. Which one, the settled binding says.
+  const aliasFields = (value, projections) => {
+    if (Array.isArray(value)) { value.forEach((v) => aliasFields(v, projections)); return; }
+    if (!value || typeof value !== 'object') return;
+    if (typeof value.alias === 'string' && projections.has(value.alias) && value.property !== undefined && value.field === undefined) {
+      value.field = value.property;
+      delete value.property;
+      const marked = marksOf(value);
+      if (marked && marked.property) mark(value, 'field', marked.property);
+    }
+    for (const key of Object.keys(value)) aliasFields(value[key], projections);
+  };
   for (const body of Object.values(collections['command-definition'])) {
     if (!body || typeof body !== 'object') continue;
-    for (const key of ['conditions', 'publishes']) {
-      if (Array.isArray(body[key])) body[key] = settle(body[key]);
+    if (Array.isArray(body.steps)) body.steps = settle(body.steps);
+    const projections = new Set((body.boundary || []).filter((b) => b && b.projection !== undefined).map((b) => b.alias));
+    if (!projections.size) continue;
+    aliasFields(body.steps, projections);
+    // A binding's own values too: `Residents(address.city)`.
+    for (const binding of body.boundary || []) {
+      if (binding && binding.tags) aliasFields(binding.tags, projections);
+      if (binding && binding.arguments) aliasFields(binding.arguments, projections);
     }
   }
-  for (const body of Object.values(collections['projection-definition'])) {
-    if (!body || !body.derived || typeof body.derived !== 'object') continue;
-    body.derived.leftHandSide = settle(body.derived.leftHandSide);
-    body.derived.rightHandSide = settle(body.derived.rightHandSide);
+  const settleProjection = (body, group) => {
+    if (!body || !body.derived || typeof body.derived !== 'object') return;
+    body.derived.leftHandSide = settleDerived(body.derived.leftHandSide, group);
+    if (body.derived.rightHandSide !== undefined) body.derived.rightHandSide = settleDerived(body.derived.rightHandSide, group);
+  };
+  for (const body of Object.values(collections['projection-definition'])) settleProjection(body, null);
+  for (const body of Object.values(collections['group-definition'])) {
+    for (const inner of groupProjections(body)) settleProjection(inner, body);
   }
-  // A projection scenario's `then X(…)`: its values named against X.
+  // A projection scenario's `then X(…)`: its values named against X –
+  // or, for a group's projection, the group's tag and the arguments as
+  // named.
   for (const record of result.scenarios) {
     const { call: written, body } = record;
     if (!written) continue;
-    if (!declares('projection-definition', 'projectionNames', body.projection)) continue;
-    const params = parametersOf(body.projection) || { tags: [], arguments: [] };
+    const split = splitQualifiedName(body.projection);
+    if (written.named) body.arguments = written.named;
+    if (split ? !declaresGroup(split.group) : !declares('projection-definition', 'projectionNames', body.projection)) continue;
+    const tag = split && groupTagName(split.group);
+    const params = split ? { tags: tag ? [tag] : [], arguments: [] } : parametersOf(body.projection) || { tags: [], arguments: [] };
     const slots = [...params.tags.map((key) => ['tags', key]), ...params.arguments.map((key) => ['arguments', key])];
     if (written.values.length !== slots.length) {
-      report(written.callee, `${body.projection} takes ${count(slots.length, 'value')}`
+      report(written.callee, `${split ? split.group : body.projection} takes ${count(slots.length, 'value')}`
         + `${slots.length ? ` (${slots.map(([, key]) => key).join(', ')})` : ''} – this gives ${written.values.length}.`);
     }
     written.values.forEach((value, index) => {
@@ -1820,14 +2770,6 @@ function parseModelSourceText(text, options) {
   }
   for (const record of result.scenarios) settle(record.body);
 
-  // Every entity's identifier type, declared or not – see above.
-  const types = collections['custom-type-definition'];
-  for (const [name, body] of Object.entries(collections['entity-definition'])) {
-    const idType = (body && typeof body.identifierType === 'string' && body.identifierType) || name + 'Id';
-    if (Object.prototype.hasOwnProperty.call(types, idType)) continue;
-    sourcePut(types, idType, { schema: { type: 'string' }, isTag: true });
-    result.implicit.push(idType);
-  }
   diagnostics.sort((a, b) => a.line - b.line || a.col - b.col);
   return result;
 }
@@ -1904,19 +2846,56 @@ function sourceLiteral(value) {
   return unprintable(`it holds a value the code form has no spelling for: ${JSON.stringify(value)}`);
 }
 
+// A literal where an operand stands: a duration (11.0) as the
+// notation spells it, `15m`; anything else as `sourceLiteral` does.
+function sourceOperandLiteral(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.duration !== undefined) {
+    if (Object.keys(value).length !== 1) unprintable('a duration carries extra fields');
+    const text = durationLiteralText(value.duration);
+    if (text === null) unprintable(`${JSON.stringify(value.duration)} is no duration the code form can write`);
+    return text;
+  }
+  return sourceLiteral(value);
+}
+
 function sourceProperty(property) {
   return `${sourceRef(property.name, 'property')}${property.isOptional ? '?' : ''}: `
     + `${sourceRef(property.propertyType, 'type')}${property.isList ? '[]' : ''}`;
 }
 
+// What goes in front of a declaration: its description as `///`
+// lines (11.0), then its annotations – those of `names` it carries, in
+// SOURCE_ANNOTATIONS' order, a note once per entry. Every printer
+// writes this, so a description or a note never falls back to JSON.
 function sourceAnnotations(body, names) {
-  return names
-    .filter((name) => body[name] !== undefined)
+  const notes = Object.keys(SOURCE_ANNOTATIONS).filter((name) => {
+    const spec = SOURCE_ANNOTATIONS[name];
+    return names.includes(name) || spec.flag || spec.repeat;
+  });
+  if (body.description !== undefined && typeof body.description !== 'string') unprintable('its description is not text');
+  return sourceDocComment(body.description) + notes
+    .filter((name) => body[SOURCE_ANNOTATIONS[name].field] !== undefined)
     .map((name) => {
-      if (typeof body[name] !== 'string') unprintable(`its ${name} is not a string`);
-      return `@${name}(${JSON.stringify(body[name])})\n`;
+      const spec = SOURCE_ANNOTATIONS[name];
+      const held = body[spec.field];
+      if (spec.flag) {
+        if (held !== true) unprintable(`its ${spec.field} is not true`);
+        return `@${name}\n`;
+      }
+      if (spec.repeat) {
+        if (!Array.isArray(held) || !held.length || held.some((v) => typeof v !== 'string')) unprintable(`its ${spec.field} is not a list of text`);
+        return held.map((v) => `@${name}(${JSON.stringify(v)})\n`).join('');
+      }
+      if (typeof held !== 'string') unprintable(`its ${name} is not a string`);
+      return `@${name}(${JSON.stringify(held)})\n`;
     })
     .join('');
+}
+
+// A description as `///` lines, one per line of it – or nothing.
+function sourceDocComment(description) {
+  if (typeof description !== 'string' || !description) return '';
+  return description.split('\n').map((line) => (line ? `/// ${line}` : '///')).join('\n') + '\n';
 }
 
 // Fields one per line once they stop fitting on one.
@@ -1931,6 +2910,11 @@ function sourceBlock(head, items, { inline = 3, width = 90, separator = ', ' } =
 // `min(a, b)` – or a comparison, spelled as a rule is.
 function sourceDerived(derived, operand) {
   if (!derived || typeof derived !== 'object') unprintable('what it derives is not an object');
+  // One operand, held as it is (11.0).
+  if (derivedHolds(derived)) {
+    if (Object.keys(derived).some((k) => k !== 'leftHandSide')) unprintable('what it derives carries extra fields');
+    return operand(derived.leftHandSide);
+  }
   if (derived.operator === undefined) return sourceCondition(derived, operand);
   if (derived.predicate !== undefined) unprintable('it states both a predicate and an operator');
   if (derived.negate !== undefined) unprintable('it negates a computation');
@@ -1955,6 +2939,13 @@ function sourceCondition(condition, operand) {
     return not(`${left} ${SOURCE_UNARY_WORDS[predicate]}`);
   }
   if (condition.rightHandSide === undefined) unprintable(`a "${predicate}" rule has no right-hand side`);
+  // `count(xs) == 3` reads back as the count predicate it always was,
+  // so a count operand (G3) on the left of ==, !=, < or > has no other
+  // spelling.
+  if (['equals', 'lessThan', 'greaterThan'].includes(predicate) && condition.leftHandSide
+    && typeof condition.leftHandSide === 'object' && condition.leftHandSide.count !== undefined) {
+    unprintable(`count(…) ${predicate === 'equals' ? '==' : predicate === 'lessThan' ? '<' : '>'} … is stored as the count predicate`);
+  }
   const right = () => operand(condition.rightHandSide);
   switch (predicate) {
     case 'equals': return `${left} ${negate ? '!=' : '=='} ${right()}`;
@@ -1975,10 +2966,12 @@ function sourceCondition(condition, operand) {
 }
 
 // The names a printer needs beyond the definition it prints: which
-// names are entities and projections, and what each projection declares
-// – a read is written positionally, so its values are put in that order.
+// names are groups and projections – a group's by their qualified names
+// – what each projection declares, since a read is written positionally
+// and its values are put in that order, and the tag each group is read
+// by.
 function sourceNamesOf(model) {
-  const projections = model['projection-definitions'] || {};
+  const projections = projectionsOf(model);
   const projectionParameters = {};
   for (const [name, body] of Object.entries(projections)) {
     projectionParameters[name] = {
@@ -1986,8 +2979,14 @@ function sourceNamesOf(model) {
       arguments: projectionSlots(body).map((argument) => argument && argument.name),
     };
   }
+  const groupTags = {};
+  for (const [name, body] of Object.entries(model['group-definitions'] || {})) {
+    const tag = groupTagOf(body);
+    if (tag && typeof tag.name === 'string') sourcePut(groupTags, name, tag.name);
+  }
   return {
-    entityNames: Object.keys(model['entity-definitions'] || {}),
+    groupNames: Object.keys(model['group-definitions'] || {}),
+    groupTags,
     projectionNames: Object.keys(projections),
     projectionParameters,
   };
@@ -2001,10 +3000,56 @@ function sourceTagLiteral(tag) {
   return `${tag.tagType}(${sourceLiteral(tag.tagValue)})`;
 }
 
+// `name: value, …` – a group's projection's arguments, which it takes
+// by name.
+function sourceNamedArguments(args, operand) {
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) unprintable('its arguments are not an object');
+  return Object.entries(args).map(([key, value]) => `${sourceRef(key, 'argument')}: ${operand(value)}`).join(', ');
+}
+
+// One value of a read: `each x`, `*` (an open tag, 11.0), a tag
+// literal, or an operand.
+function sourceReadValue(value, operand) {
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.open !== undefined) {
+    if (value.open !== true || Object.keys(value).length !== 1) unprintable('an open tag carries more than open: true');
+    return '*';
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.each !== undefined) {
+    if (Object.keys(value).length !== 1) unprintable('an each carries extra fields');
+    return `each ${operand(value.each)}`;
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.tagType !== undefined) return sourceTagLiteral(value);
+  return operand(value);
+}
+
+// `Course(courseId)` – a group, read by its one tag: the first
+// parentheses of a group read, alias or projection.
+function sourceGroupCall(groupName, tags, names, operand) {
+  const name = sourceRef(groupName, 'group');
+  if (!SOURCE_MEMBER_RE.test(name)) unprintable(`the group ${JSON.stringify(name)} does not start with a capital`);
+  const tag = names && names.groupTags && Object.prototype.hasOwnProperty.call(names.groupTags, name) ? names.groupTags[name] : null;
+  if (!tag) unprintable(`it reads the group "${name}", which declares no tag the code form can give a value`);
+  const held = tags === undefined ? {} : tags;
+  if (held === null || typeof held !== 'object' || Array.isArray(held)) unprintable('its tags are not an object');
+  const given = Object.keys(held);
+  if (given.length !== 1 || given[0] !== tag) unprintable(`it reads ${name} by ${given.join(', ') || 'nothing'}, where ${name} is read by ${tag}`);
+  return `${name}(${sourceReadValue(held[tag], operand)})`;
+}
+
 // `X(a, each b, 14)` – a read, its values in the order `X` declares
 // them: the tags, then its arguments. A read whose names are not
-// exactly the declared ones has no positional spelling.
+// exactly the declared ones has no positional spelling. A group's
+// projection is `Course(courseId).seatsOn(slot: s)`: the group's tag,
+// then the projection's arguments by name.
 function sourceRead(read, names, operand) {
+  const split = splitQualifiedName(read.projection);
+  if (split) {
+    const member = sourceRef(split.local, 'projection');
+    if (!SOURCE_LOCAL_RE.test(member)) unprintable(`the projection ${JSON.stringify(member)} of a group is not lowerCamel`);
+    const args = read.arguments === undefined || isEmptyContainer(read.arguments) ? ''
+      : `(${sourceNamedArguments(read.arguments, operand)})`;
+    return `${sourceGroupCall(split.group, read.tags, names, operand)}.${member}${args}${sourceField(read)}`;
+  }
   const name = sourceRef(read.projection, 'projection');
   if (!SOURCE_MEMBER_RE.test(name)) unprintable(`the projection ${JSON.stringify(name)} does not start with a capital`);
   const params = names && names.projectionParameters && names.projectionParameters[name];
@@ -2019,14 +3064,50 @@ function sourceRead(read, names, operand) {
     }
     for (const n of declared) values.push(held[n]);
   }
-  return `${name}(${values.map((value) => {
-    if (value && typeof value === 'object' && !Array.isArray(value) && value.each !== undefined) {
-      if (Object.keys(value).length !== 1) unprintable('an each carries extra fields');
-      return `each ${operand(value.each)}`;
+  return `${name}(${values.map((value) => sourceReadValue(value, operand)).join(', ')})${sourceField(read)}`;
+}
+
+// `.field` after a read of a record value (11.0), or nothing.
+function sourceField(read) {
+  return read.field === undefined ? '' : `.${sourceRef(read.field, 'field')}`;
+}
+
+// `sum(P(x, *) where value > 2)` (11.0): the function, its open read –
+// written by `read` – and the where, its sides `value`, names in scope
+// (`name`) and literals.
+function sourceCollection(operand, read, name) {
+  if (Object.keys(operand).some((k) => !['collect', 'read', 'where'].includes(k))) unprintable('a collection function carries extra fields');
+  if (!COLLECTION_FUNCTIONS.includes(operand.collect)) unprintable(`"${operand.collect}" is not a collection function the code form knows`);
+  const target = operand.read;
+  if (!target || typeof target !== 'object' || target.projection === undefined) {
+    unprintable('a collection function collects no read of a projection');
+  }
+  if (!readTagOperands(target).some((tag) => tag && typeof tag === 'object' && tag.open === true)) {
+    unprintable('a collection function\'s read leaves no tag open');
+  }
+  const side = (value) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (value.instanceValue !== undefined) {
+        if (value.instanceValue !== true || Object.keys(value).some((k) => !['instanceValue', 'field'].includes(k))) unprintable('a where\'s value carries extra fields');
+        return value.field === undefined ? 'value' : `value.${sourceRef(value.field, 'field')}`;
+      }
+      if (value.parameterName !== undefined) {
+        if (Object.keys(value).some((k) => !['parameterName', 'property'].includes(k))) unprintable('a where reads more than a name');
+        if (value.parameterName === 'value') unprintable('a where names a parameter called value');
+        return name(value);
+      }
+      // An alias already bound (11.0): its value, or a field of the
+      // record it holds – never a group's projection, which is a read.
+      if (value.alias !== undefined) {
+        if (value.property !== undefined || value.arguments !== undefined) unprintable('a where reads a group\'s projection');
+        return name(value);
+      }
+      if (value.enumMember === undefined && value.duration === undefined) unprintable('a where reads something other than value, a name or a literal');
     }
-    if (value && typeof value === 'object' && !Array.isArray(value) && value.tagType !== undefined) return sourceTagLiteral(value);
-    return operand(value);
-  }).join(', ')})`;
+    return sourceOperandLiteral(value);
+  };
+  const where = operand.where === undefined ? '' : ` where ${sourceAnyCondition(operand.where, side)}`;
+  return `${operand.collect}(${read(target)}${where})`;
 }
 
 function sourceHandlerOperand(operand) {
@@ -2035,41 +3116,130 @@ function sourceHandlerOperand(operand) {
     if (keys.length === 1 && operand.eventProperty !== undefined) {
       return `event.data.${sourceRef(operand.eventProperty, 'event property')}`;
     }
-    if (keys.length === 1 && operand.currentValue === true) return 'currentValue';
+    // One field of a record-typed property (11.0).
+    if (keys.length === 2 && operand.eventProperty !== undefined && operand.property !== undefined) {
+      return `event.data.${sourceRef(operand.eventProperty, 'event property')}.${sourceRef(operand.property, 'field')}`;
+    }
     if (keys.length === 1 && operand.successor !== undefined) return `successor(${sourceHandlerOperand(operand.successor)})`;
+    // A record set whole (11.0).
+    if (keys.length === 1 && operand.record !== undefined) {
+      const fields = operand.record;
+      if (!fields || typeof fields !== 'object' || Array.isArray(fields)) unprintable('a record\'s fields are not an object');
+      const entries = Object.entries(fields);
+      if (!entries.length) unprintable('a record sets no field');
+      return `{ ${entries.map(([key, value]) => `${sourceRef(key, 'field')}: ${sourceHandlerOperand(value)}`).join(', ')} }`;
+    }
   }
   return sourceLiteral(operand);
 }
 
+// A branched handler's chains (11.0), one line per arm: `if c =>
+// op`, `else if c => op`, `else => op`. Only what the parser reads back
+// prints: `==` / `!=` between an event field and one of `tagNames` or a
+// literal, one operation per arm.
+function sourceHandlerSteps(handler, tagNames, operation) {
+  if (Object.keys(handler).some((k) => !['event', 'steps'].includes(k))) unprintable('a branched handler carries fields a handler does not have');
+  if (!Array.isArray(handler.steps) || !handler.steps.length) unprintable('a branched handler has no branches');
+  const side = (value) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (value.eventProperty !== undefined) {
+        if (Object.keys(value).some((k) => !['eventProperty', 'property'].includes(k))) unprintable('a condition\'s event field carries more than a path');
+        return `event.data.${sourceRef(value.eventProperty, 'event property')}`
+          + (value.property !== undefined ? `.${sourceRef(value.property, 'field')}` : '');
+      }
+      if (value.parameterName !== undefined) {
+        if (Object.keys(value).length !== 1 || !tagNames.includes(value.parameterName)) unprintable(`a condition compares with "${value.parameterName}", which is no tag of it`);
+        return sourceRef(value.parameterName, 'tag');
+      }
+    }
+    return sourceOperandLiteral(value);
+  };
+  const condition = (c) => {
+    for (const leaf of conditionLeaves(c)) {
+      if (leaf.predicate !== 'equals' || Object.keys(leaf).some((k) => !['leftHandSide', 'predicate', 'rightHandSide', 'negate'].includes(k))) {
+        unprintable('a handler\'s condition is more than == or !=');
+      }
+      if (!leaf.leftHandSide || leaf.leftHandSide.eventProperty === undefined) unprintable('a handler\'s condition does not start with an event field');
+      if (leaf.rightHandSide && typeof leaf.rightHandSide === 'object' && leaf.rightHandSide.eventProperty !== undefined) {
+        unprintable('a handler\'s condition compares two event fields');
+      }
+    }
+    return sourceAnyCondition(c, side);
+  };
+  const arm = (holder) => {
+    if (!holder || typeof holder !== 'object' || Object.keys(holder).some((k) => !['condition', 'operation', 'value'].includes(k))) {
+      unprintable('a handler branch carries fields a branch does not have');
+    }
+    return operation(holder);
+  };
+  const lines = [];
+  for (const step of handler.steps) {
+    if (!step || typeof step !== 'object' || Object.keys(step).some((k) => !['branches', 'otherwise'].includes(k))) unprintable('a handler chain carries fields a chain does not have');
+    if (!Array.isArray(step.branches) || !step.branches.length) unprintable('a handler chain has no if');
+    step.branches.forEach((branch, index) => {
+      if (!branch || branch.condition === undefined) unprintable('a handler branch has no condition');
+      lines.push(`${index ? 'else if' : 'if'} ${condition(branch.condition)} => ${arm(branch)}`);
+    });
+    if (step.otherwise !== undefined) {
+      if (step.otherwise && step.otherwise.condition !== undefined) unprintable('a handler\'s else has a condition');
+      lines.push(`else => ${arm(step.otherwise)}`);
+    }
+  }
+  return lines;
+}
+
 // A derived operand: another projection's read – its values each one
 // of this projection's own parameters by name, or a literal – one of
-// its own parameters by name, or a literal.
-function sourceDerivedOperand(names) {
+// its own parameters by name, or a literal. In a group (`siblings`, the
+// local names of its projections), a sibling is named bare, its
+// arguments by name, and a parameter that shares a sibling's name has
+// no spelling.
+function sourceDerivedOperand(names, siblings = null) {
   const value = (v) => {
     if (v && typeof v === 'object' && !Array.isArray(v) && v.parameterName !== undefined) {
       if (Object.keys(v).length !== 1) unprintable('a derived operand\'s parameter reaches into a field');
       return sourceRef(v.parameterName, 'parameter');
     }
-    return sourceLiteral(v);
+    return sourceOperandLiteral(v);
   };
-  return (operand) => {
-    if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.projection !== undefined) {
-      if (Object.keys(operand).some((k) => !['projection', 'tags', 'arguments'].includes(k))) unprintable('a derived operand carries extra fields');
-      return sourceRead(operand, names, value);
+  const read = (operand) => {
+    if (Object.keys(operand).some((k) => !['projection', 'tags', 'arguments', 'field'].includes(k))) unprintable('a derived operand carries extra fields');
+    if (typeof operand.projection === 'string' && isLocalProjectionName(operand.projection)) {
+      if (!siblings) unprintable(`it reads "${operand.projection}", a sibling, outside any group`);
+      if (operand.tags !== undefined && !isEmptyContainer(operand.tags)) unprintable('a sibling read gives tags – the group\'s is implied');
+      const local = sourceRef(operand.projection, 'sibling');
+      const args = operand.arguments === undefined || isEmptyContainer(operand.arguments) ? ''
+        : `(${sourceNamedArguments(operand.arguments, value)})`;
+      return local + args + sourceField(operand);
+    }
+    return sourceRead(operand, names, value);
+  };
+  const self = (operand) => {
+    if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.collect !== undefined) {
+      return sourceCollection(operand, read, value);
+    }
+    // A count of a list (G3).
+    if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.count !== undefined) {
+      if (Object.keys(operand).length !== 1) unprintable('a count carries extra fields');
+      return `count(${self(operand.count)})`;
+    }
+    if (operand && typeof operand === 'object' && !Array.isArray(operand) && operand.projection !== undefined) return read(operand);
+    if (siblings && operand && typeof operand === 'object' && siblings.includes(operand.parameterName)) {
+      unprintable(`"${operand.parameterName}" names both a parameter and a projection of the group`);
     }
     return value(operand);
   };
+  return self;
 }
 
 function printCustomType(name, body) {
-  const tagSchema = body.tagSchema !== undefined && body.tagSchema !== '{type}:{value}'
-    ? sourceAnnotations(body, ['tagSchema']) : '';
+  const tagSchema = sourceAnnotations(body, body.tagSchema !== undefined && body.tagSchema !== '{type}:{value}' ? ['tagSchema'] : []);
   const tag = body.isTag === true ? 'tag ' : '';
   const declared = sourceDeclName(name);
   if (body.properties !== undefined) {
     if (body.schema !== undefined) unprintable('it has both a schema and fields');
     if (!Array.isArray(body.properties)) unprintable('its fields are not a list');
-    const fields = body.properties.map((f) => `${sourceRef(f.name, 'field')}: ${sourceRef(f.propertyType, 'type')}`);
+    const fields = body.properties.map((f) => `${sourceRef(f.name, 'field')}${f.isOptional === true ? '?' : ''}: ${sourceRef(f.propertyType, 'type')}`);
     return tagSchema + sourceBlock(`${tag}record ${declared}`, fields);
   }
   const schema = body.schema;
@@ -2078,6 +3248,8 @@ function printCustomType(name, body) {
   const plainEnum = keys.length === 2 && schema.type === 'string' && Array.isArray(schema.enum) && schema.enum.length
     && schema.enum.every((m) => typeof m === 'string' && SOURCE_IDENT_RE.test(m) && !['true', 'false', 'null'].includes(m));
   if (plainEnum) return tagSchema + `${tag}enum ${declared} { ${schema.enum.join(', ')} }`;
+  const time = Object.keys(SOURCE_TIME_FORMATS).find((word) => SOURCE_TIME_FORMATS[word] === schema.format);
+  if (time && keys.length === 2 && schema.type === 'string') return tagSchema + `${tag}type ${declared} = ${time}`;
   if (typeof schema.type === 'string' && SOURCE_BASE_TYPES.includes(schema.type)) {
     const rest = {};
     for (const key of keys) if (key !== 'type') rest[key] = schema[key];
@@ -2110,30 +3282,45 @@ function printEvent(name, body) {
   return sourceAnnotations(body, ['icon']) + sourceBlock(`event ${sourceDeclName(name)}`, fields);
 }
 
-function printEntity(name, body) {
-  const idType = sourceRef(body.identifierType !== undefined ? body.identifierType : name + 'Id', 'identifier type');
-  const idName = body.identifierName !== undefined ? sourceRef(body.identifierName, 'tag')
-    : idType.charAt(0).toLowerCase() + idType.slice(1);
-  const head = `entity ${sourceDeclName(name)} (tag ${idName}: ${idType})`;
-  const items = [];
-  if (body.lifecycle !== undefined && body.lifecycle !== null) items.push(`lifecycle ${sourceRef(body.lifecycle, 'lifecycle')}`);
-  for (const p of body.properties || []) {
-    items.push(`${sourceRef(p.name, 'property')} = ${sourceRef(p.projection, 'projection')}`);
-  }
-  return sourceAnnotations(body, ['icon']) + sourceBlock(head, items, { inline: 0 });
+// `group Course (tag courseId: CourseId) { … }`, its projections in
+// their stored order, each as a top-level one is printed minus the tag
+// header. `nest`, from `modelToSource`, gives each projection's printed
+// scenarios to put in its block; the round trip a definition is held to
+// is the group's without them, as for a command.
+function printGroup(name, body, names, nest = null) {
+  if (Object.keys(body).some((k) => !['icon', 'tag', 'projections', ...SOURCE_NOTE_FIELDS].includes(k))) unprintable('it carries fields the code form does not know');
+  const tag = groupTagOf(body);
+  if (!tag) unprintable('it declares no tag');
+  if (Object.keys(tag).some((k) => k !== 'name' && k !== 'tagType')) unprintable('its tag is not { name, tagType }');
+  const head = `group ${sourceDeclName(name)} (tag ${sourceRef(tag.name, 'tag')}: ${sourceRef(tag.tagType, 'tag type')})`;
+  const projections = body.projections === undefined ? [] : body.projections;
+  if (!Array.isArray(projections)) unprintable('its projections are not a list');
+  const siblings = projections.map((inner) => inner && inner.name);
+  const items = projections.map((inner) => {
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) unprintable('a projection of it is not an object');
+    const { name: local, ...rest } = inner;
+    if (typeof local !== 'string' || !SOURCE_LOCAL_RE.test(local)) {
+      unprintable(`its projection ${JSON.stringify(local)} is not named in lowerCamel`);
+    }
+    const text = printProjection(local, rest, names, { siblings, tag });
+    return nest ? sourceNest(text, nest(local)) : text;
+  });
+  const block = items.length ? `${head} {\n${items.map(sourceIndent).join('\n\n')}\n}` : `${head} {}`;
+  return sourceAnnotations(body, ['icon']) + block;
 }
 
 // `projection Name (tag courseId: CourseId): T = v` – or `untagged
-// projection Name: T = v`, `derived projection Name (…): T { a - b }`,
-// `scripted projection Name (tag courseId: CourseId, days: integer): T
-// { … }`. The tags come first, then its arguments, which
-// is the order a read gives them in.
-function printProjection(name, body, names) {
+// projection Name: T = v`, or `derived projection Name (tag courseId:
+// CourseId, days: integer): T { a - b }`. The tags come first, then its
+// arguments, which
+// is the order a read gives them in. In a group (`inGroup`, the local
+// names of its projections) there are no tags to give and no
+// `untagged` to say: the group's tag is its.
+function printProjection(name, body, names, inGroup = null) {
+  const lead = sourceAnnotations(body, []);
   const tags = body.tags === undefined ? [] : body.tags;
   if (!Array.isArray(tags)) unprintable('its tags are not a list');
-  const script = body.script;
-  if (script !== undefined && (script === null || typeof script !== 'object' || Array.isArray(script))) unprintable('its script is not an object');
-  if (script && script.arguments !== undefined) unprintable('its script states arguments, which are the projection\'s');
+  if (inGroup && tags.length) unprintable('it is in a group and declares tags of its own');
   const args = body.arguments === undefined ? [] : body.arguments;
   if (!Array.isArray(args) || (body.arguments !== undefined && !args.length)) unprintable('its arguments are not a non-empty list');
   const parameters = [
@@ -2146,51 +3333,52 @@ function printProjection(name, body, names) {
       return `${sourceRef(p.name, 'parameter')}: ${sourceRef(p.propertyType, 'type')}`;
     }),
   ];
-  // The kind is said once, in front; a body that is two kinds at once
-  // has no spelling.
-  if (body.derived !== undefined && script !== undefined) unprintable('it is both derived and scripted');
-  const kind = body.derived !== undefined ? 'derived ' : script !== undefined ? 'scripted ' : '';
-  let head = `${tags.length ? '' : 'untagged '}${kind}projection ${sourceDeclName(name)}`
+  // The kind is said once, in front.
+  const kind = body.derived !== undefined ? 'derived ' : '';
+  let head = `${tags.length || inGroup ? '' : 'untagged '}${kind}projection ${sourceDeclName(name)}`
     + (parameters.length ? ` (${parameters.join(', ')})` : '')
     + `: ${sourceRef(body.valueType, 'value type')}${body.isList ? '[]' : ''}`;
   if (body.derived !== undefined) {
     if (body.initialValue !== undefined) unprintable('it is derived and states an initial value');
     if (body.handlers !== undefined) unprintable('it is derived and states handlers');
-    return `${head} {\n  ${sourceDerived(body.derived, sourceDerivedOperand(names))}\n}`;
+    return `${lead}${head} {\n  ${sourceDerived(body.derived, sourceDerivedOperand(names, inGroup && inGroup.siblings))}\n}`;
   }
   if (body.initialValue !== undefined) head += ` = ${sourceLiteral(body.initialValue)}`;
   const lines = [head];
-  if (body.handlers === undefined && script === undefined) return lines.join('\n');
+  if (body.handlers === undefined) return lead + lines.join('\n');
   const items = [];
-  if (script !== undefined) {
-    if (script.tagFilter !== undefined) unprintable('its script states a tag filter – a projection declares its tags');
-    if (script.initialState !== undefined) items.push(`initialState ${sourceJson(script.initialState, '  ')}`);
-    if (script.exposes !== undefined) items.push(`exposes ${sourceRef(script.exposes, 'exposed field')}`);
-  }
+  const tagNames = inGroup ? (inGroup.tag ? [inGroup.tag.name] : []) : tags.map((tag) => tag && tag.name);
+  const operation = (holder) => {
+    if (!OPERATIONS.includes(holder.operation)) unprintable(`a handler's operation ${JSON.stringify(holder.operation)} is not one the code form knows`);
+    return holder.operation + (holder.value !== undefined ? ' ' + sourceHandlerOperand(holder.value) : '');
+  };
   for (const handler of body.handlers || []) {
     const event = sourceRef(handler.event, 'event');
-    if (handler.code !== undefined) {
-      if (handler.operation !== undefined || handler.value !== undefined) unprintable('a handler has both code and an operation');
-      if (typeof handler.code !== 'string' || handler.code.includes('```')) unprintable('a handler\'s code cannot be fenced');
-      items.push(`on ${event} => \`\`\`${handler.code}\`\`\``);
-    } else {
-      if (!OPERATIONS.includes(handler.operation)) unprintable(`a handler's operation ${JSON.stringify(handler.operation)} is not one the code form knows`);
-      items.push(`on ${event} => ${handler.operation}`
-        + (handler.value !== undefined ? ' ' + sourceHandlerOperand(handler.value) : ''));
+    if (!isConditionalHandler(handler)) {
+      items.push(`on ${event} => ${operation(handler)}`);
+      continue;
     }
+    items.push(`on ${event} {\n${sourceHandlerSteps(handler, tagNames, operation).map((line) => '  ' + line).join('\n')}\n}`);
   }
   const tail = lines.length - 1;
-  lines[tail] += items.length ? ` {\n${items.map((i) => '  ' + i).join('\n')}\n}` : ' {}';
-  return lines.join('\n');
+  lines[tail] += items.length ? ` {\n${items.map((i) => i.split('\n').map((line) => '  ' + line).join('\n')).join('\n')}\n}` : ' {}';
+  return lead + lines.join('\n');
 }
 
 // How a command writes an operand – the inverse of `resolveCommandNames`,
 // refusing whatever it would resolve differently.
 function sourceCommandOperand(body, names) {
   const aliases = new Set((body.boundary || []).map((b) => b && b.alias));
-  const parameters = new Set((body.properties || []).map((p) => p && p.name));
+  const parameters = new Set([...(body.properties || []).map((p) => p && p.name),
+    ...commandLoops(body).flatMap(loopNames)]);
   return (value) => {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
+      // `value` inside a loop over an open read (11.0); anywhere else
+      // it does not read back, and the definition prints as JSON.
+      if (value.instanceValue !== undefined) {
+        if (value.instanceValue !== true || Object.keys(value).some((k) => !['instanceValue', 'field'].includes(k))) unprintable('a value carries extra fields');
+        return `value${value.field !== undefined ? '.' + sourceRef(value.field, 'field') : ''}`;
+      }
       if (value.parameterName !== undefined) {
         const head = sourceRef(value.parameterName, 'parameter');
         if (aliases.has(head)) unprintable(`"${head}" names both a payload property and an alias`);
@@ -2202,22 +3390,170 @@ function sourceCommandOperand(body, names) {
         const head = sourceRef(value.alias, 'alias');
         const declared = aliases.has(head);
         if (!declared && parameters.has(head)) unprintable(`"${head}" names both a payload property and an alias`);
+        const binding = (body.boundary || []).find((b) => b && b.alias === head);
         if (value.property === undefined) {
+          if (value.arguments !== undefined && !isEmptyContainer(value.arguments)) unprintable('an alias without a property is given arguments');
           if (!declared) unprintable(`it reads "${head}", which no alias here declares`);
+          // A field of the record a projection holds (11.0).
+          if (value.field !== undefined) {
+            if (!binding || binding.projection === undefined) unprintable(`it reads a field of "${head}", which binds no projection`);
+            return `${head}${sourceField(value)}`;
+          }
           return head;
         }
-        return `${head}.${sourceRef(value.property, 'property')}`;
+        if (binding && binding.projection !== undefined) unprintable(`"${head}" binds a projection, which has no projection "${value.property}"`);
+        // A group's projection, its arguments by name.
+        const args = value.arguments === undefined || isEmptyContainer(value.arguments) ? ''
+          : `(${sourceNamedArguments(value.arguments, sourceCommandOperand(body, names))})`;
+        return `${head}.${sourceRef(value.property, 'property')}${args}${sourceField(value)}`;
+      }
+      if (value.collect !== undefined) {
+        const operand = sourceCommandOperand(body, names);
+        return sourceCollection(value, (read) => sourceRead(read, names, operand), operand);
+      }
+      // A count of a list (G3).
+      if (value.count !== undefined) {
+        if (Object.keys(value).length !== 1) unprintable('a count carries extra fields');
+        return `count(${sourceCommandOperand(body, names)(value.count)})`;
       }
       if (value.projection !== undefined) {
-        if (Object.keys(value).some((k) => !['projection', 'tags', 'arguments'].includes(k))) unprintable('an inline read carries extra fields');
+        if (Object.keys(value).some((k) => !['projection', 'tags', 'arguments', 'field'].includes(k))) unprintable('an inline read carries extra fields');
         return sourceRead(value, names, sourceCommandOperand(body, names));
       }
       // A typed literal stands where a tag does; anywhere else it is no
       // value the code form can say.
       if (value.tagType !== undefined) unprintable('a tag literal stands outside a read');
+      // `a - b + c` (11.0): a sum on the left is written bare, as it was
+      // read; one on the right has no spelling.
+      if (value.operator !== undefined) {
+        if (Object.keys(value).some((k) => !['operator', 'leftHandSide', 'rightHandSide'].includes(k))) unprintable('arithmetic carries extra fields');
+        const symbol = Object.keys(SOURCE_OPERATORS).find((k) => SOURCE_OPERATORS[k] === value.operator);
+        if (symbol !== '+' && symbol !== '-') unprintable(`"${value.operator}" is no arithmetic a command has`);
+        if (value.rightHandSide && typeof value.rightHandSide === 'object' && value.rightHandSide.operator !== undefined) {
+          unprintable('arithmetic on the right of + or - has no spelling');
+        }
+        const self = sourceCommandOperand(body, names);
+        return `${self(value.leftHandSide)} ${symbol} ${self(value.rightHandSide)}`;
+      }
     }
-    return sourceLiteral(value);
+    return sourceOperandLiteral(value);
   };
+}
+
+// A command's condition: its comparisons, joined. `and` binds tighter,
+// so an `or` inside an `and` is bracketed – and so is a group inside one
+// of its own kind, which a reader wrote as a group.
+function sourceAnyCondition(condition, operand) {
+  if (!isCompoundCondition(condition)) return sourceCondition(condition, operand);
+  const all = Array.isArray(condition.all);
+  const parts = all ? condition.all : condition.any;
+  if (parts.length < 2) unprintable('an and/or joins fewer than two conditions');
+  return parts.map((part) => {
+    const text = sourceAnyCondition(part, operand);
+    const bracket = isCompoundCondition(part) && (Array.isArray(part.any) || Array.isArray(part.all) === all);
+    return bracket ? `(${text})` : text;
+  }).join(all ? ' and ' : ' or ');
+}
+
+// One step as lines of text, its continuation lines indented.
+function sourceStep(step, operand) {
+  switch (stepKind(step)) {
+    case 'rule':
+      if (typeof step.rejection !== 'string') unprintable('a rule has no rejection message');
+      if (Object.keys(step).some((k) => !['condition', 'rejection'].includes(k))) unprintable('a rule carries fields a rule does not have');
+      return `require ${sourceAnyCondition(step.condition, operand)}\n  else reject ${JSON.stringify(step.rejection)}`;
+    case 'reject':
+      if (typeof step.reject !== 'string') unprintable('a reject has no message');
+      if (Object.keys(step).length !== 1) unprintable('a reject carries fields a reject does not have');
+      return `reject ${JSON.stringify(step.reject)}`;
+    case 'emit': {
+      if (Object.keys(step).some((k) => !['name', 'parameters'].includes(k))) unprintable(`its emission of "${step.name}" carries fields an emission does not have`);
+      let text = `emit ${sourceRef(step.name, 'event')}`;
+      if (step.parameters !== undefined) {
+        // A record built whole (#5), one level: each field as an
+        // emission field is written.
+        const field = (print) => ([key, value]) => {
+          const valueText = print(value);
+          return valueText === sourceRef(key, 'event property') ? key : `${key}: ${valueText}`;
+        };
+        const emitted = (value) => {
+          if (!value || typeof value !== 'object' || Array.isArray(value) || value.record === undefined || Object.keys(value).length !== 1) return operand(value);
+          const fields = value.record;
+          if (!fields || typeof fields !== 'object' || Array.isArray(fields)) unprintable('a record\'s fields are not an object');
+          const entries = Object.entries(fields);
+          if (!entries.length) unprintable('a record sets no field');
+          return `{ ${entries.map(field((inner) => {
+            if (inner && typeof inner === 'object' && !Array.isArray(inner) && inner.record !== undefined) unprintable('a record holds a record');
+            return operand(inner);
+          })).join(', ')} }`;
+        };
+        const fields = Object.entries(step.parameters).map(field(emitted));
+        const inline = `${text} { ${fields.join(', ')} }`;
+        text = !fields.length ? `${text} {}`
+          : inline.length <= 88 ? inline
+            : `${text} {\n${fields.map((f) => '  ' + f + ',').join('\n')}\n}`;
+      }
+      return text;
+    }
+    case 'branch': {
+      if (Object.keys(step).some((k) => !['branches', 'otherwise'].includes(k))) unprintable('a branch carries fields a branch does not have');
+      // One emission or `reject` stands after the arrow; anything else
+      // is a block.
+      const arm = (steps) => {
+        if (!Array.isArray(steps)) unprintable('a branch arm\'s steps are not a list');
+        if (steps.length === 1 && ['emit', 'reject'].includes(stepKind(steps[0]))) return sourceStep(steps[0], operand);
+        if (!steps.length) return '{}';
+        const inner = sourceSteps(steps, operand).map((group) => group.join('\n')).join('\n');
+        return `{\n${inner.split('\n').map((line) => '  ' + line).join('\n')}\n}`;
+      };
+      const lines = step.branches.map((branch, index) => {
+        if (!branch || branch.condition === undefined) unprintable('a branch arm has no condition');
+        if (Object.keys(branch).some((k) => !['condition', 'steps'].includes(k))) unprintable('a branch arm carries fields an arm does not have');
+        return `${index ? 'else if' : 'if'} ${sourceAnyCondition(branch.condition, operand)} => ${arm(branch.steps || [])}`;
+      });
+      if (step.otherwise !== undefined) lines.push(`else => ${arm(step.otherwise)}`);
+      return lines.join('\n');
+    }
+    // `for each x in source => emit …`, or a block (11.0).
+    case 'loop': {
+      if (Object.keys(step).some((k) => !['forEach', 'in', 'steps'].includes(k))) unprintable('a loop carries fields a loop does not have');
+      const names = loopNames(step);
+      if (!names.length || names.length !== step.forEach.length) unprintable('a loop names nothing');
+      const steps = step.steps === undefined ? [] : step.steps;
+      if (!Array.isArray(steps)) unprintable('a loop\'s steps are not a list');
+      for (const inner of steps) {
+        const kind = stepKind(inner);
+        const oneEach = kind === 'branch' && stepArms(inner).every((arm) => arm.steps.length === 1 && ['emit', 'reject'].includes(stepKind(arm.steps[0])));
+        if (kind !== 'emit' && !oneEach) unprintable('a loop holds a step other than an emission or a branch of one emission or reject each');
+      }
+      const said = names.map((name) => sourceRef(name, 'name'));
+      const head = `for each ${said.length === 1 ? said[0] : `(${said.join(', ')})`} in ${operand(step.in)}`;
+      if (steps.length === 1 && stepKind(steps[0]) === 'emit') return `${head} => ${sourceStep(steps[0], operand)}`;
+      if (!steps.length) return `${head} {}`;
+      const inner = sourceSteps(steps, operand).map((group) => group.join('\n')).join('\n');
+      return `${head} {\n${inner.split('\n').map((line) => '  ' + line).join('\n')}\n}`;
+    }
+    default:
+      return unprintable('a step is neither a rule, an emission, a branch, a loop nor a reject');
+  }
+}
+
+// Steps as groups of lines: a run of rules, then of emissions, then of
+// branches, each a group of its own – and each loop alone – one blank
+// line between groups, as the rules and the emissions have always been
+// printed.
+function sourceSteps(steps, operand) {
+  const groups = [];
+  let last = null;
+  for (const step of steps) {
+    const kind = stepKind(step);
+    const category = kind === 'reject' ? 'emit' : kind;
+    // A loop is a block of its own, apart from the next.
+    if (!groups.length || category !== last || kind === 'loop') groups.push([]);
+    groups[groups.length - 1].push(sourceStep(step, operand));
+    last = category;
+  }
+  return groups;
 }
 
 function printCommand(name, body, names) {
@@ -2232,52 +3568,24 @@ function printCommand(name, body, names) {
 
   const reads = boundary.map((binding) => {
     if (!binding || typeof binding !== 'object') unprintable('an alias is not an object');
-    const alias = sourceRef(binding.alias, 'alias') + (binding.isOptional === true ? '?' : '');
-    if (binding.entity !== undefined && binding.projection === undefined) {
-      if (binding.id === undefined) unprintable(`the alias "${binding.alias}" has no identifier`);
-      if (Object.keys(binding).some((k) => !['alias', 'entity', 'id', 'excluding', 'isOptional', 'arguments'].includes(k))) {
-        unprintable(`the alias "${binding.alias}" carries fields the code form does not know`);
+    const alias = sourceRef(binding.alias, 'alias');
+    if (binding.group !== undefined && binding.projection === undefined) {
+      if (Object.keys(binding).some((k) => !['alias', 'group', 'tags'].includes(k))) {
+        unprintable(`the alias "${binding.alias}" carries fields a group read does not have`);
       }
-      const id = binding.id;
-      const idText = id && typeof id === 'object' && !Array.isArray(id) && id.each !== undefined
-        ? (Object.keys(id).length === 1 ? `each ${operand(id.each)}` : unprintable('an each carries extra fields'))
-        : id && typeof id === 'object' && !Array.isArray(id) && id.tagType !== undefined ? sourceTagLiteral(id) : operand(id);
-      const args = binding.arguments !== undefined && Object.keys(binding.arguments).length
-        ? `, ${Object.entries(binding.arguments).map(([key, value]) => `${sourceRef(key, 'argument')}: ${operand(value)}`).join(', ')}` : '';
-      let text = `alias ${alias} = ${sourceRef(binding.entity, 'entity')}(${idText}${args})`;
-      if (binding.excluding !== undefined) text += ` excluding ${operand(binding.excluding)}`;
-      return text;
+      return `alias ${alias} = ${sourceGroupCall(binding.group, binding.tags, names, operand)}`;
     }
-    if (binding.projection !== undefined && binding.entity === undefined) {
-      if (Object.keys(binding).some((k) => !['alias', 'projection', 'tags', 'arguments', 'isOptional'].includes(k))) {
+    if (binding.projection !== undefined && binding.group === undefined) {
+      if (Object.keys(binding).some((k) => !['alias', 'projection', 'tags', 'arguments'].includes(k))) {
         unprintable(`the alias "${binding.alias}" carries fields a projection read does not have`);
       }
       return `alias ${alias} = ${sourceRead(binding, names, operand)}`;
     }
-    return unprintable(`the alias "${binding.alias}" is neither an entity nor a projection`);
+    return unprintable(`the alias "${binding.alias}" is neither a group nor a projection`);
   });
-  const rules = (body.conditions || []).map((c) => {
-    if (!c || typeof c.rejection !== 'string') unprintable('a rule has no rejection message');
-    return `require ${sourceCondition(c, operand)}\n  else reject ${JSON.stringify(c.rejection)}`;
-  });
-  const emits = (body.publishes || []).map((emission) => {
-    const event = sourceRef(emission.name, 'event');
-    let text = `emit ${event}`;
-    if (emission.parameters !== undefined) {
-      const fields = Object.entries(emission.parameters).map(([key, value]) => {
-        const valueText = operand(value);
-        return valueText === sourceRef(key, 'event property') ? key : `${key}: ${valueText}`;
-      });
-      const inline = `${text} { ${fields.join(', ')} }`;
-      text = !fields.length ? `${text} {}`
-        : inline.length <= 88 ? inline
-          : `${text} {\n${fields.map((f) => '  ' + f + ',').join('\n')}\n}`;
-    }
-    const guards = emission.when || [];
-    if (guards.length) text += `\n  when ${guards.map((c) => sourceCondition(c, operand)).join('\n   and ')}`;
-    return text;
-  });
-  const groups = [reads, rules, emits].filter((group) => group.length);
+  if (body.conditions !== undefined || body.publishes !== undefined) unprintable('it states conditions and publishes, not steps');
+  const steps = sourceSteps(body.steps || [], operand);
+  const groups = [reads, ...steps].filter((group) => group.length);
   const annotations = sourceAnnotations(body, ['feature', 'icon']);
   if (!groups.length) return `${annotations}${head} {}`;
   const inner = groups.map((group) => group.map((line) => '  ' + line.replace(/\n/g, '\n  ')).join('\n')).join('\n\n');
@@ -2287,7 +3595,7 @@ function printCommand(name, body, names) {
 const SOURCE_PRINTERS = {
   'custom-type-definition': printCustomType,
   'event-definition': printEvent,
-  'entity-definition': printEntity,
+  'group-definition': printGroup,
   'projection-definition': printProjection,
   'command-definition': printCommand,
 };
@@ -2396,7 +3704,7 @@ function sourceCommandThen(model, commandName, then) {
 // its arguments, in the order it declares them – and the
 // value it folds to.
 function sourceProjectionThen(model, body) {
-  const projection = model['projection-definitions'][body.projection];
+  const projection = projectionsOf(model)[body.projection];
   const slots = projectionSlots(projection);
   const typeOf = (key) => {
     const slot = slots.find((p) => p && p.name === key);
@@ -2484,28 +3792,33 @@ function sourceNest(text, scenarios) {
 // the text's order *is* the order an apply stores – and consecutive
 // one-liners stay together, so twenty value types read as a table.
 // Scenarios sit in a group at the end of their command's or
-// projection's block; one whose subject is gone, or whose subject is
-// printed as JSON, sits in a group at the end of the text instead.
+// projection's block – a group's projection's too, inside the group;
+// one whose subject is gone, or whose subject is printed as JSON, sits
+// in a group at the end of the text instead.
 function modelToSource(model) {
   const SUBJECT = {
     'scenario-definition': ['command-definition', 'command'],
     'projection-scenario-definition': ['projection-definition', 'projection'],
   };
-  const nested = { 'command-definition': new Map(), 'projection-definition': new Map() };
+  const nested = { 'command-definition': new Map(), 'projection-definition': new Map(), 'group-definition': new Map() };
   const loose = [];
+  const view = projectionsOf(model);
   for (const kind of ID_KEYED_KINDS) {
     const [subjectKind, field] = SUBJECT[kind];
     for (const body of Object.values(model[DEF_COLLECTIONS[kind]] || {})) {
       const subject = body && body[field];
-      const owner = typeof subject === 'string'
-        && Object.prototype.hasOwnProperty.call(model[DEF_COLLECTIONS[subjectKind]], subject);
+      const owner = typeof subject === 'string' && (subjectKind === 'projection-definition'
+        ? Object.prototype.hasOwnProperty.call(view, subject)
+        : Object.prototype.hasOwnProperty.call(model[DEF_COLLECTIONS[subjectKind]], subject));
       if (!owner) { loose.push([kind, body]); continue; }
-      const list = nested[subjectKind].get(subject) || [];
+      const split = subjectKind === 'projection-definition' ? splitQualifiedName(subject) : null;
+      const [into, key] = split ? ['group-definition', split.group] : [subjectKind, subject];
+      const list = nested[into].get(key) || [];
       list.push([kind, body]);
-      nested[subjectKind].set(subject, list);
+      nested[into].set(key, list);
     }
   }
-  const out = [`model ${JSON.stringify(model.name)}`];
+  const out = [`${sourceDocComment(model.description)}model ${JSON.stringify(model.name)}`];
   const names = sourceNamesOf(model);
   for (const kind of SOURCE_KINDS) {
     const entries = Object.entries(model[DEF_COLLECTIONS[kind]] || {});
@@ -2516,7 +3829,11 @@ function modelToSource(model) {
       let text = printDefinitionSource(kind, name, body, names);
       const own = (nested[kind] && nested[kind].get(name)) || [];
       if (text.startsWith('// Written as JSON')) loose.push(...own);
-      else text = sourceNest(text, own.map(([k, b]) => printScenarioSource(model, k, b)));
+      else if (kind === 'group-definition') {
+        const of = (local) => own.filter(([, b]) => b.projection === qualifiedProjectionName(name, local))
+          .map(([k, b]) => printScenarioSource(model, k, b));
+        text = printGroup(name, body, names, of);
+      } else text = sourceNest(text, own.map(([k, b]) => printScenarioSource(model, k, b)));
       const oneLine = !text.includes('\n');
       if (index > 0 && !(oneLine && previousWasLine)) out.push('');
       out.push(text);
@@ -2633,30 +3950,31 @@ function sourceDraftModel(model, parsed) {
   return draft;
 }
 
-// What the advisories would say about the text if it were applied.
+// What the advisories would say about the text if it were applied – a
+// group's projections each under its qualified name, as the model's
+// own advisories name them (`checkedDefinitions`).
 function sourceAdvisories(model, parsed) {
   const draft = sourceDraftModel(model, parsed);
   const found = [];
-  for (const kind of SOURCE_KINDS) {
-    for (const [name, body] of Object.entries(parsed.collections[kind])) {
-      for (const message of definitionAdvisories(draft, kind, name, body)) found.push({ kind, name, message });
-    }
+  for (const { kind, name, body } of checkedDefinitions(draft, SOURCE_KINDS)) {
+    for (const message of definitionAdvisories(draft, kind, name, body)) found.push({ kind, name, message });
   }
   return found;
 }
 
 // What each `alias` adds to its command's append condition, as the text
-// stands. `alias course = Course[courseId]` names an instance, not what
-// is queried of it: only the properties a rule, guard or emission
+// stands. `alias course = Course(courseId)` names an instance, not what
+// is queried of it: only the projections a rule or emission
 // actually uses put their projections' events in the query
 // (`deriveDcb`), so a command testing `course.status` never conflicts
 // with a `CourseCapacityChanged`. The line says the opposite at a
 // glance, which is why the editor says beside it how many event types
 // it reads (`hint`, in the command line's words: "reads 2 types") and
 // the rest – the types themselves, tag, per-property events, the
-// properties left out, why the read is made – on hover. One whose
-// properties nothing uses is queried by tag alone, every event under
-// it, and the hint says so rather than reading as empty.
+// projections left out, why the read is made – on hover. A group alias
+// whose projections nothing reads queries nothing, and says so; a
+// projection alias nothing uses is still queried, every event under
+// its tags, and the hint says that rather than reading as empty.
 function sourceReadQueries(model, parsed) {
   const draft = sourceDraftModel(model, parsed);
   const found = [];
@@ -2671,18 +3989,22 @@ function sourceReadQueries(model, parsed) {
       const slots = (binding && parsed.marks.get(binding)) || {};
       // A derived read is several queries; the hint says them as one.
       const parts = dcb.items.filter((i) => i.alias === binding.alias);
-      if (!slots.statement || !slots.statementEnd || !parts.length) continue;
+      // A group whose projections nothing reads queries nothing at all.
+      const nothing = binding && binding.group !== undefined && !parts.length;
+      if (!slots.statement || !slots.statementEnd || (!parts.length && !nothing)) continue;
       const item = {
-        ...parts[0],
+        ...(parts[0] || {}),
         tags: uniq(parts.flatMap((part) => part.tags)),
         types: uniq(parts.flatMap((part) => part.types)).sort(),
         fannedOut: parts.some((part) => part.fannedOut),
+        readProperties: uniq(parts.flatMap((part) => part.readProperties || [])),
       };
-      const entity = binding.entity !== undefined ? draft['entity-definitions'][binding.entity] : null;
-      const properties = ((entity && entity.properties) || []).filter((p) => p && p.name);
+      const group = binding.group !== undefined && Object.prototype.hasOwnProperty.call(draft['group-definitions'], binding.group)
+        ? draft['group-definitions'][binding.group] : null;
+      const properties = groupProjections(group).filter((p) => typeof p.name === 'string' && p.name);
       const read = properties.filter((p) => item.readProperties.includes(p.name));
       const reasons = [...(references.get(binding.alias) || [])];
-      const types = item.types.length
+      const types = nothing ? 'nothing' : item.types.length
         ? `${item.types.length} type${item.types.length === 1 ? '' : 's'}` : 'any type';
       found.push({
         command,
@@ -2692,7 +4014,9 @@ function sourceReadQueries(model, parsed) {
         tags: item.tags,
         types: item.types,
         fannedOut: !!item.fannedOut,
-        properties: read.map((p) => ({ name: p.name, types: projectionHandledTypes(draft, p.projection).sort() })),
+        properties: read.map((p) => ({
+          name: p.name, types: projectionHandledTypes(draft, qualifiedProjectionName(binding.group, p.name)).sort(),
+        })),
         unread: properties.filter((p) => !read.includes(p)).map((p) => p.name),
         reasons,
         hint: `‹reads ${types}${item.fannedOut ? ', one per element' : ''}${reasons.length ? '' : ' – unused'}›`,
@@ -2739,7 +4063,7 @@ function sourceSpanOf(parsed, kind, name) {
 // out are written as null (as the page's save does), and an omitted
 // Then is what the text's definitions make of the scenario.
 function completeScenario(draft, record) {
-  const body = canonicalScenario(draft, record.kind, deepClone(record.body));
+  const body = canonicalScenario(draft, record.kind, deepClone(record.body), { partial: true });
 
   let actual = null;
   let reason = null;
@@ -2754,7 +4078,8 @@ function completeScenario(draft, record) {
     return { body, status: 'recorded', actual };
   }
   if (reason) return { body, status: 'broken', reason };
-  return { body, status: evSameOutcome(actual, body.then) ? 'current' : 'drifted', actual };
+  const holds = record.kind === 'scenario-definition' ? evThenHolds(actual, body.then, draft) : evSameOutcome(actual, body.then);
+  return { body, status: holds ? 'current' : 'drifted', actual };
 }
 
 const SCENARIO_SUBJECT = { 'scenario-definition': 'command', 'projection-scenario-definition': 'projection' };
@@ -2844,8 +4169,8 @@ function sourceThenLines(draft, record, actual) {
 // scenario. A command's scenario has one outcome. A projection's is a
 // value read with tag values, so the read the line already names is
 // the one asked, and where it names none, each read the given events
-// can tag – their properties of each tag's type – is tried. A script
-// that takes arguments is not guessed at. Each outcome is its lines,
+// can tag – their properties of each tag's type – is tried. A
+// projection that takes arguments is not guessed at. Each outcome is its lines,
 // and for a projection its read and its value apart (`call`, `value`).
 function sourceOutcomesAt(model, text, line) {
   const lines = String(text).split('\n');
@@ -2875,14 +4200,14 @@ function sourceOutcomesAt(model, text, line) {
     const one = outcome(parsed, record);
     return one ? [one] : [];
   }
-  const named = typed.match(/^\s*then\s+([\p{L}_][\p{L}\p{M}\p{Nd}_]*\s*\(.*\))\s*(==\s*)?$/u);
+  const named = typed.match(/^\s*then\s+([\p{L}_][\p{L}\p{M}\p{Nd}_]*\s*\(.*\)(?:\.[\p{L}_][\p{L}\p{M}\p{Nd}_]*)?)\s*(==\s*)?$/u);
   const draft = sourceDraftModel(model, parsed);
   let calls;
   if (named) {
     calls = [named[1]];
   } else {
     const name = record.subject;
-    const projection = draft['projection-definitions'][name];
+    const projection = projectionsOf(draft)[name];
     if (!projection || projectionSlots(projection).length) return [];
     const valuesOf = (tagType) => {
       const found = [];
@@ -2900,7 +4225,9 @@ function sourceOutcomesAt(model, text, line) {
     for (const tag of projection.tags || []) {
       combos = combos.flatMap((combo) => valuesOf(tag.tagType).map((value) => [...combo, `${tag.tagType}(${JSON.stringify(value)})`]));
     }
-    calls = combos.slice(0, 8).map((combo) => `${name}(${combo.join(', ')})`);
+    const split = splitQualifiedName(name);
+    calls = combos.slice(0, 8).map((combo) => (split
+      ? `${split.group}(${combo.join(', ')}).${split.local}` : `${name}(${combo.join(', ')})`));
   }
   return calls.map((call) => {
     const { parsed: withCall, record: asked } = at(`${indent}then ${call}`);
@@ -2975,15 +4302,7 @@ function sourceScenarioReport(model, parsed, { recordOutcomes = false } = {}) {
 }
 
 // Parses, refuses on any error, and writes the difference – one
-// append, one undo step, nothing at all when nothing changed. An
-// identifier type the text left implicit keeps whatever the model
-// already says about it, and its place, so leaving `tag type CourseId
-// = string` out of a hand-written file does not reset a pattern
-// someone gave it on the Types page. And one is only ever *created*
-// for an entity the text adds, the way creating one on its page does:
-// an existing entity whose identifier type is missing keeps it missing,
-// which is a dangling reference the advisories report, not something an
-// apply should quietly repair.
+// append, one undo step, nothing at all when nothing changed.
 // `options.refuseRemovals` refuses a text that leaves a definition or
 // scenario out, rather than removing it (see replaceDefinitions).
 // A scenario written without a Then is refused, as the editor refuses
@@ -2999,30 +4318,6 @@ function applyModelSource(modelId, text, options = {}) {
       + `applied. Line ${first.line}: ${first.message}`);
   }
   const model = getCtxOrThrow(modelId);
-  const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
-  const current = model['custom-type-definitions'];
-  const types = parsed.collections['custom-type-definition'];
-  const entities = parsed.collections['entity-definition'];
-  const ownersAreNew = (typeName) => Object.entries(entities)
-    .filter(([name, body]) => ((body && body.identifierType) || name + 'Id') === typeName)
-    .every(([name]) => !has(model['entity-definitions'], name));
-  const dropped = parsed.implicit.filter((name) => !has(current, name) && !ownersAreNew(name));
-  const implicit = new Set(parsed.implicit.filter((name) => has(current, name)));
-  if (implicit.size || dropped.length) {
-    const order = Object.keys(types).filter((name) => !implicit.has(name) && !dropped.includes(name));
-    const currentOrder = Object.keys(current);
-    for (const name of implicit) {
-      let insertAt = 0;
-      for (let k = currentOrder.indexOf(name) - 1; k >= 0; k -= 1) {
-        const position = order.indexOf(currentOrder[k]);
-        if (position >= 0) { insertAt = position + 1; break; }
-      }
-      order.splice(insertAt, 0, name);
-    }
-    const merged = {};
-    for (const name of order) sourcePut(merged, name, implicit.has(name) ? current[name] : types[name]);
-    parsed.collections['custom-type-definition'] = merged;
-  }
   const scenarios = sourceScenarioCollections(model, parsed);
   if (scenarios.errors.length) {
     const [first] = scenarios.errors;
@@ -3036,6 +4331,7 @@ function applyModelSource(modelId, text, options = {}) {
   }
   const summary = replaceDefinitions(modelId, {
     name: parsed.name,
+    description: parsed.description === undefined ? null : parsed.description,
     collections: { ...parsed.collections, ...scenarios.collections },
     refuseRemovals: !!options.refuseRemovals,
   });
@@ -3083,16 +4379,17 @@ function sourceApplySummary(summary) {
 // keeps `Existent` apart from `NonExistent`, and the projection called
 // CourseStatus apart from the enum of the same name.
 const SOURCE_SYMBOL_WORDS = {
-  type: 'type', event: 'event', entity: 'entity', projection: 'projection', command: 'command',
+  type: 'type', event: 'event', group: 'group', projection: 'projection', command: 'command',
   member: 'enum member', field: 'record field', eventProperty: 'event property',
-  entityProperty: 'entity property', commandProperty: 'command property', alias: 'alias',
-  projectionParameter: 'projection parameter', projectionTag: 'projection tag', entityTag: 'entity tag',
+  groupProjection: 'projection', commandProperty: 'command property', alias: 'alias',
+  projectionParameter: 'projection parameter', projectionTag: 'projection tag', groupTag: 'group tag',
+  loopVariable: 'loop name',
 };
 
 const SOURCE_KIND_SYMBOL = {
   'custom-type-definition': 'type',
   'event-definition': 'event',
-  'entity-definition': 'entity',
+  'group-definition': 'group',
   'projection-definition': 'projection',
   'command-definition': 'command',
 };
@@ -3120,17 +4417,20 @@ function sourceTextModel(parsed, fallback) {
 // Every name in a parsed text, resolved: `occurrences` (`{ symbol,
 // token, decl, shorthand }`), `ambiguous` (an enum member some other
 // enum also has, written where nothing says which type is meant) and
-// `opaque` (a script, a json body, a tag filter – text a name may hide
-// in without the grammar seeing it, which a rename has to refuse over
-// rather than silently miss).
+// `opaque` (a json body – text a name may hide in without the grammar
+// seeing it, which a rename has to refuse over rather than silently
+// miss).
 //
 // It walks the bodies, not the tokens: the parser marked which token
 // each part came from (`parsed.marks`), and the bodies say what that
-// part *is* – whose property `course.status` reads is the read's
-// entity's, and which enum `Existent` belongs to is the type on the
+// part *is* – whose projection `course.status` reads is the read's
+// group's, and which enum `Existent` belongs to is the type on the
 // other side of its rule. `{ courseId }` is one token and two symbols,
 // the emitted event's property and the command's own, told apart by
-// `shorthand: 'key' | 'value'`.
+// `shorthand: 'key' | 'value'`. A group's projection is `groupProjection
+// Course capacity` – its local name, owned by its group – wherever it
+// is named: declared, as a sibling, after an alias, after a read of the
+// group.
 function sourceSymbols(parsed) {
   if (parsed.symbols) return parsed.symbols;
   const { collections, marks } = parsed;
@@ -3148,7 +4448,7 @@ function sourceSymbols(parsed) {
   };
   const types = collections['custom-type-definition'];
   const events = collections['event-definition'];
-  const entities = collections['entity-definition'];
+  const groups = collections['group-definition'];
   const projections = collections['projection-definition'];
   const commands = collections['command-definition'];
   const own = (collection, name) => (typeof name === 'string' && has(collection, name) ? collection[name] : null);
@@ -3182,7 +4482,26 @@ function sourceSymbols(parsed) {
     if (slots.json) { opaque.push({ token: slots.json, text: JSON.stringify(body), json: true }); return false; }
     return true;
   };
+  // A projection by the name it is read by: a top-level one, or a
+  // group's – `Course.capacity` – as its group stores it.
+  const projectionBody = (name) => {
+    const split = splitQualifiedName(name);
+    if (!split) return own(projections, name);
+    return groupProjections(own(groups, split.group)).find((inner) => inner.name === split.local) || null;
+  };
   const parameters = (projection) => list(projection && projection.arguments);
+  // A read's projection: the top-level one it names, or the group and
+  // its projection – `Course(…).capacity`, or a sibling bare in `group`.
+  const projectionRef = (name, marked, group = null) => {
+    if (typeof name !== 'string') return;
+    const split = splitQualifiedName(name);
+    if (split) {
+      add(sourceSymbol('group', split.group), marked.projection);
+      add(sourceSymbol('groupProjection', split.group, split.local), marked.member);
+    } else if (group && isLocalProjectionName(name)) {
+      add(sourceSymbol('groupProjection', group, name), marked.projection);
+    } else add(sourceSymbol('projection', name), marked.projection);
+  };
   // A read's tags, by name: a literal names its tag type, anything else
   // is an operand in the read's scope.
   const tagOperands = (tags, operandOf) => {
@@ -3194,7 +4513,7 @@ function sourceSymbols(parsed) {
     });
   };
   const parameterType = (projectionName, key) => {
-    const found = parameters(own(projections, projectionName)).find((p) => p.name === key);
+    const found = parameters(projectionBody(projectionName)).find((p) => p.name === key);
     return found ? found.propertyType : null;
   };
   // `name: value` pairs, keyed by the symbol each key names.
@@ -3210,7 +4529,35 @@ function sourceSymbols(parsed) {
     }
   };
 
-  // ---------- types, events, entities ----------
+  // A record value's field read off a projection that holds one (11.0).
+  const fieldOf = (projectionName, value) => {
+    if (!has(value, 'field')) return;
+    const target = projectionBody(projectionName);
+    if (target && recordFields(target.valueType)) add(sourceSymbol('field', target.valueType, value.field), slotsOf(value).field);
+  };
+  // A collection's where (11.0): `value` and its field, the names in
+  // scope (`name(operand)`: a parameter, a command's alias), and a member opposite value typed by what
+  // the collected projection holds.
+  const whereSymbols = (collection, projectionName, name) => {
+    const target = projectionBody(projectionName);
+    const typeOf = (side) => (!has(side, 'instanceValue') || !target ? null
+      : side.field === undefined ? target.valueType
+        : ((recordFields(target.valueType) || []).find((f) => f.name === side.field) || {}).propertyType || null);
+    for (const leaf of conditionLeaves(collection.where)) {
+      const sides = [leaf.leftHandSide, ...(Array.isArray(leaf.rightHandSide) ? leaf.rightHandSide : [leaf.rightHandSide])];
+      const typed = sides.map(typeOf).find(Boolean) || null;
+      for (const side of sides) {
+        if (has(side, 'instanceValue')) {
+          if (side.field !== undefined && target && recordFields(target.valueType)) {
+            add(sourceSymbol('field', target.valueType, side.field), slotsOf(side).field);
+          }
+        } else if (has(side, 'parameterName') || has(side, 'alias') || has(side, '%ref')) name(side);
+        else literal(side, typed);
+      }
+    }
+  };
+
+  // ---------- types, events ----------
   for (const [name, body] of Object.entries(types)) {
     if (!declare('type', name, body)) continue;
     const members = body && body.schema && body.schema.enum;
@@ -3239,27 +4586,31 @@ function sourceSymbols(parsed) {
       }
     });
   }
-  for (const [name, body] of Object.entries(entities)) {
-    if (!declare('entity', name, body)) continue;
-    const slots = slotsOf(body);
-    add(sourceSymbol('entityTag', name, slots.identifierName ? slots.identifierName.v : ''), slots.identifierName, { decl: true });
-    typeRef(slots.identifierType);
-    if (slots.lifecycle) add(sourceSymbol('entityProperty', name, body.lifecycle), slots.lifecycle);
-    for (const property of list(body.properties)) {
-      add(sourceSymbol('entityProperty', name, property.name), slotsOf(property).name, { decl: true });
-      add(sourceSymbol('projection', property.projection), slotsOf(property).projection);
-    }
-  }
 
-  // ---------- projections ----------
+  // ---------- projections, top-level and grouped ----------
   const handlerValue = (value, typeName, event) => {
-    if (has(value, 'eventProperty')) add(sourceSymbol('eventProperty', event, value.eventProperty), slotsOf(value).eventProperty);
-    else if (has(value, 'successor')) handlerValue(value.successor, typeName, event);
-    else literal(value, typeName);
+    if (has(value, 'eventProperty')) {
+      add(sourceSymbol('eventProperty', event, value.eventProperty), slotsOf(value).eventProperty);
+      // A record's field (11.0), one hop in.
+      if (value.property !== undefined) {
+        const property = list((own(events, event) || {}).properties).find((p) => p.name === value.eventProperty);
+        if (property && recordFields(property.propertyType)) add(sourceSymbol('field', property.propertyType, value.property), slotsOf(value).property);
+      }
+    } else if (has(value, 'successor')) handlerValue(value.successor, typeName, event);
+    else if (has(value, 'record') && value.record && typeof value.record === 'object') {
+      // A record set whole (11.0): its keys are the record's fields.
+      const fields = recordFields(typeName) || [];
+      keyed(value.record, (key) => (recordFields(typeName) ? sourceSymbol('field', typeName, key) : []),
+        (field, key) => handlerValue(field, ((fields.find((f) => f.name === key)) || {}).propertyType || null, event));
+    } else literal(value, typeName);
   };
-  for (const [name, body] of Object.entries(projections)) {
-    if (!declare('projection', name, body)) continue;
+  // One projection's body, read as `name` (qualified in a group). In a
+  // group (`inGroup`: its name and tag) a parameter may be the group's
+  // tag, and a lowercase read a sibling.
+  const projectionBodySymbols = (name, body, inGroup = null) => {
     const slots = slotsOf(body);
+    const group = inGroup && inGroup.name;
+    const groupTag = inGroup && inGroup.tag;
     for (const tag of list(body.tags)) {
       add(sourceSymbol('projectionTag', name, tag.name), slotsOf(tag).name, { decl: true });
       typeRef(slotsOf(tag).tagType);
@@ -3270,59 +4621,125 @@ function sourceSymbols(parsed) {
     }
     typeRef(slots.valueType);
     literal(body.initialValue, body.valueType);
-    if (slots.initialState && body.script) opaque.push({ token: slots.initialState, text: JSON.stringify(body.script.initialState) });
     for (const handler of list(body.handlers)) {
       add(sourceSymbol('event', handler.event), slotsOf(handler).event);
-      if (typeof handler.code === 'string') opaque.push({ token: slotsOf(handler).code, text: handler.code });
-      if (handler.value !== undefined) handlerValue(handler.value, body.valueType, handler.event);
-    }
-    if (body.derived && typeof body.derived === 'object') {
-      const typeOf = (operand) => {
-        if (has(operand, 'projection')) { const p = own(projections, operand.projection); return p ? p.valueType : null; }
-        if (has(operand, 'parameterName')) {
-          const found = [...list(body.tags).map((t) => [t.name, t.tagType]), ...list(body.arguments).map((a) => [a.name, a.propertyType])]
-            .find(([n]) => n === operand.parameterName);
-          return found ? found[1] : null;
+      for (const arm of handlerArms(handler)) {
+        if (arm.value !== undefined) handlerValue(arm.value, body.valueType, handler.event);
+      }
+      // A branched handler's comparisons (11.0): the event field – a
+      // record's field one hop in – and the tag or literal opposite it.
+      const eventBody = own(events, handler.event);
+      for (const leaf of handlerConditionLeaves(handler)) {
+        const left = leaf.leftHandSide;
+        let fieldType = null;
+        if (has(left, 'eventProperty')) {
+          add(sourceSymbol('eventProperty', handler.event, left.eventProperty), slotsOf(left).eventProperty);
+          const property = eventBody && list(eventBody.properties).find((p) => p.name === left.eventProperty);
+          fieldType = property ? property.propertyType : null;
+          if (left.property !== undefined && fieldType) {
+            add(sourceSymbol('field', fieldType, left.property), slotsOf(left).property);
+            const field = (recordFields(fieldType) || []).find((f) => f.name === left.property);
+            fieldType = field ? field.propertyType : null;
+          }
         }
-        return null;
-      };
-      // A name is one of this projection's own parameters – a tag or an
-      // argument, as it declares it – whether compared, computed with or
-      // passed on.
-      const ownRef = (ref) => add(sourceSymbol(
-        list(body.tags).some((t) => t.name === ref.parameterName) ? 'projectionTag' : 'projectionParameter',
-        name, ref.parameterName,
-      ), slotsOf(ref).parameter);
-      const operand = (value, expected) => {
-        if (Array.isArray(value)) return value.forEach((v) => operand(v, expected));
-        const marked = slotsOf(value);
-        if (has(value, 'parameterName')) ownRef(value);
-        else if (has(value, 'projection')) {
-          add(sourceSymbol('projection', value.projection), marked.projection);
-          tagOperands(value.tags, (tag) => { if (has(tag, 'parameterName')) ownRef(tag); });
-          keyed(value.arguments, (key) => sourceSymbol('projectionParameter', value.projection, key),
-            (arg, key) => operand(arg, parameterType(value.projection, key)));
-        } else literal(value, expected);
-      };
-      const { leftHandSide, rightHandSide } = body.derived;
-      operand(leftHandSide, typeOf(rightHandSide));
-      if (rightHandSide !== undefined) operand(rightHandSide, typeOf(leftHandSide));
+        const right = leaf.rightHandSide;
+        if (has(right, 'parameterName')) {
+          add(groupTag && right.parameterName === groupTag.name ? sourceSymbol('groupTag', group, right.parameterName)
+            : sourceSymbol('projectionTag', name, right.parameterName), slotsOf(right).parameter);
+        } else literal(right, fieldType);
+      }
     }
+    if (!body.derived || typeof body.derived !== 'object') return;
+    const readType = (projectionName) => {
+      const read = group && isLocalProjectionName(projectionName)
+        ? projectionBody(qualifiedProjectionName(group, projectionName)) : projectionBody(projectionName);
+      return read ? read.valueType : null;
+    };
+    const ownParameters = [
+      ...list(body.tags).map((t) => [t.name, t.tagType, 'projectionTag']),
+      ...(groupTag ? [[groupTag.name, groupTag.tagType, 'groupTag']] : []),
+      ...list(body.arguments).map((a) => [a.name, a.propertyType, 'projectionParameter']),
+    ];
+    const typeOf = (operand) => {
+      if (has(operand, 'projection')) return readType(operand.projection);
+      if (has(operand, 'parameterName')) {
+        const found = ownParameters.find(([n]) => n === operand.parameterName);
+        return found ? found[1] : null;
+      }
+      return null;
+    };
+    // A name is one of this projection's own parameters – a tag, the
+    // group's tag or an argument, as it declares it – whether compared,
+    // computed with or passed on.
+    const ownRef = (ref) => {
+      const found = ownParameters.find(([n]) => n === ref.parameterName);
+      const kind = found ? found[2] : 'projectionParameter';
+      add(kind === 'groupTag' ? sourceSymbol('groupTag', group, ref.parameterName)
+        : sourceSymbol(kind, name, ref.parameterName), slotsOf(ref).parameter);
+    };
+    const operand = (value, expected) => {
+      if (Array.isArray(value)) return value.forEach((v) => operand(v, expected));
+      const marked = slotsOf(value);
+      if (has(value, 'count')) operand(value.count, null);
+      else if (has(value, 'parameterName')) ownRef(value);
+      else if (has(value, 'collect')) {
+        operand(value.read, null);
+        if (has(value.read, 'projection')) whereSymbols(value, value.read.projection, ownRef);
+      } else if (has(value, 'projection')) {
+        projectionRef(value.projection, marked, group);
+        const owner = group && isLocalProjectionName(value.projection) ? qualifiedProjectionName(group, value.projection) : value.projection;
+        tagOperands(value.tags, (tag) => { if (has(tag, 'parameterName')) ownRef(tag); });
+        keyed(value.arguments, (key) => sourceSymbol('projectionParameter', owner, key),
+          (arg, key) => operand(arg, parameterType(owner, key)));
+        fieldOf(owner, value);
+      } else literal(value, expected);
+    };
+    const { leftHandSide, rightHandSide } = body.derived;
+    operand(leftHandSide, typeOf(rightHandSide));
+    if (rightHandSide !== undefined) operand(rightHandSide, typeOf(leftHandSide));
+  };
+  for (const [name, body] of Object.entries(groups)) {
+    if (!declare('group', name, body)) continue;
+    const tag = groupTagOf(body);
+    if (tag) {
+      add(sourceSymbol('groupTag', name, tag.name), slotsOf(tag).name, { decl: true });
+      typeRef(slotsOf(tag).tagType);
+    }
+    for (const inner of groupProjections(body)) {
+      add(sourceSymbol('groupProjection', name, inner.name), slotsOf(inner).declName, { decl: true });
+      projectionBodySymbols(qualifiedProjectionName(name, inner.name), inner, { name, tag });
+    }
+  }
+  for (const [name, body] of Object.entries(projections)) {
+    if (!declare('projection', name, body)) continue;
+    projectionBodySymbols(name, body);
   }
 
   // ---------- commands ----------
   // A name in a scenario's rule is still `%ref` – resolved here against
   // the command it is about, by the rule `resolveCommandNames` uses.
+  // The loop the operands being walked sit in (11.0), or null.
+  let inLoop = null;
+  const loopNamed = (body, name) => !list(body.properties).some((p) => p.name === name)
+    && commandLoops(body).some((one) => loopNames(one).includes(name));
   const commandOperand = (commandName, body, value, expected) => {
     if (Array.isArray(value)) return value.forEach((v) => commandOperand(commandName, body, v, expected));
     const marked = slotsOf(value);
     let alias;
     let parameter;
     let property;
+    // `value.field` inside a loop over an open read (11.0).
+    if (has(value, 'instanceValue')) {
+      const held = loopValueType(model, inLoop);
+      if (held && value.field !== undefined && recordFields(held.propertyType)) {
+        add(sourceSymbol('field', held.propertyType, value.field), marked.field);
+      }
+      return;
+    }
     if (has(value, '%ref')) {
       const [head, prop] = value['%ref'];
       const asRead = list(body.boundary).some((b) => b.alias === head)
-        || (!list(body.properties).some((p) => p.name === head) && prop !== undefined);
+        || (!list(body.properties).some((p) => p.name === head) && !loopNamed(body, head) && prop !== undefined);
       if (asRead) alias = head; else parameter = head;
       property = prop;
     } else if (has(value, 'alias')) {
@@ -3330,20 +4747,48 @@ function sourceSymbols(parsed) {
     } else if (has(value, 'parameterName')) {
       parameter = value.parameterName;
       ({ property } = value);
+    } else if (has(value, 'operator') && has(value, 'leftHandSide')) {
+      // Arithmetic (11.0): both sides, in the same scope.
+      commandOperand(commandName, body, value.leftHandSide, null);
+      commandOperand(commandName, body, value.rightHandSide, null);
+      return;
+    } else if (has(value, 'count')) {
+      // A count of a list (G3): what it counts, in the same scope.
+      commandOperand(commandName, body, value.count, null);
+      return;
+    } else if (has(value, 'collect')) {
+      // A collection function (11.0): its open read, and its where.
+      commandOperand(commandName, body, value.read, null);
+      if (has(value.read, 'projection')) whereSymbols(value, value.read.projection, (side) => commandOperand(commandName, body, side, null));
+      return;
     } else if (has(value, 'projection')) {
       // An inline read: its projection, and its tags and arguments in
       // the same scope as everything around it.
-      add(sourceSymbol('projection', value.projection), marked.projection);
+      projectionRef(value.projection, marked);
       tagOperands(value.tags, (tag) => commandOperand(commandName, body, tag, null));
       keyed(value.arguments, (key) => sourceSymbol('projectionParameter', value.projection, key),
         (arg, key) => commandOperand(commandName, body, arg, parameterType(value.projection, key)));
+      fieldOf(value.projection, value);
       return;
     } else return literal(value, expected);
     if (alias !== undefined) {
       add(sourceSymbol('alias', commandName, alias), marked.head);
       const binding = list(body.boundary).find((b) => b.alias === alias);
-      if (binding && binding.entity && property !== undefined) {
-        add(sourceSymbol('entityProperty', binding.entity, property), marked.property);
+      if (binding && binding.group !== undefined && property !== undefined) {
+        // A projection of the group the alias reads, and its arguments.
+        const qualified = qualifiedProjectionName(binding.group, property);
+        add(sourceSymbol('groupProjection', binding.group, property), marked.property);
+        keyed(value.arguments, (key) => sourceSymbol('projectionParameter', qualified, key),
+          (arg, key) => commandOperand(commandName, body, arg, parameterType(qualified, key)));
+        fieldOf(qualified, value);
+      } else if (binding && binding.projection !== undefined) fieldOf(binding.projection, value);
+      return;
+    }
+    if (loopNamed(body, parameter)) {
+      add(sourceSymbol('loopVariable', commandName, parameter), marked.head);
+      const element = commandScopeProperties(model, body).find((p) => p.name === parameter);
+      if (element && property !== undefined && recordFields(element.propertyType)) {
+        add(sourceSymbol('field', element.propertyType, property), marked.property);
       }
       return;
     }
@@ -3358,7 +4803,8 @@ function sourceSymbols(parsed) {
     try {
       const plain = has(operand, '%ref') ? null : operand;
       resolved = plain && resolveOperandType(plain, {
-        boundary: list(body.boundary), commandProperties: list(body.properties), model,
+        boundary: list(body.boundary), commandProperties: commandScopeProperties(model, body, inLoop), model,
+        instanceValue: loopValueType(model, inLoop),
       });
     } catch { /* a defective body types nothing */ }
     return resolved ? resolved.propertyType : null;
@@ -3385,33 +4831,47 @@ function sourceSymbols(parsed) {
       const slots = slotsOf(binding);
       add(sourceSymbol('alias', name, binding.alias), slots.alias, { decl: true });
       if (binding.projection !== undefined) {
-        add(sourceSymbol('projection', binding.projection), slots.projection);
+        projectionRef(binding.projection, slots);
         tagOperands(binding.tags, (tag) => commandOperand(name, body, tag, null));
         keyed(binding.arguments, (key) => sourceSymbol('projectionParameter', binding.projection, key),
           (arg, key) => commandOperand(name, body, arg, parameterType(binding.projection, key)));
         continue;
       }
-      add(sourceSymbol('entity', binding.entity), slots.entity);
-      const entity = own(entities, binding.entity);
-      const idType = (entity && entity.identifierType) || binding.entity + 'Id';
-      tagOperands({ id: binding.id }, (id) => commandOperand(name, body, id, idType));
-      if (binding.excluding !== undefined) commandOperand(name, body, binding.excluding, idType);
-      // `key: value` after the identifier hands values to the entity's
-      // scripted properties: a key is the parameter of every property
-      // projection declaring it.
-      const propertyProjections = list(entity && entity.properties).map((p) => p.projection);
-      keyed(binding.arguments,
-        (key) => propertyProjections.filter((p) => parameterType(p, key) !== null)
-          .map((p) => sourceSymbol('projectionParameter', p, key)),
-        (arg) => commandOperand(name, body, arg, null));
+      add(sourceSymbol('group', binding.group), slots.group);
+      const tag = groupTagOf(own(groups, binding.group));
+      tagOperands(binding.tags, (value) => commandOperand(name, body, value, tag ? tag.tagType : null));
     }
-    for (const rule of list(body.conditions)) condition(name, body, rule);
-    for (const emission of list(body.publishes)) {
-      add(sourceSymbol('event', emission.name), slotsOf(emission).name);
-      keyed(emission.parameters, (key) => sourceSymbol('eventProperty', emission.name, key),
-        (arg, key) => commandOperand(name, body, arg, eventPropertyType(emission.name, key)));
-      for (const rule of list(emission.when)) condition(name, body, rule);
+    // Every step, into every branch and loop: a condition's
+    // comparisons, an emission's event and fields, a loop's names and
+    // what it runs over – each in the scope of the loop it sits in.
+    forEachStep(commandSteps(body), (step, { loop }) => {
+      inLoop = loop;
+      const stated = stepKind(step) === 'rule' ? [step.condition]
+        : stepKind(step) === 'branch' ? list(step.branches).map((arm) => arm && arm.condition) : [];
+      for (const one of stated) for (const leaf of conditionLeaves(one)) condition(name, body, leaf);
+    });
+    forEachStep(commandSteps(body), (step, { loop }) => {
+      if (stepKind(step) !== 'emit') return;
+      inLoop = loop;
+      add(sourceSymbol('event', step.name), slotsOf(step).name);
+      keyed(step.parameters, (key) => sourceSymbol('eventProperty', step.name, key), (arg, key) => {
+        const type = eventPropertyType(step.name, key);
+        // A record built in place (#5): its keys are the record's fields.
+        if (has(arg, 'record') && arg.record && typeof arg.record === 'object' && !Array.isArray(arg.record)) {
+          const fields = recordFields(type) || [];
+          keyed(arg.record, (field) => (recordFields(type) ? sourceSymbol('field', type, field) : []),
+            (value, field) => commandOperand(name, body, value, (fields.find((f) => f.name === field) || {}).propertyType || null));
+          return;
+        }
+        commandOperand(name, body, arg, type);
+      });
+    });
+    for (const one of commandLoops(body)) {
+      inLoop = null;
+      loopNames(one).forEach((loopName, i) => add(sourceSymbol('loopVariable', name, loopName), slotsOf(one)[`name:${i}`], { decl: true }));
+      commandOperand(name, body, one.in, null);
     }
+    inLoop = null;
   }
 
   // ---------- scenarios ----------
@@ -3456,8 +4916,8 @@ function sourceSymbols(parsed) {
         eventPayload(event.type, event.data);
       }
     } else {
-      const projection = own(projections, body.projection);
-      add(sourceSymbol('projection', body.projection), slots.projection);
+      const projection = projectionBody(body.projection);
+      projectionRef(body.projection, slots);
       tagOperands(body.tags, null);
       payload(body.arguments, parameters(projection), (key) => sourceSymbol('projectionParameter', body.projection, key));
       member(slots.then, body.then, projection && projection.valueType);
@@ -3499,7 +4959,7 @@ function sourceSymbolAt(parsed, line, col) {
 }
 
 // Where a symbol is declared – or nothing, for a name the text only
-// uses (an identifier type left implicit, a dangling reference).
+// uses (a type the text does not declare, a dangling reference).
 function sourceDeclarationOf(parsed, symbol) {
   return sourceSymbols(parsed).occurrences.find((o) => o.symbol === symbol && o.decl) || null;
 }
@@ -3513,30 +4973,26 @@ const SOURCE_RENAME_RULES = {
   member: [SOURCE_MEMBER_RE, 'an enum member starts with a capital letter'],
   type: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
   event: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
-  entity: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
+  group: [SOURCE_MEMBER_RE, 'a group starts with a capital letter'],
   projection: [SOURCE_MEMBER_RE, 'a projection starts with a capital letter'],
+  groupProjection: [SOURCE_LOCAL_RE, 'a projection in a group is lowerCamel, letters and digits'],
   command: [SOURCE_IDENT_RE, 'a name is letters, digits and _'],
 };
 const SOURCE_LOWER_NAME_RE = /^[\p{Ll}_][\p{L}\p{M}\p{Nd}_]*$/u;
-// What a script can name: an event's or a record's field
-// (`event.data.x`, `state.x`), a member as the string it is, and the
-// values it is read by (`tags.x`, `args.x`). A json body can name anything.
-const SOURCE_SCRIPT_VISIBLE = ['eventProperty', 'field', 'member', 'projectionParameter', 'projectionTag', 'type'];
 const sourceArticle = (word) => (/^[aeiou]/.test(word) ? 'an' : 'a');
-const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 'event', 'currentValue', 'successor'];
+const SOURCE_RESERVED_NAMES = ['true', 'false', 'null', 'enum', 'not', 'count', 'event', 'successor'];
 
 // Edits that rename the symbol at a position, everywhere it occurs and
 // nowhere else: `{ edits: [{ line, col, endLine, endCol, text }] }`, or
-// `{ error }` saying why not. Safe means three refusals: a name a
-// script, a json body or a tag filter may also hold (the grammar cannot
-// see in there); an enum member written somewhere its enum cannot be
+// `{ error }` saying why not. Safe means three refusals: a name a json
+// body may also hold (the grammar cannot see in there); an enum member written somewhere its enum cannot be
 // told; and a result that would not read back as the same model with
 // one name changed – checked by renaming, re-reading, and counting.
 //
-// An entity whose identifier type is still `<Name>Id` takes the type
-// along, as renaming it on its page does; a type an entity tracks that
-// way is pinned on the entity (`entity Course[CourseKey]`) instead of
-// silently cut loose from it.
+// A group and a top-level projection share one namespace, since both
+// are read by their names; a projection of a group is renamed by its
+// local name, wherever it is named – the way renaming it on its page
+// does (`renameMember`).
 function sourceRename(text, line, col, newName) {
   const parsed = parseModelSource(text);
   const target = sourceRenameTarget(parsed, line, col);
@@ -3569,29 +5025,17 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
   }
   const renamed = (s, to) => sourceSymbol(sourceSymbolParts(s).kind, ...sourceSymbolParts(s).names.slice(0, -1), to);
   const group = [[symbol, newName]];
-  // An entity tracking `<Name>Id` takes its type along. Renaming the
-  // type alone renames the `tagged` in the entity's header like any
-  // other use, and the entity reads back pinned to the new name.
-  const entities = parsed.collections['entity-definition'];
-  const tracks = (entity) => entity && typeof entity === 'object' && !entity.identifierType;
-  const lowered = (word) => word.charAt(0).toLowerCase() + word.slice(1);
-  if (kind === 'entity' && tracks(entities[name])) {
-    group.push([sourceSymbol('type', name + 'Id'), newName + 'Id']);
-    // Its tag's name tracks the type's, as long as nothing pinned it.
-    if (entities[name].identifierName === undefined) {
-      const to = lowered(newName) + 'Id';
-      group.push([sourceSymbol('entityTag', name, lowered(name) + 'Id'), to, sourceSymbol('entityTag', newName, to)]);
-    }
-  }
 
   const edits = [];
   for (const [from, to, as] of group) {
     const target = as || renamed(from, to);
     // A read and a command property are one namespace in the text,
     // which resolves a name to whichever the command declares.
-    const clashes = kind === 'alias' || kind === 'commandProperty'
-      ? [sourceSymbol('alias', names[0], to), sourceSymbol('commandProperty', names[0], to)]
-      : [target];
+    // So are a group and a top-level projection, read by their names alike.
+    const clashes = kind === 'alias' || kind === 'commandProperty' || kind === 'loopVariable'
+      ? ['alias', 'commandProperty', 'loopVariable'].map((one) => sourceSymbol(one, names[0], to))
+      : kind === 'group' || kind === 'projection' ? [sourceSymbol('group', to), sourceSymbol('projection', to)]
+        : [target];
     const clash = occurrences.find((o) => clashes.includes(o.symbol));
     if (clash) {
       const parts = sourceSymbolParts(clash.symbol);
@@ -3600,10 +5044,9 @@ function sourceRenameSymbol(text, parsed, symbol, newName) {
     }
     const fromName = sourceSymbolParts(from).name;
     const pattern = new RegExp(`(^|[^\\p{L}\\p{M}\\p{Nd}_])${fromName}($|[^\\p{L}\\p{M}\\p{Nd}_])`, 'u');
-    const visible = SOURCE_SCRIPT_VISIBLE.includes(sourceSymbolParts(from).kind);
-    const hidden = opaque.find((o) => (o.json || visible) && pattern.test(o.text));
+    const hidden = opaque.find((o) => pattern.test(o.text));
     if (hidden) {
-      return { error: `${fromName} also appears in the script or JSON at line ${hidden.token.line}, which a rename cannot follow into – change it there by hand.` };
+      return { error: `${fromName} also appears in the JSON at line ${hidden.token.line}, which a rename cannot follow into – change it there by hand.` };
     }
     const unclear = ambiguous.find((a) => a.candidates.includes(from));
     if (unclear) {
@@ -3652,13 +5095,13 @@ function sourceApplyEdits(text, edits) {
 // ---------- introduce alias ----------
 
 // Edits that name a read written in place – `CourseStatus(courseId)` in
-// a rule, a guard, an emission or another read – with an alias:
+// a rule, an emission or another read – with an alias:
 // `{ name, title, edits }`, or `{ error }`. The innermost read under
 // the cursor is the one named; it is declared after the command's last
 // alias, or first in its block, and every equal read in the command is
 // replaced by the name, since written twice it is one query anyway.
-// The name is the projection's, lowercased, numbered past what the
-// command already names; `at` is where it lands, and the editor opens
+// The name is the projection's, lowercased – a group's projection's
+// local name – numbered past what the command already names; `at` is where it lands, and the editor opens
 // a rename there, so it is named as it is introduced.
 //
 // Nothing about the boundary may change – a read in place and an alias
@@ -3687,19 +5130,22 @@ function sourceIntroduceAlias(text, line, col) {
   let reads = [];
   for (const [name, body] of Object.entries(parsed.collections['command-definition'])) {
     if (!body || !Array.isArray(body.boundary)) continue;
-    const all = readsIn([body.boundary, body.conditions, body.publishes]);
+    const all = readsIn([body.boundary, body.steps]);
     // Pre-order, so the last read covering the cursor is the innermost.
     const hit = all.filter(covers).pop();
     if (hit) { command = name; target = hit; reads = all; break; }
   }
-  if (!target) return { error: 'There is no read in place here – put the cursor on one in a rule, a guard or an emission.' };
+  if (!target) return { error: 'There is no read in place here – put the cursor on one in a rule or an emission.' };
 
   const body = parsed.collections['command-definition'][command];
   const key = JSON.stringify(target);
   const taken = new Set([
     ...body.boundary.map((b) => b && b.alias), ...body.properties.map((p) => p.name), ...SOURCE_RESERVED_NAMES,
   ]);
-  const base = target.projection.charAt(0).toLowerCase() + target.projection.slice(1);
+  // A group's projection is named by its local name: `capacity` for
+  // `Course(courseId).capacity`.
+  const split = splitQualifiedName(target.projection);
+  const base = split ? split.local : target.projection.charAt(0).toLowerCase() + target.projection.slice(1);
   let name = base;
   for (let n = 2; taken.has(name); n += 1) name = base + n;
 
@@ -3757,7 +5203,7 @@ function sourceIntroduceAlias(text, line, col) {
 
 // ---------- completion ----------
 
-const SOURCE_CONDITION_STARTS = ['require', 'when', 'and'];
+const SOURCE_CONDITION_STARTS = ['require', 'if', 'and', 'or'];
 const SOURCE_COMPARISONS = ['==', '!=', '<', '<=', '>', '>=', ...SOURCE_WORD_PREDICATES];
 // How each predicate is written after an operand, in the order a rule
 // editor offers them.
@@ -3775,16 +5221,21 @@ const SOURCE_GROUP_SNIPPET = 'scenarios {\n\tscenario "${1}" {\n\t\t$0\n\t}\n}';
 const SOURCE_DECLARATION_SNIPPETS = [
   ['command', 'command ${1:Name}(${2}) {\n\t$0\n}'],
   ['event', 'event ${1:Name} { $0 }'],
-  ['entity', 'entity ${1:Name} (tag ${2:nameId}: ${3:NameId}) {\n\t$0\n}'],
+  ['group', 'group ${1:Name} (tag ${2:nameId}: ${3:NameId}) {\n\t$0\n}'],
   ['projection', 'projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} = ${5:0} {\n\t$0\n}'],
   ['untagged projection', 'untagged projection ${1:Name}: ${2:integer} = ${3:0} {\n\t$0\n}'],
   ['derived projection', 'derived projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} {\n\t$0\n}'],
-  ['scripted projection', 'scripted projection ${1:Name} (tag ${2:id}: ${3:Type}): ${4:integer} {\n\tinitialState ${5:0}\n\t$0\n}'],
   ['enum', 'enum ${1:Name} { $0 }'],
   ['tag type', 'tag type ${1:Name} = string'],
   ['type', 'type ${1:Name} = ${2:string}'],
   ['record', 'record ${1:Name} {\n\t$0\n}'],
   ['scenarios', SOURCE_GROUP_SNIPPET],
+];
+
+// A group's projections: the top-level forms minus the tag header.
+const SOURCE_GROUP_PROJECTION_SNIPPETS = [
+  ['projection', 'projection ${1:name}: ${2:integer} = ${3:0} {\n\t$0\n}'],
+  ['derived projection', 'derived projection ${1:name}: ${2:integer} {\n\t$0\n}'],
 ];
 
 function sourceOffset(text, line, col) {
@@ -3812,8 +5263,12 @@ function sourceOffset(text, line, col) {
 // whole text's parse, with `model`'s definitions filling in for any
 // that fail to parse while being typed.
 // `experimental: false` leaves out what the experimental flag keeps off
-// the pages – entities, lifecycles, scripted projections and guards.
-// A text using them still reads.
+// the pages – no construct, since 11.0; the option stays for the next
+// one staged there. A text using one still reads. Groups are not among
+// them: a name is nothing to hide.
+// A group's projections complete as top-level ones do, by their
+// qualified names (`Course.capacity`), with the group's tag among a
+// derived one's parameters and its siblings among what it reads.
 function sourceCompletions(text, line, col, { model = null, experimental = true } = {}) {
   const none = { items: [], slot: false };
   const prefix = text.slice(0, sourceOffset(text, line, col));
@@ -3822,14 +5277,23 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const lineText = prefix.slice(prefix.lastIndexOf('\n') + 1).replace(/"([^"\\]|\\.)*"/g, '""');
   if (lineText.includes('//')) return none;
   const tokens = lexed.tokens.slice(0, -1);
-  if (tokens.length && tokens[tokens.length - 1].t === 'number' && /[0-9.]$/.test(prefix)) return none;
+  // A whole number added or taken away (11.0) may be a duration: its
+  // units are offered, `15` → `15m`. Any other number is left alone.
+  if (tokens.length && tokens[tokens.length - 1].t === 'number' && /[0-9.]$/.test(prefix)) {
+    const number = tokens[tokens.length - 1];
+    const before = tokens[tokens.length - 2];
+    if (!/^\d+$/.test(String(number.v)) || !before || !['+', '-'].includes(before.v)) return none;
+    const units = [['s', 'seconds'], ['m', 'minutes'], ['h', 'hours'], ['d', 'days']];
+    return { items: units.map(([unit, word], i) => ({ label: `${number.v}${unit}`, kind: 'keyword', detail: `duration – ${word}`,
+      insert: `${number.v}${unit}`, sort: String(i) })), slot: true };
+  }
   if (/[\p{L}\p{M}\p{Nd}_]$/u.test(prefix) && tokens.length && tokens[tokens.length - 1].t === 'ident') tokens.pop();
   const atLineStart = !tokens.length || tokens[tokens.length - 1].endLine < line;
 
   // ---------- where the cursor is ----------
-  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'untagged', 'derived', 'scripted', 'projection', 'command', 'scenarios', 'scenario', '@'];
+  const DECL_WORDS = ['model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived', 'projection', 'command', 'scenarios', 'scenario', '@'];
   // The words before a declaration's keyword, which say what it is.
-  const LEAD_WORDS = ['tag', 'untagged', 'derived', 'scripted'];
+  const LEAD_WORDS = ['tag', 'untagged', 'derived'];
   const unled = (s) => { let i = 0; while (LEAD_WORDS.includes(v(s[i]))) i += 1; return s.slice(i); };
   const v = (t) => (t ? t.v : undefined);
   const frames = [{ kind: 'top', level: 0, open: -1, stmt: 0 }];
@@ -3853,7 +5317,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const prev = v(s[s.length - 1]);
     const base = {
       decl: frame.decl || decl, command: frame.command, event: frame.event, projection: frame.projection,
-      entity: frame.entity, block: frame.block, scenarioCommand: frame.scenarioCommand,
+      group: frame.group, block: frame.block, scenarioCommand: frame.scenarioCommand,
     };
     const own = (kind, extra) => ({ ...base, kind, ...extra });
     const k = frame.kind;
@@ -3862,11 +5326,11 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (opener === '{') {
         if (prev === 'json' || kw === 'type' || kw === 'model') return own('json');
         const kinds = {
-          enum: 'enum', record: 'fields', event: 'fields', entity: 'entity', projection: 'projection', command: 'command',
+          enum: 'enum', record: 'fields', event: 'fields', group: 'group', projection: 'projection', command: 'command',
           scenarios: 'scenarios', scenario: 'scenario',
         };
         return own(kinds[kw] || 'json', {
-          entity: kw === 'entity' ? decl.name : undefined,
+          group: kw === 'group' ? decl.name : undefined,
           command: kw === 'command' ? decl.name : undefined,
           projection: kw === 'projection' ? decl.name : undefined,
           event: kw === 'event' ? decl.name : undefined,
@@ -3875,29 +5339,57 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       }
       if (opener === '(') {
         const head = unled(s);
-        if (head.length === 2 && (kw === 'command' || kw === 'projection' || kw === 'entity')) return own('params', { header: kw });
+        if (head.length === 2 && (kw === 'command' || kw === 'projection' || kw === 'group')) return own('params', { header: kw });
         return own('json');
       }
       if (kw === 'projection' && prev === '=') return own('list', { valueOf: 'projection' });
       return own('json');
     }
+    // A group's block holds its projections; one being declared is the
+    // frame's `inner`, a declaration of its own.
+    if (k === 'group') {
+      const inner = frame.inner;
+      if (!inner) return own('json');
+      const qualified = `${frame.group}.${inner.name}`;
+      const innerDecl = { ...inner, name: qualified, group: frame.group, groupStart: frame.decl ? frame.decl.start : decl.start };
+      if (opener === '{') return own('projection', { projection: qualified, decl: innerDecl });
+      if (opener === '(' && unled(s).length === 2) return own('params', { header: 'groupProjection', decl: innerDecl });
+      return own('json', { decl: innerDecl });
+    }
     if (k === 'command') {
       if (opener === '{' && v(s[0]) === 'emit' && s.length === 2) return own('emitArgs', { event: v(s[1]) });
+      // A branch: an emission after its arrow, or a block of steps.
+      if (opener === '{' && v(s[s.length - 2]) === 'emit') return own('emitArgs', { event: prev });
+      if (opener === '{' && prev === '=>') return own('command');
+      // A loop's block (11.0): its emissions and branches.
+      if (opener === '{' && v(s[0]) === 'for') return own('command');
       if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'command', name: frame.command } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'command', name: frame.command } });
       if (opener === '(' && prev === 'count') return own('count');
-      if (opener === '(' && /^\p{Lu}/u.test(prev || '')) return own('callArgs', { callee: prev });
+      // A collection function's read and its where (11.0).
+      if (opener === '(' && COLLECTION_FUNCTIONS.includes(prev)) return own('collection', { fn: prev });
+      if (opener === '(' && /^\p{Lu}/u.test(prev || '')) {
+        return own('callArgs', { callee: prev, openTags: v(s[0]) === 'for' && s.map(v).includes('in') });
+      }
       if (opener === '[' && prev === 'in') return own('list', { left: conditionLeft(s.slice(0, -1)) });
+      return own('json');
+    }
+    if (k === 'collection') {
+      if (opener === '(' && /^\p{Lu}/u.test(prev || '')) return own('callArgs', { callee: prev, openTags: true });
+      if (opener === '(' && COLLECTION_FUNCTIONS.includes(prev)) return own('collection', { fn: prev });
       return own('json');
     }
     if (k === 'projection') {
       if (opener === '{' && v(s[0]) === 'scenarios') return own('scenarios', { block: { kind: 'projection', name: frame.projection } });
       if (opener === '{' && v(s[0]) === 'scenario') return own('scenario', { block: { kind: 'projection', name: frame.projection } });
       if (opener === '(' && prev === 'successor') return own('successor', { event: v(s[1]) });
+      // A handler's branches (11.0): `on E { if … => op … }`.
+      if (opener === '{' && v(s[0]) === 'on' && s.length === 2) return own('handlerBranches', { event: v(s[1]) });
       // A derived projection's expression: `min(…)`, `count(…)`, a read.
       if (opener === '(' && base.decl.derived) {
         if (SOURCE_OPERATOR_CALLS.includes(prev)) return own('derivedOperands');
         if (prev === 'count') return own('count');
+        if (COLLECTION_FUNCTIONS.includes(prev)) return own('collection', { fn: prev });
         if (/^\p{Lu}/u.test(prev || '')) return own('derivedArgs', { callee: prev });
       }
       return own('json');
@@ -3956,11 +5448,22 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         const words = tokens.slice(i, j).map((t) => t.v);
         decl = {
           keyword: v(tokens[j]), name: v(tokens[j + 1]), start: i,
-          derived: words.includes('derived'), scripted: words.includes('scripted'),
+          derived: words.includes('derived'),
         };
         frame.stmt = i;
       }
-    } else if (token.first && token.v !== 'else') frame.stmt = i;
+    } else if (token.first && token.v !== 'else') {
+      frame.stmt = i;
+      if (frame.kind === 'group' && (LEAD_WORDS.includes(token.v) || token.v === 'projection')) {
+        let j = i;
+        while (LEAD_WORDS.includes(v(tokens[j])) && tokens[j + 1]) j += 1;
+        const words = tokens.slice(i, j).map((t) => t.v);
+        frame.inner = {
+          keyword: 'projection', name: v(tokens[j + 1]), start: i,
+          derived: words.includes('derived'),
+        };
+      }
+    }
     if (token.t === 'punct' && ['{', '(', '['].includes(token.v)) {
       const next = classify(frame, statement(frame, i), token.v);
       if (next.kind === 'scenario') next.scenarioCommand = next.block && next.block.kind === 'command' ? next.block.name : null;
@@ -3999,7 +5502,11 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   const known = sourceTextModel(parsed, model);
   const coll = (kind) => known[DEF_COLLECTIONS[kind]];
   const has = (object, key) => !!object && Object.prototype.hasOwnProperty.call(object, key);
-  const def = (kind, name) => (typeof name === 'string' && has(coll(kind), name) ? coll(kind)[name] : null);
+  // A projection is found by the name it is read by, a group's too.
+  const def = (kind, name) => {
+    const collection = kind === 'projection-definition' ? projectionsOf(known) : coll(kind);
+    return typeof name === 'string' && has(collection, name) ? collection[name] : null;
+  };
   const list = (value) => (Array.isArray(value) ? value.filter((x) => x && typeof x === 'object') : []);
   const typeText = (p) => `${p.propertyType}${p.isList ? '[]' : ''}${p.isOptional ? '?' : ''}`;
   const items = [];
@@ -4051,8 +5558,8 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     if (decl_ && decl_.keyword === 'command' && decl_.name === name) {
       declared.forEach((t, i) => { if (t.t === 'string' && v(declared[i - 1]) === 'reject') offer(t.v); });
     }
-    for (const rule of list((def('command-definition', name) || {}).conditions)) {
-      if (rule && typeof rule.rejection === 'string') offer(rule.rejection);
+    for (const { rejection } of commandRejectionSteps(def('command-definition', name) || {})) {
+      if (typeof rejection === 'string') offer(rejection);
     }
   };
 
@@ -4077,12 +5584,27 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       }
       for (; i < d.length; i += 1) {
         if (v(d[i]) === 'emit' && d[i + 1] && d[i + 1].t === 'ident') emits.push(d[i + 1].v);
+        // A loop's names (11.0), in scope as its payload is.
+        if (v(d[i]) === 'for' && v(d[i + 1]) === 'each') {
+          for (let n = i + 2; n < d.length && v(d[n]) !== 'in'; n += 1) {
+            if (d[n].t === 'ident' && !properties.some((p) => p.name === d[n].v)) properties.push({ name: d[n].v, propertyType: '', isList: false });
+          }
+        }
         // The read being written is not in scope of itself.
         if (v(d[i]) !== 'alias' || (tokens.includes(d[i]) && d[i].line === line) || !d[i + 1] || d[i + 1].t !== 'ident') continue;
-        const eq = v(d[i + 2]) === '?' ? i + 3 : i + 2;
+        const eq = i + 2;
         if (v(d[eq]) !== '=' || !d[eq + 1]) continue;
         const target = d[eq + 1].v;
-        boundary.push(def('entity-definition', target) ? { alias: d[i + 1].v, entity: target } : { alias: d[i + 1].v, projection: target });
+        // `Course(…)` is the group; `Course(…).capacity`, its projection.
+        let close = eq + 2;
+        for (let depth = 0; close < d.length; close += 1) {
+          if (v(d[close]) === '(') depth += 1;
+          else if (v(d[close]) === ')' && --depth === 0) break;
+        }
+        const member = v(d[close + 1]) === '.' && d[close + 2] && d[close + 2].t === 'ident' ? d[close + 2].v : null;
+        const alias = d[i + 1].v;
+        if (member) boundary.push({ alias, projection: `${target}.${member}` });
+        else boundary.push(def('group-definition', target) ? { alias, group: target } : { alias, projection: target });
       }
     }
     for (const p of list(body && body.properties)) if (!properties.some((q) => q.name === p.name)) properties.push(p);
@@ -4092,7 +5614,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       if (written && written.line === line) continue;
       if (!boundary.some((q) => q.alias === b.alias)) boundary.push(b);
     }
-    for (const e of list(body && body.publishes)) if (!emits.includes(e.name)) emits.push(e.name);
+    for (const e of commandEmissions(body)) if (!emits.includes(e.name)) emits.push(e.name);
     return { name, properties, boundary, emits };
   };
   const operandType = (scope, head, property) => {
@@ -4105,23 +5627,39 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   };
   const operandItems = (scope, { sort = 0, prefer } = {}) => {
     for (const b of scope.boundary) {
-      push(b.alias, 'alias', b.entity ? `alias ${b.entity}(…)` : `alias ${b.projection}(…)`, { sort: prefer && !prefer(b) ? sort + 1 : sort });
+      push(b.alias, 'alias', b.group !== undefined ? `alias ${b.group}(…)` : `alias ${b.projection}(…)`, { sort: prefer && !prefer(b) ? sort + 1 : sort });
     }
     for (const p of scope.properties) push(p.name, 'commandProperty', typeText(p), { sort: prefer && !prefer(p) ? sort + 1 : sort });
   };
-  const entityPropertyItems = (entityName) => {
-    const entity = def('entity-definition', entityName);
-    for (const p of list(entity && entity.properties)) {
-      const projection = def('projection-definition', p.projection);
-      const type = projection ? `${projection.valueType}${projection.isList ? '[]' : ''}` : '';
-      push(p.name, 'entityProperty', `${type}${type ? ' · ' : ''}${p.projection}`, { sort: 0 });
+  // A group's projections, by their local names – after an alias of
+  // it, or after a read of it in place.
+  const groupProjectionItems = (groupName) => {
+    for (const p of groupProjections(def('group-definition', groupName))) {
+      if (typeof p.name !== 'string') continue;
+      const type = p.valueType ? `${p.valueType}${p.isList ? '[]' : ''}` : '';
+      const args = projectionSlots(p);
+      push(p.name, 'groupProjection', type, {
+        sort: 0, ...(args.length ? { insert: `${p.name}(${args.map((a, n) => `${a.name}: $${n + 1}`).join(', ')})`, snippet: true } : {}),
+      });
     }
   };
+  // The group a read ending in `)` before the cursor names, if any.
+  const groupCalled = () => {
+    if (v(s[s.length - 2]) !== ')') return null;
+    let depth = 0;
+    for (let i = s.length - 2; i >= 0; i -= 1) {
+      if (v(s[i]) === ')') depth += 1;
+      else if (v(s[i]) === '(' && --depth === 0) return s[i - 1] && def('group-definition', s[i - 1].v) ? s[i - 1].v : null;
+    }
+    return null;
+  };
   const dotted = (scope) => {
+    const called = groupCalled();
+    if (called) { groupProjectionItems(called); return done(); }
     const head = s[s.length - 2];
     if (!head || head.t !== 'ident') return done();
     const binding = scope.boundary.find((b) => b.alias === head.v);
-    if (binding && binding.entity) entityPropertyItems(binding.entity);
+    if (binding && binding.group !== undefined) groupProjectionItems(binding.group);
     const parameter = scope.properties.find((p) => p.name === head.v);
     for (const f of (parameter && recordFields(parameter.propertyType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
     return done();
@@ -4132,9 +5670,15 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     if (!cond.length || last === 'not') {
       operandItems(scope);
       // A rule may read a projection in place, so every projection is
-      // a way for one to start – after what the command already has.
+      // a way for one to start – after what the command already has –
+      // and so is every group, for one of its projections.
       definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
+      definitionItems('group-definition', { sort: 1, call: (n) => `${n}($1).` });
       push('count', 'keyword', 'count(…)', { insert: 'count($1)', snippet: true, sort: 1 });
+      // A collection function over an open read (11.0).
+      for (const word of COLLECTION_FUNCTIONS.filter((w) => w !== 'count')) {
+        push(word, 'keyword', `${word}(P(x, *))`, { insert: `${word}($1)`, snippet: true, sort: 2 });
+      }
       if (!cond.length) push('not', 'keyword', '', { sort: 2 });
       return done();
     }
@@ -4143,6 +5687,12 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     if (SOURCE_COMPARISONS.includes(last)) {
       if (leftType && !leftType.isList) valueItems(leftType.propertyType);
       operandItems(scope, { sort: 1 });
+      // A value inside a loop over an open read (11.0).
+      if (openReadAround() && inLoop) push('value', 'keyword', 'the instance\'s value', { sort: 1 });
+      // A collection's result is a value like any other.
+      if (!SOURCE_WORD_PREDICATES.includes(last)) {
+        for (const word of COLLECTION_FUNCTIONS) push(word, 'keyword', `${word}(…)`, { insert: `${word}($1)`, snippet: true, sort: 2 });
+      }
       return done();
     }
     if (last === 'is') {
@@ -4187,13 +5737,43 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     return done();
   };
+  // A group's tag, `{ name, propertyType, tag }` – off its header's
+  // tokens while it is being written, as parsed otherwise.
+  const groupTagParameter = (groupName, start) => {
+    if (start !== undefined && v(tokens[start]) === 'group' && v(tokens[start + 2]) === '(' && v(tokens[start + 3]) === 'tag'
+      && v(tokens[start + 5]) === ':') {
+      return { name: v(tokens[start + 4]), propertyType: v(tokens[start + 6]), tag: true };
+    }
+    const tag = groupTagOf(def('group-definition', groupName));
+    return tag ? { name: tag.name, propertyType: tag.tagType, tag: true } : null;
+  };
+  // The local names of a group's projections: those parsed, and those
+  // declared in its block as far as the tokens go.
+  const groupSiblings = (groupName, start) => {
+    const names = groupProjections(def('group-definition', groupName)).map((p) => p.name).filter((n) => typeof n === 'string');
+    if (start === undefined) return names;
+    const around = [...tokens.slice(start + 1).filter((t, i) => level[start + 1 + i] > 0), ...restOfDeclaration];
+    around.forEach((token, i) => {
+      if (!token.first || ![...LEAD_WORDS, 'projection'].includes(token.v)) return;
+      let j = i;
+      while (LEAD_WORDS.includes(v(around[j])) && around[j + 1]) j += 1;
+      const name = around[j + 1];
+      if (v(around[j]) === 'projection' && name && SOURCE_LOCAL_RE.test(name.v) && !names.includes(name.v)) names.push(name.v);
+    });
+    return names;
+  };
   // What a read of a projection gives, in order: its tags, then its
-  // arguments – `{ name, propertyType, tag }` each.
+  // arguments – `{ name, propertyType, tag }` each. A group's
+  // projection is read by the group's tag.
   const projectionParameters = (name) => {
     const ownDecl = frame.decl || decl;
     if (ownDecl.keyword === 'projection' && ownDecl.name === name) {
       const header = projectionHeader(ownDecl.start);
-      if (header) return header.parameters;
+      if (header && !ownDecl.group) return header.parameters;
+      if (header) {
+        const tag = groupTagParameter(ownDecl.group, ownDecl.groupStart);
+        return [...(tag ? [tag] : []), ...header.parameters.filter((p) => !p.tag)];
+      }
     }
     const body = def('projection-definition', name);
     return [
@@ -4209,10 +5789,27 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         { sort: !preferred || p.propertyType === preferred ? 0 : 1 });
     }
   };
+  // A derived projection's siblings in its group, read bare – or with
+  // their arguments by name.
+  const siblingItems = (inner) => {
+    const own = splitQualifiedName(inner.name);
+    for (const local of groupSiblings(inner.group, inner.groupStart)) {
+      if (own && local === own.local) continue;
+      const body = def('projection-definition', qualifiedProjectionName(inner.group, local));
+      const args = projectionSlots(body);
+      push(local, 'groupProjection', body ? `${body.valueType}${body.isList ? '[]' : ''}` : inner.group, {
+        sort: 0, ...(args.length ? { insert: `${local}(${args.map((a, n) => `${a.name}: $${n + 1}`).join(', ')})`, snippet: true } : {}),
+      });
+    }
+  };
   // A projection is read with its values in parentheses – empty for an
   // untagged one, so the cursor lands inside only when there is
   // something to fill in.
-  const projectionCall = (name) => (projectionParameters(name).length ? `${name}($1)` : `${name}()`);
+  const projectionCall = (name) => {
+    const split = splitQualifiedName(name);
+    if (split) return `${split.group}($1).${split.local}`;
+    return projectionParameters(name).length ? `${name}($1)` : `${name}()`;
+  };
 
   // A projection's own header, read off the tokens: its body is
   // mid-edit while a handler is typed, and so rarely in the parse.
@@ -4232,6 +5829,29 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     if (v(tokens[i]) !== ':') return null;
     return { valueType: v(tokens[i + 1]), isList: v(tokens[i + 2]) === '[', parameters };
   };
+
+  // The projection an open read near the cursor reads: the one inside
+  // the collection being written, or the one the loop around it runs
+  // over – `value` is its instance's value.
+  function openReadAround() {
+    for (let f = frames.length - 1; f >= 0; f -= 1) {
+      const at = frames[f];
+      if (at.kind === 'collection') {
+        const inside = tokens.slice(at.open + 1).find((t) => t.t === 'ident' && /^\p{Lu}/u.test(t.v));
+        if (inside) return inside.v;
+      }
+    }
+    const lines = tokens.filter((t) => t.first && t.v === 'for');
+    const loop = lines[lines.length - 1];
+    if (!loop) return null;
+    const from = tokens.indexOf(loop);
+    const inAt = tokens.slice(from).findIndex((t) => t.v === 'in');
+    const read = inAt >= 0 ? tokens[from + inAt + 1] : null;
+    return read && read.t === 'ident' ? read.v : null;
+  }
+  // Whether the cursor is inside a `for each` block.
+  const inLoop = frames.some((f) => f.kind === 'command' && f.open >= 0
+    && v(tokens.slice(0, f.open).reverse().find((t) => t.first)) === 'for');
 
   // ---------- by place ----------
   const k = frame.kind;
@@ -4256,7 +5876,30 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
       for (const p of list(event && event.properties)) push(p.name, 'eventProperty', typeText(p), { sort: 0 });
       return done();
     }
+    // A record's field one hop into the event (11.0):
+    // `event.data.signUp.emailAddress`.
+    if (v(s[s.length - 3]) === '.' && v(s[s.length - 4]) === 'data' && v(s[s.length - 6]) === 'event') {
+      const event = def('event-definition', frame.event || (k === 'projection' ? v(s[1]) : null));
+      const field = list(event && event.properties).find((p) => p.name === head);
+      for (const f of (field && !field.isList && recordFields(field.propertyType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
+      return done();
+    }
+    // `value.` inside a where or a loop over an open read: the
+    // instance's record fields.
+    if (head === 'value') {
+      const projection = def('projection-definition', openReadAround());
+      for (const f of (projection && !projection.isList && recordFields(projection.valueType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
+      return done();
+    }
+    // `P(x, *).` inside a collection: a record's field to compute over.
+    if (k === 'collection' && v(s[s.length - 2]) === ')') {
+      const projection = def('projection-definition', openReadAround());
+      for (const f of (projection && !projection.isList && recordFields(projection.valueType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
+      return done();
+    }
     if (commandName) return dotted(commandScope(commandName));
+    const called = groupCalled();
+    if (called) { groupProjectionItems(called); return done(); }
     if (frame.decl && frame.decl.keyword === 'projection') {
       const parameter = projectionParameters(frame.decl.name).find((p) => p.name === v(s[s.length - 2]));
       for (const f of (parameter && recordFields(parameter.propertyType)) || []) push(f.name, 'field', f.propertyType, { sort: 0 });
@@ -4269,19 +5912,19 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     const kw = decl.keyword;
     if (!s.length) {
       for (const [label, insert] of SOURCE_DECLARATION_SNIPPETS) {
-        if (experimental || (label !== 'entity' && label !== 'scripted projection')) push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
+        push(label, 'keyword', 'declaration', { insert, snippet: true, sort: 0 });
       }
       return done(false);
     }
     // What a lead word is followed by: `untagged derived projection`.
-    if (s.length === 1 && (prev === 'untagged' || prev === 'derived' || prev === 'scripted')) {
-      keywords([['projection', 'projection '], ...(prev === 'untagged' ? [['derived', 'derived '],
-        ...(experimental ? [['scripted', 'scripted ']] : [])] : [])]);
+    if (s.length === 1 && (prev === 'untagged' || prev === 'derived')) {
+      keywords([['projection', 'projection '], ...(prev === 'untagged' ? [['derived', 'derived ']] : [])]);
       return done(false);
     }
     if (prev === '@') {
-      for (const [name, kinds] of Object.entries(SOURCE_ANNOTATIONS)) {
-        push(name, 'keyword', kinds.map((x) => SOURCE_KEYWORD[x]).join(', '), { insert: `${name}("$1")`, snippet: true, sort: 0 });
+      for (const [name, spec] of Object.entries(SOURCE_ANNOTATIONS)) {
+        push(name, 'keyword', spec.kinds.map((x) => SOURCE_KEYWORD[x]).join(', '),
+          spec.flag ? { sort: 0 } : { insert: `${name}("$1")`, snippet: true, sort: 0 });
       }
       return done();
     }
@@ -4305,31 +5948,69 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   if (k === 'params' || k === 'fields') {
     const tagged = v(segment[0]) === 'tag';
     if (prev === ':') { typeItems({ tagsFirst: tagged }); return done(); }
-    // A projection's or an entity's tag, and an event's tagged property,
-    // start with `tag`; a property line in an event may too.
+    // A projection's or a group's tag, and an event's tagged property,
+    // start with `tag`; a property line in an event may too. A group's
+    // projection has no tag of its own to declare.
     const lineStart = k === 'fields' ? atLineStart || prev === ',' || prev === '{' : !segment.length;
-    if (lineStart && (frame.header === 'projection' || frame.header === 'entity' || (k === 'fields' && (frame.decl || decl).keyword === 'event'))) {
+    if (lineStart && (frame.header === 'projection' || (frame.header === 'group' && !s.length)
+      || (k === 'fields' && (frame.decl || decl).keyword === 'event'))) {
       keywords([['tag', 'tag ']]);
       return done(false);
     }
     return done(false);
   }
-  if (k === 'entity') {
-    if (!s.length) { if (experimental) keywords([['lifecycle', 'lifecycle ']]); return done(false); }
-    if (prev === 'lifecycle') {
-      const names = framed.filter((t, i) => t.t === 'ident' && v(framed[i + 1]) === '=').map((t) => t.v);
-      const parsedEntity = def('entity-definition', frame.entity);
-      for (const p of list(parsedEntity && parsedEntity.properties)) if (!names.includes(p.name)) names.push(p.name);
-      names.forEach((n) => push(n, 'entityProperty', '', { sort: 0 }));
+  // A group's block: its projections, each declared the way a
+  // top-level one is, minus the tag header.
+  if (k === 'group') {
+    if (prev === '@' && s.length === 1) {
+      for (const name of SOURCE_GROUPED_ANNOTATIONS) push(name, 'keyword', 'grouped projection', { insert: `${name}("$1")`, snippet: true, sort: 0 });
       return done();
     }
-    if (prev === '=') {
-      const idType = (def('entity-definition', frame.entity) || {}).identifierType || `${frame.entity}Id`;
-      definitionItems('projection-definition', {
-        sort: (n, b) => (projectionParameters(n).some((p) => p.propertyType === idType) ? 0 : 1),
-        detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}`,
-      });
+    if (!s.length) {
+      for (const [label, insert] of SOURCE_GROUP_PROJECTION_SNIPPETS) {
+        push(label, 'keyword', 'projection', { insert, snippet: true, sort: 0 });
+      }
+      return done(false);
+    }
+    if (s.length === 1 && prev === 'derived') { keywords([['projection', 'projection ']]); return done(false); }
+    const colon = s.findIndex((t) => t.v === ':');
+    if (prev === ':') { typeItems(); return done(); }
+    if (prev === '=' && colon >= 0) {
+      valueItems(v(s[colon + 1]));
+      keywords([['null'], ['[]']], 1);
       return done();
+    }
+    return done(false);
+  }
+  // A handler's branches (11.0): `if` or `else` to start a line, an
+  // event field to test, a tag to test it against, an operation after
+  // the arrow and its value after that.
+  if (k === 'handlerBranches') {
+    const ownName = frame.projection || (frame.decl && frame.decl.name);
+    const body = (frame.decl && projectionHeader(frame.decl.start)) || def('projection-definition', ownName) || {};
+    const eventData = () => push('event.data', 'keyword', 'a value the event carried', { insert: 'event.data.', retrigger: true, sort: 0 });
+    if (!s.length) { keywords([['if', 'if '], ['else', 'else ']]); return done(false); }
+    if (prev === '=>') {
+      for (const op of operationsFor(known, body)) push(op, 'keyword', 'operation', { sort: 0, insert: `${op} ` });
+      return done();
+    }
+    if (OPERATIONS.includes(prev)) { eventData(); valueItems(body.valueType, 0); return done(); }
+    if (['if', 'and', 'or', '('].includes(prev)) { eventData(); return done(); }
+    if (prev === '==' || prev === '!=') {
+      // The tags of this projection, then the members of the field's
+      // enum (or true / false) – the field's type read off the path.
+      ownParameterItems(ownName);
+      const path = s.slice(0, -1);
+      const at = path.map(v).lastIndexOf('data');
+      const event = def('event-definition', frame.event);
+      const field = at >= 0 ? list(event && event.properties).find((p) => p.name === v(path[at + 2])) : null;
+      let type = field && field.propertyType;
+      if (field && v(path[at + 3]) === '.') {
+        const inner = (recordFields(field.propertyType) || []).find((f) => f.name === v(path[at + 4]));
+        type = inner && inner.propertyType;
+      }
+      if (type) valueItems(type, 1);
+      return done(false);
     }
     return done(false);
   }
@@ -4348,7 +6029,9 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     // its scenarios.
     if (frame.decl && frame.decl.derived) {
       const reads = () => {
+        if (frame.decl.group) siblingItems(frame.decl);
         definitionItems('projection-definition', { exclude: [ownName], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
+        definitionItems('group-definition', { sort: 1, call: (n) => `${n}($1).` });
         ownParameterItems(ownName);
         return done();
       };
@@ -4362,7 +6045,6 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     if (!s.length) {
       keywords([['on', 'on '], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
-      if (frame.decl && frame.decl.scripted) keywords([['initialState'], ['exposes']], 2);
       return done(false);
     }
     if (v(s[0]) === 'on') {
@@ -4379,8 +6061,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
     }
     return done(false);
   }
-  // Where a condition being written began: after its last `require`,
-  // `when`, `and` or `by`.
+  // Where a condition being written began: after its last `require`.
   const conditionTail = (tokensOf) => {
     let at = -1;
     tokensOf.forEach((t, i) => { if (SOURCE_CONDITION_STARTS.includes(t.v)) at = i; });
@@ -4390,19 +6071,61 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   if (k === 'command') {
     const scope = commandScope(commandName);
     if (!s.length) {
+      // Inside a loop a step emits or branches – nothing else is one.
+      if (inLoop) { keywords([['emit', 'emit '], ['if', 'if ']]); return done(false); }
       keywords([['alias', 'alias ${1:name} = ', true], ['require', 'require '], ['emit', 'emit '],
-        ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
+        ['if', 'if '], ['for each', 'for each ${1:name} in ', true], ['scenarios', SOURCE_GROUP_SNIPPET, true]]);
       return done(false);
     }
     const first = v(s[0]);
+    // A loop (11.0): what it runs over after `in` – a list in scope, or
+    // a projection – then after "=>" an emission.
+    if (first === 'for') {
+      const words = s.map(v);
+      if (prev === 'in') {
+        // What a loop runs over: a list in scope, a list projection, an
+        // open read of one tagged by several, `list(…)`.
+        for (const p of scope.properties) if (p.isList) push(p.name, 'commandProperty', typeText(p), { sort: 0 });
+        for (const b of scope.boundary) {
+          const target = b.projection && def('projection-definition', b.projection);
+          if (target && target.isList) push(b.alias, 'alias', `alias ${b.projection}(…)`, { sort: 0 });
+        }
+        definitionItems('projection-definition', {
+          sort: (n, b) => (b.isList ? 1 : 2), call: (n, b) => (!b.isList && projectionTagParams(b).length >= 2
+            ? `${n}(${projectionTagParams(b).map((t, i) => (i ? '*' : `$${i + 1}`)).join(', ')})` : projectionCall(n)),
+          detail: (n, b) => (b.isList ? `${b.valueType}[]` : projectionTagParams(b).length >= 2 ? 'every instance, P(x, *)' : b.valueType),
+        });
+        push('list', 'keyword', 'list(P(x, *))', { insert: 'list($1)', snippet: true, sort: 2 });
+        return done();
+      }
+      if (prev === '=>') { keywords([['emit', 'emit ']]); return done(); }
+      if (prev === 'emit' && words[words.length - 2] === '=>') {
+        definitionItems('event-definition', { sort: 0, detail: (n, b) => list(b.properties).map((p) => p.name).join(', ') });
+        return done();
+      }
+      return done(false);
+    }
+    // A branch: its condition, then after "=>" one emission or reject.
+    if (first === 'if') {
+      const words = s.map(v);
+      const arrow = words.lastIndexOf('=>');
+      const tail = s.slice(arrow + 1);
+      if (prev === 'else') { keywords([['if', 'if '], ['=>', '=> ']]); return done(); }
+      if (words.lastIndexOf('if') > arrow) return conditionItems(scope, conditionTail(s));
+      if (!tail.length) { keywords([['emit', 'emit '], ['reject', 'reject "${1}"', true]]); return done(); }
+      if (v(tail[0]) === 'emit' && tail.length === 1) {
+        definitionItems('event-definition', { sort: 0, detail: (n, b) => list(b.properties).map((p) => p.name).join(', ') });
+        return done();
+      }
+      if (v(tail[0]) === 'reject' && tail.length === 1) { rejectionItems(commandName); return done(); }
+      return done(false);
+    }
     if (first === 'alias') {
       if (prev === '=' && s.length <= 4) {
-        if (experimental) definitionItems('entity-definition', { sort: 0, call: (n) => `${n}($1)` });
+        definitionItems('group-definition', { sort: 0, call: (n) => `${n}($1)` });
         definitionItems('projection-definition', { sort: 1, call: projectionCall, detail: (n, b) => `${b.valueType}${b.isList ? '[]' : ''}` });
         return done();
       }
-      // What an entity read may exclude: a value in the command's scope.
-      if (prev === 'excluding') { operandItems(scope); return done(); }
       return done(false);
     }
     if (first === 'emit') {
@@ -4410,8 +6133,6 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         definitionItems('event-definition', { sort: 0, detail: (n, b) => list(b.properties).map((p) => p.name).join(', ') });
         return done();
       }
-      if (s.some((t) => t.v === 'when')) return conditionItems(scope, conditionTail(s));
-      if ((prev === '}' || s.length === 2) && experimental) { keywords([['when', 'when ']]); return done(false); }
       return done(false);
     }
     if (first === 'require') {
@@ -4446,25 +6167,79 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
         const p = properties.find((x) => x.name === key);
         if (p) valueItems(p.propertyType);
         operandItems(scope, { sort: 1, prefer: (x) => (x.propertyType ? x.propertyType === (p && p.propertyType) : true) });
+        // A list from an open read (G1) fills a list; a count (G3) a number.
+        if (p && p.isList) push('list', 'keyword', 'list(P(x, *))', { insert: 'list($1)', snippet: true, sort: 2 });
+        if (p && !p.isList && numericBaseOf(known, p.propertyType)) {
+          for (const word of ['count', 'sum', 'min', 'max', 'average']) push(word, 'keyword', `${word}(…)`, { insert: `${word}($1)`, snippet: true, sort: 2 });
+        }
+        if (p && !p.isList && p.propertyType === 'boolean') {
+          for (const word of ['any', 'all']) push(word, 'keyword', `${word}(P(x, *))`, { insert: `${word}($1)`, snippet: true, sort: 2 });
+        }
         return done();
       },
     });
   }
   // A call's values, in order: what the projection declares at this
   // position – a tag, offered the values in scope of its type first, and
-  // `each` for a list – or an entity's identifier.
+  // `each` for a list – or a group's one tag.
   if (k === 'callArgs') {
     const scope = commandScope(commandName);
     const position = framed.filter((t) => t.v === ',').length - restOfFrame.filter((t) => t.v === ',').length;
-    const entity = def('entity-definition', frame.callee);
-    const slot = entity
-      ? (position === 0 ? { propertyType: entity.identifierType || `${frame.callee}Id`, tag: true } : null)
+    const slot = def('group-definition', frame.callee)
+      ? (position === 0 ? groupTagParameter(frame.callee) : null)
       : projectionParameters(frame.callee)[position];
     if (segment.length > (v(segment[0]) === 'each' ? 1 : 0)) return done(false);
     if (slot && slot.tag && !segment.length) push('each', 'keyword', 'once per element of a list', { insert: 'each ', sort: 2 });
+    // Inside a collection or a loop's source (11.0), a tag left open.
+    if (slot && slot.tag && !segment.length && frame.openTags) push('*', 'keyword', 'every instance – an open tag', { sort: 1 });
     if (slot && !slot.tag) valueItems(slot.propertyType);
     operandItems(scope, { prefer: (x) => (slot && x.propertyType ? x.propertyType === slot.propertyType : true) });
     return done();
+  }
+  // Inside `sum(…)` and the rest (11.0): the read – a projection tagged
+  // by several first, its tags to fill and `*` – then, once it is
+  // closed, `where` and what the where compares: `value`, its fields,
+  // the names in scope, `and` / `or`.
+  if (k === 'collection') {
+    const scope = commandName ? commandScope(commandName) : null;
+    const words = s.map(v);
+    const whereAt = words.lastIndexOf('where');
+    if (whereAt >= 0) {
+      const cond = s.slice(whereAt + 1);
+      const tail = cond.slice(cond.map(v).reduce((at, w, i) => (['and', 'or'].includes(w) ? i + 1 : at), 0));
+      if (!tail.length) {
+        push('value', 'keyword', 'the instance\'s value', { sort: 0 });
+        const projection = def('projection-definition', openReadAround());
+        for (const f of (projection && !projection.isList && recordFields(projection.valueType)) || []) {
+          push(`value.${f.name}`, 'field', f.propertyType, { sort: 0 });
+        }
+        return done();
+      }
+      const last = v(tail[tail.length - 1]);
+      if (SOURCE_COMPARISONS.includes(last)) {
+        if (scope) operandItems(scope, { sort: 0, prefer: (x) => !x.group });
+        else if (frame.decl) ownParameterItems(frame.decl.name);
+        return done();
+      }
+      if (tail[tail.length - 1].t === 'ident' || last === ')') {
+        for (const word of ['==', '!=', '<', '<=', '>', '>=']) push(word, 'keyword', 'predicate', { sort: 0 });
+        keywords([['and', 'and '], ['or', 'or ']], 1);
+        return done(false);
+      }
+      return done(false);
+    }
+    if (!s.length) {
+      definitionItems('projection-definition', {
+        sort: (n, b) => (projectionTagParams(b).length >= 2 && !splitQualifiedName(n) ? 0 : 2),
+        call: (n, b) => (projectionTagParams(b).length >= 2
+          ? `${n}(${projectionTagParams(b).map((t, i) => (i ? '*' : `$${i + 1}`)).join(', ')})` : projectionCall(n)),
+        detail: (n, b) => (projectionTagParams(b).length >= 2 ? 'every instance, P(x, *)' : `${b.valueType}`),
+      });
+      if (frame.fn === 'count' && scope) for (const p of scope.properties) if (p.isList) push(p.name, 'commandProperty', typeText(p), { sort: 1 });
+      return done();
+    }
+    if (prev === ')') { keywords([['where', 'where ']]); return done(false); }
+    return done(false);
   }
   if (k === 'count') {
     if (commandName) { operandItems(commandScope(commandName)); return done(); }
@@ -4478,6 +6253,7 @@ function sourceCompletions(text, line, col, { model = null, experimental = true 
   // this projection's own parameters.
   if (k === 'derivedOperands') {
     if (segment.length) return done(false);
+    if (frame.decl && frame.decl.group) siblingItems(frame.decl);
     definitionItems('projection-definition', { exclude: [frame.decl && frame.decl.name], sort: 0, call: projectionCall, detail: (n, b) => `${b.valueType}` });
     ownParameterItems(frame.decl && frame.decl.name);
     return done();
@@ -4613,33 +6389,13 @@ function sourceFoldingRanges(text) {
 // text that does not parse is marked too. The editor shows them at
 // info level while the flag is off: the text reads and applies whole
 // either way, as a model using them loads whole.
+// Since 11.0 no construct is staged there (`EXPERIMENTAL_FEATURES`,
+// model.js), so nothing is marked; one that is gets found here, each
+// mark saying "… is experimental – turn experimental features on in
+// Settings to author it on the pages.". A group never is: a name is
+// nothing to hide.
 function sourceExperimentalMarks(text) {
-  const tokens = lexSource(text).tokens;
-  const out = [];
-  const said = (token, what) => out.push({
-    line: token.line, col: token.col, endLine: token.endLine, endCol: token.endCol,
-    message: `${what} is experimental – turn experimental features on in Settings to author it on the pages.`,
-  });
-  // Which blocks are scenarios: `when` there is a scenario's, not a guard.
-  const frames = [];
-  let scenarioNext = false;
-  tokens.forEach((token, i) => {
-    const v = token.v;
-    const prev = tokens[i - 1];
-    const next = tokens[i + 1];
-    if (token.t === 'punct' && v === '{') { frames.push(scenarioNext); scenarioNext = false; return; }
-    if (token.t === 'punct' && v === '}') { frames.pop(); return; }
-    if (token.t === 'punct' && v === '?' && tokens[i - 2] && tokens[i - 2].v === 'alias') { said(token, 'An optional read'); return; }
-    if (token.t !== 'ident') return;
-    if (v === 'scenario') { scenarioNext = true; return; }
-    if (v === 'entity' && next && next.t === 'ident') said(token, 'An entity');
-    else if (v === 'lifecycle' && next && next.t === 'ident' && !(prev && prev.v === '=')) said(token, 'A lifecycle');
-    else if (v === 'scripted' && next && (next.v === 'projection' || next.v === 'untagged')) said(token, 'A scripted projection');
-    else if (v === 'excluding') said(token, '"excluding"');
-    else if (v === 'currentValue') said(token, 'currentValue');
-    else if (v === 'when' && !frames.includes(true)) said(token, 'A guarded emission');
-  });
-  return out;
+  return [];
 }
 
 // ============================================================
@@ -4666,30 +6422,120 @@ The text get_model_source returns, apply_model_source applies and start_model ta
 - A text is the whole model: a model "Name" line, then types, events, projections and commands. A definition left out of an applied text is removed – apply_model_source refuses that unless told allowRemovals: true – so to change a model, edit what get_model_source returned and send all of it back.
 - A text with any error is refused whole, with each error's line and column; fix them and send it again. What does not stop it (an event nothing emits, a read of a projection nobody declared) comes back as advisories with the result; fix those as well.
 - DCB in brief: events are tagged by identifier values; a projection folds the events that carry its tags into one value; a command reads projections, checks its rules and emits events. Its consistency boundary is exactly what it reads – derived, never declared (derive_boundary shows it).
-- Definitions, enum members and records are PascalCase; properties, parameters, tags and aliases are camelCase. A name has at least two characters.
-- // and /* */ are comments. They are not stored.
+- A capitalised name is a declaration you can name from anywhere: types, events, groups, top-level projections, commands, enum members. A lowercase one is reached through something in scope: properties, parameters, tags, aliases, and the projections of a group (course.capacity). A lowercase name has at least two characters.
+- // and /* */ are comments. They are not stored. A /// line right above a definition, or above the model line, is its description and is stored; several lines make one description.
+- Notes go on the lines before any definition and are documentation only – they never change a boundary: @assumption("…") a reading taken where the brief was silent, @external("…") a rule the layer around the commands checks (not a require), @unresolved("…") an open question. Each may repeat, one note per line. check counts the unresolved ones ("Model is incomplete: 2 unresolved").
+- @deprecated on the line before an event marks it as stored but no longer emitted: nothing has to emit it, and a command emitting it is advised. An event that is neither emitted nor @deprecated is advised.
+- @sensitive on the line before a type or a tag type marks its values as personal data. On a tag type the store must not show the plain value as a tag – the adapter hashes it or uses an HMAC. Nothing in the model changes: values match as before. Normalise (lower case, trim) in the layer around the commands and state the format as a pattern.
 - @tagSchema("{type}={value}") on the line before a tag type changes how its values render as tags; "{type}:{value}" is the default.
-- @icon("📦") on the line before an event or a command gives it the mark the pages show it with – one emoji or short glyph.
+- @icon("📦") on the line before an event, a group or a command gives it the mark the pages show it with – one emoji or short glyph.
+- A group names projections that share one tag. It owns them – they are declared inside it, without a tag header – and means nothing for consistency: reading course.capacity queries only capacity's events. Read one in place as Course(courseId).capacity, or name the group once with alias course = Course(courseId) and read course.capacity. Projections tagged by several tags, or untagged, stay top-level.
 - @feature("Course management") on the line before a command puts it in that feature group; the pages list commands by feature. A command without one is ungrouped.`;
 
-const SOURCE_REFERENCE_FORMS = `Rules (after require), each negated by a leading not:
+const SOURCE_REFERENCE_FORMS = `Comparisons (after require or if), each negated by a leading not:
   a == b    a != b    a < b    a <= b    a > b    a >= b
   a in [Draft, Published]       a not in [Draft, Published]
   xs contains x    x in xs      (a list value holding x)
   xs containsAny ys    s startsWith "c"    s endsWith "c"
   count(xs) == 3                (also !=, < and >)
   a is empty    a is not empty    a is true    a is false
+count(xs) is a value too, an integer, wherever one goes – of a list parameter or record field,
+a list projection, or list(P(x, *)):
+  require count(Lent(memberId, *)) + count(bookIds) <= 3 else reject "Too many"
+  emit Counted { memberId, requested: count(bookIds) }
+Conditions join comparisons with and / or – and binds tighter – grouped in brackets:
+  require a > 0 and (b == c or d is true) else reject "<message>"
+
+A command's steps run top-down, in written order:
+  require <condition> else reject "<message>"     (refuses unless the condition holds)
+  emit E { … }
+  if <condition> => <arm>  else if <condition> => <arm>  else => <arm>
+An arm is one emit or reject "<message>", or a block { … } of require, emit and if steps.
+Separate ifs all run; an else chain runs its first arm that holds. Any rejection refuses
+the command with no events; the emits reached form one append, and none is then nothing.
+A read is made when a step reached first needs it, never before.
+
+A for each emits zero or more events per element, inside the one append:
+  for each shareId in ShareActive(customerId, *) => emit ShareEnded { shareId, customerId }
+  for each (shareId, contractId) in Share(customerId, *, *) => emit …   (one name per open tag)
+  for each id in ids {
+    if Unread(customerId) contains id => emit Read { id, customerId }
+    else if … => reject "<message>"
+  }
+It runs over an open read (value, value.field: the instance's value), list(P(x, *)), a list
+projection or a list parameter, in that order – an open read in the order of each instance's first event. The
+names are in scope inside; a read by one is made once per element and joins the boundary.
+Its body is => emit, or a block of emit and if steps whose arms are one emit or one reject.
+A reject inside refuses the whole command. No element emits nothing. A loop does not nest.
+
+A projection's handler is on E => <operation>, or branches on the event:
+  on E {
+    if event.data.from == accountId => decrement event.data.amount
+    if event.data.to == accountId => increment event.data.amount
+  }
+  on E { if event.data.seats == 0 => set "released"  else if … => …  else => set "booked" }
+One operation per branch. Separate ifs all apply, in order; an else chain applies its first match.
+A value may be one field of a record-typed property, one hop in: set event.data.signUp.emailAddress.
+A condition compares event.data.<property> (or .<property>.<field> of a record) with == or !=
+against one of the projection's own tags or a literal, joined with and / or. It never reads
+another projection or the state, and never narrows the query.
 
 Operands: a parameter (courseId) or its record field (items.price), an alias or its field,
-a read P(…), a literal ("text", 3, true, null, [..]), an enum member (Archived),
-a tag literal naming its type (CourseId("c1")).
+a read P(…), a group's projection G(…).p, a literal ("text", 3, true, null, [..]),
+a duration (15m), an enum member (Archived), a tag literal naming its type (CourseId("c1")),
+a collection function, and a field of a projection's record value: P(…).city, alias.city,
+G(…).p.city. A rule's sides and an emitted value may add and subtract them, left to right:
+  require CourseCapacity(courseId) - sum(Reservation(courseId, *).seats) >= seats else reject "Full"
+
+Time is data. datetime is an RFC 3339 date-time with an offset ("2026-01-01T10:00:00+02:00",
+"…Z"), compared as the instant it names; duration is a length written 30s, 15m, 24h, 7d or
+1h30m (a day is exactly 24h; no months or years) and stored as ISO 8601 ("PT15M"). No event
+carries a recorded time and there is no clock: the time a command acts at is a parameter,
+now: datetime, which a scenario gives like any value.
+  require OptInIssuedAt(token) + 24h > now else reject "Token expired"
+  emit SeatsWereReserved { courseId, seats, expiresAt: now + 15m }
+  sum(Reservation(courseId, *).seats where value.expiresAt > now)
+A datetime moves by a duration (datetime + duration, datetime - duration) and is written back
+in UTC ("…Z"); durations add and subtract; numbers add and subtract. type Deadline = datetime
+names one.
+
+An open tag, *, reads every present instance of a projection tagged by several – one whose
+value is not its initial one – matching the tags it binds; at least one stays bound:
+  count(P(x, *))    sum(P(x, *))    min(…)    max(…)    average(…)    any(…)    all(…)
+  count(P(x, *) where value > 2 and (value.city == city or value.city == "Berlin"))
+  list(P(x, *))    list(P(x, *) where value == true)
+list(P(x, *)) is the open tag's values, as a list of its type, in the order of each instance's
+first event; it takes a read with exactly one tag open, and goes wherever a list does – an
+emitted list, contains, count(…), for each.
+An open read stands only inside one of these. Its where reads value (value.field of a record),
+names in scope – parameters, and an alias already bound (its value, a value and no new read) –
+and literals – never a projection. Over no instance: count and sum 0;
+min, max and average null; any false; all true. Without a where, any says whether one is
+present, and all holds. A derived projection may hold one such value: { sum(P(x, *)) }.
+
+A projection may hold a record its handlers replace whole – set event.data.address, or
+set { street: event.data.street, city: event.data.city } naming every required field. Setting
+one field at a time (composite state) is refused. A record's field may be optional, record
+Address { street: string, floor?: integer }: an absent one reads null, and a scenario gives a
+record whole but for its optional fields. An emission field builds one the same way, each
+field any value an emission field takes – emit Moved { customerId, address: { street,
+floor: Floor(customerId) } } – one level deep, and nowhere but in an emission.
 
 Scenarios sit in one scenarios { … } group at the end of the block of the command or
 projection they exercise, and name it:
   scenario "<what it shows>" { given E { … }  and E2 { … }  when C { … }  then E { … }  and E3 { … } }
   then rejected "<rule message>"    then nothing    then P(CourseId("c1")) == <value>
+  then G(CourseId("c1")).p == <value>      (a group's projection, in its block inside the group)
 Say given, when and then once each, one command per scenario; further events continue with and.
 Leave then out and applying records what the model does, and the result says which scenarios it recorded.
+A scenario leaves out every property its outcome does not depend on – in given, when and then –
+so it says what it depends on; tags are always given:
+  given CustomerWasAdded { customerId: "cu1" }  when SetInstallment { contractId: "co1", actor: "cu2" }
+A property left out is unspecified: a run that reads it is an error naming it (reads unspecified
+field "name" of CustomerWasAdded) – except one emitted as it is into a property that is no tag,
+which the event leaves out too, so a then must not list it. A then compares the fields it lists
+and ignores the rest.
+The values a scenario gives are held to their types' constraints (pattern, minimum, …).
 
 A definition printed as command X json { … } is stored JSON the language cannot spell.
 Leave it as it is, or rewrite it in the language.`;
@@ -4699,26 +6545,47 @@ const SOURCE_REFERENCE_TOUR = `model "Library"
 // ---- Types ----
 // "type" names a value type: a JSON Schema base type (string, number,
 // integer, boolean, object, array, null), optionally constrained by a
-// JSON Schema object.
+// JSON Schema object – or a time, datetime or duration.
 type Isbn = string { pattern: "^[0-9-]+$" }
+type HoldTime = duration
 // "tag type" is a value type events can be tagged by: an identifier.
 tag type BookId = string
 tag type MemberId = string
 tag type LoanId = string { pattern: "^l[0-9]+$" }
+// @sensitive: its values are personal data. On a tag type the store
+// never shows the plain value as a tag – the adapter hashes it.
+@sensitive
+tag type EmailAddress = string { pattern: "^[^A-Z]*$" }
 enum BookStatus { Unknown, Available, Lent, Withdrawn }
-// A record is a composite value; every field is one required value.
+// A record is a composite value; every field is one value, and "name?:"
+// one that may be left out (null when absent) – never a tag.
 record Copy { bookId: BookId, isbn: Isbn }
+record Shelf { room: string, row?: integer }
 
 // ---- Events ----
 // "tag" marks each value the event is tagged by; "name?:" is optional
-// (null when absent), "X[]" a list, and "tag each f" tags the event once
-// per element of a list of records, by that field.
+// (null when absent), "X[]" a list, "tag f" after a record tags the
+// event by that field, and "tag each f" tags it once per element of a
+// list of records, by that field.
 event BookAdded { tag bookId: BookId, isbn: Isbn, title: string, subtitle?: string }
+event CopyCatalogued { copy: Copy tag bookId }
 event CopiesDonated { donor: string, copies: Copy[] tag each bookId }
 event BookLent { tag bookId: BookId, tag memberId: MemberId, tag loanId: LoanId }
 event BookReturned { tag bookId: BookId, tag memberId: MemberId }
+event BookPassedOn { tag bookId: BookId, tag fromMemberId: MemberId, tag toMemberId: MemberId }
+event BookDamaged { tag bookId: BookId, damage: string }
 event BookWithdrawn { tag bookId: BookId }
+// "///" above a definition (or the model line) is its stored
+// description. @deprecated marks an event still stored but no longer
+// emitted; nothing has to emit it.
+/// Recorded by the old catalogue, before shelving was a command.
+@deprecated
+event BookShelved { tag bookId: BookId, room: string, row: integer }
 event MemberJoined { tag memberId: MemberId, name: string }
+event MemberLeft { tag memberId: MemberId, tag bookIds: BookId[] }
+event BookMoved { tag bookId: BookId, shelf: Shelf }
+// datetime is an RFC 3339 date-time with an offset, duration a length.
+event BookReserved { tag bookId: BookId, tag memberId: MemberId, until: datetime }
 
 // ---- Projections ----
 // A projection folds the events it handles into one value, kept per
@@ -4740,22 +6607,42 @@ projection BookTitle (tag bookId: BookId): string = null {
   on BookAdded => set event.data.title
 }
 
-projection MemberExists (tag memberId: MemberId): boolean = false {
-  on MemberJoined => set true
-}
-
-projection MemberLoanCount (tag memberId: MemberId): integer = 0 {
-  on BookLent => increment 1
-  on BookReturned => decrement 1
+projection BookReservedUntil (tag bookId: BookId): datetime = null {
+  on BookReserved => set event.data.until
 }
 
 projection BookBorrowers (tag bookId: BookId): MemberId[] = [] {
   on BookLent => append event.data.memberId
 }
 
+// A projection may hold a record, replaced whole: an event field of its
+// type, or "{ field: …, … }" naming every required field. A read gives a field
+// of it, BookShelf(bookId).room.
+projection BookShelf (tag bookId: BookId): Shelf = null {
+  on BookShelved => set { room: event.data.room, row: event.data.row }
+  on BookMoved => set event.data.shelf
+}
+
+// A value may be one field of a record-typed property, one hop in.
+projection BookRoom (tag bookId: BookId): string = null {
+  on BookMoved => set event.data.shelf.room
+}
+
 projection MemberHasBook (tag memberId: MemberId, tag bookId: BookId): boolean = false {
   on BookLent => set true
   on BookReturned => set false
+  // "on Event { … }" branches: "if <condition> => <operation>", then
+  // "else if" and "else", one operation each; a chain applies its first
+  // branch that holds. A condition compares event.data.<property> (or a
+  // record's field, event.data.<property>.<field>) with == or != against
+  // one of the projection's tags or a literal, joined with and / or – it
+  // never reads another projection or the state. It filters the fold,
+  // not the query: BookPassedOn names two members, so the projection
+  // reads it for both and the condition tells them apart.
+  on BookPassedOn {
+    if event.data.fromMemberId == memberId => set false
+    else if event.data.toMemberId == memberId => set true
+  }
 
   // A projection's scenarios assert its value after the given events.
   // A tag value given as a literal names its type: MemberId("m1").
@@ -4772,25 +6659,59 @@ untagged projection LoanNumbering: LoanId = "l1" {
   on BookLent => set successor(event.data.loanId)
 }
 
-// A derived projection handles no events: its block holds one
-// expression over other projections, read with this one's own
-// parameters, and it starts from what they start at. It computes a
-// number – a + b, a - b, a * b, min(a, b), max(a, b) – or compares two
-// values, written as a rule is, and holds the boolean. Its query is
-// theirs.
-derived projection MemberLoansLeft (tag memberId: MemberId): integer {
-  5 - MemberLoanCount(memberId)
+// ---- Groups ----
+// A group names projections that share one tag. It owns them: they are
+// declared inside it, lowercase and without a tag header – the group's
+// is theirs. Outside, one is read through the group: Member(memberId).
+// exists in place, or "alias member = Member(memberId)" and then
+// member.exists. A group is a name and nothing more – a read queries
+// only the projection it names.
+@icon("🪪")
+group Member (tag memberId: MemberId) {
+  projection exists: boolean = false {
+    on MemberJoined => set true
+  }
+
+  // Separate ifs all apply, in order: passing a book on to oneself
+  // decrements, then increments.
+  projection loanCount: integer = 0 {
+    on BookLent => increment 1
+    on BookReturned => decrement 1
+    on BookPassedOn {
+      if event.data.fromMemberId == memberId => decrement 1
+      if event.data.toMemberId == memberId => increment 1
+    }
+  }
+
+  // A derived projection handles no events: its block holds one
+  // expression over other projections, and it starts from what they
+  // start at. It computes a number – a + b, a - b, a * b, min(a, b),
+  // max(a, b) – or compares two values, written as a rule is, and holds
+  // the boolean. Its query is theirs. In a group it names its siblings
+  // bare.
+  derived projection loansLeft: integer {
+    5 - loanCount
+  }
 }
 
 // A parameter without "tag" is an argument: a read gives it after the
 // tags, and it narrows nothing. A derived projection compares or
-// computes with it by name, or passes it on to a read.
+// computes with it by name, or passes it on to a read – here, the tag
+// to a projection of a group.
 derived projection MemberCanBorrow (tag memberId: MemberId, books: integer): boolean {
-  MemberLoansLeft(memberId) >= books
+  Member(memberId).loansLeft >= books
 }
 
 derived projection MemberLoansLeftCapped (tag memberId: MemberId): integer {
-  min(MemberLoansLeft(memberId), 3)
+  min(Member(memberId).loansLeft, 3)
+}
+
+// "*" leaves a tag open: MemberHasBook(memberId, *) is every book the
+// member has – every instance not at its initial value, false. It is
+// read inside count, sum, min, max, average, any or all, which may say
+// "where" over value; its query is the bound tags' alone.
+derived projection MemberBooksHeld (tag memberId: MemberId): integer {
+  count(MemberHasBook(memberId, *))
 }
 
 // ---- Commands ----
@@ -4801,6 +6722,12 @@ derived projection MemberLoansLeftCapped (tag memberId: MemberId): integer {
 // "emit" lists each event property: "name" alone takes the parameter
 // of that name, "name: <operand>" anything else.
 // The consistency boundary is derived from the reads; never declare it.
+// Notes are documentation, one per line, on any definition, and change
+// no boundary: @assumption what the brief left open, @external a rule
+// the layer around the commands checks, @unresolved an open question.
+@assumption("A subtitle is never required")
+@external("The ISBN is checked against the national catalogue")
+@unresolved("May a withdrawn book be added again?")
 command AddBook(bookId: BookId, isbn: Isbn, title: string, subtitle?: string) {
   require BookStatus(bookId) == Unknown
     else reject "Book already exists"
@@ -4818,12 +6745,24 @@ command AddBook(bookId: BookId, isbn: Isbn, title: string, subtitle?: string) {
       then BookAdded { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
     }
 
+    // A scenario leaves out what its outcome does not depend on; tags
+    // are always given. Reading a property left out is an error.
     scenario "a book is added once" {
-      given BookAdded { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
-      when AddBook { bookId: "b1", isbn: "978-0", title: "Dune", subtitle: null }
+      given BookAdded { bookId: "b1" }
+      when AddBook { bookId: "b1" }
       then rejected "Book already exists"
     }
   }
+}
+
+// An emission field may build a record whole, "{ field: …, … }": each
+// field any value an emission field takes, an optional one left out –
+// one level, and only in an emission.
+command CatalogueCopy(bookId: BookId, isbn: Isbn) {
+  require BookStatus(bookId) == Unknown
+    else reject "A copy is already in the catalogue"
+
+  emit CopyCatalogued { copy: { bookId, isbn } }
 }
 
 command DonateCopies(donor: string, copies: Copy[]) {
@@ -4838,7 +6777,7 @@ command DonateCopies(donor: string, copies: Copy[]) {
 }
 
 command JoinLibrary(memberId: MemberId, name: string) {
-  require MemberExists(memberId) is false
+  require Member(memberId).exists is false
     else reject "Already a member"
   require not name startsWith " "
     else reject "A name starts with a letter"
@@ -4846,26 +6785,100 @@ command JoinLibrary(memberId: MemberId, name: string) {
   emit MemberJoined { memberId, name }
 }
 
-// "alias" names a read for the rules and emissions below it.
+// "alias" names a read for the rules and emissions below it – of a
+// projection, or of a group, whose projections are read through it.
 command LendBook(bookId: BookId, memberId: MemberId) {
   alias loanNumber = LoanNumbering()
+  alias member = Member(memberId)
   require BookStatus(bookId) == Available
     else reject "Book is not available"
-  require MemberExists(memberId) is true
+  require member.exists is true
     else reject "Not a member"
   require MemberCanBorrow(memberId, 1) is true
     else reject "Too many loans"
   require BookBorrowers(bookId) not contains memberId
     else reject "Borrowed this book before"
+  require all(MemberHasBook(memberId, *) where value is true) is true and MemberBooksHeld(memberId) < 10
+    else reject "Holds too many books"
+  require BookShelf(bookId).room is not empty
+    else reject "Book is not shelved"
 
   emit BookLent { bookId, memberId, loanId: loanNumber }
 }
 
-command ReturnBook(bookId: BookId, memberId: MemberId) {
-  require MemberHasBook(memberId, bookId) is true
-    else reject "Book is not with this member"
+// Steps run top-down. "if <condition> => …" runs its arm only when the
+// condition holds; "else if" and "else" chain arms, of which the first
+// that holds runs. An arm is one "emit" or "reject", or a block { … }.
+// Any rejection refuses the whole command, with no events. Conditions
+// join with "and" and "or" ("and" binds tighter; brackets group). Inside
+// "if damage is not empty" the optional parameter counts as present.
+command ReturnBook(bookId: BookId, memberId: MemberId, damage?: string) {
+  if MemberHasBook(memberId, bookId) is true and damage is not empty => {
+    emit BookReturned { bookId, memberId }
+    emit BookDamaged { bookId, damage }
+  }
+  else if MemberHasBook(memberId, bookId) is true => emit BookReturned { bookId, memberId }
+  else if BookStatus(bookId) == Withdrawn or (BookStatus(bookId) == Unknown and damage is empty) => reject "Book is not in the catalogue"
+  else => reject "Book is not with this member"
+}
 
-  emit BookReturned { bookId, memberId }
+// "for each" emits once per element, in the command's one append: of
+// an open read – every present instance, by its open tag's value, its
+// own as "value" – a list projection or a list parameter. A read by the
+// element is made per element. Its body is "=> emit …", or a block of
+// emits and ifs whose arms each emit or reject; no element emits
+// nothing, and a reject inside refuses the whole command.
+command LeaveLibrary(memberId: MemberId) {
+  require Member(memberId).exists is true
+    else reject "Not a member"
+
+  for each bookId in MemberHasBook(memberId, *) => emit BookReturned { bookId, memberId }
+
+  // "list(…)" is the open tag's values, as a list: here, every book
+  // the member still has.
+  emit MemberLeft { memberId, bookIds: list(MemberHasBook(memberId, *)) }
+}
+
+// "count(xs)" is a value too: a list parameter's, a list projection's
+// or list(…)'s length, computed with and compared on either side.
+command WithdrawBooks(bookIds: BookId[]) {
+  require count(bookIds) <= 10
+    else reject "Ten books at most"
+
+  for each bookId in bookIds {
+    if BookStatus(bookId) == Available => emit BookWithdrawn { bookId }
+    else if BookStatus(bookId) == Lent => reject "A book is still lent"
+  }
+}
+
+// Time is data: the time a command acts at is a parameter, "now", and a
+// datetime moves by a duration – 30s, 15m, 24h, 7d, 1h30m. A rule's
+// sides and an emitted value add and subtract, left to right.
+command ReserveBook(bookId: BookId, memberId: MemberId, hold: HoldTime, now: datetime) {
+  require BookReservedUntil(bookId) is empty or BookReservedUntil(bookId) < now
+    else reject "Book is reserved"
+  require hold <= 7d
+    else reject "A hold lasts a week at most"
+  require Member(memberId).loanCount + 1 <= 5
+    else reject "Too many loans"
+
+  emit BookReserved { bookId, memberId, until: now + hold }
+}
+
+command PassOnBook(bookId: BookId, fromMemberId: MemberId, toMemberId: MemberId) {
+  require MemberHasBook(fromMemberId, bookId) is true
+    else reject "Book is not with this member"
+  require Member(toMemberId).exists is true
+    else reject "Not a member"
+
+  emit BookPassedOn { bookId, fromMemberId, toMemberId }
+}
+
+command MoveBook(bookId: BookId, shelf: Shelf) {
+  require BookRoom(bookId) != shelf.room
+    else reject "Book is in that room already"
+
+  emit BookMoved { bookId, shelf }
 }
 
 command WithdrawBook(bookId: BookId) {
@@ -4983,17 +6996,28 @@ const SOURCE_REFERENCE_EXAMPLE_SLUG = 'course-simple';
 
 const SOURCE_REFERENCE_GOTCHAS = `## Gotchas
 
-- Value types are nominal. An emitted value and a read's tag take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, and an integer does not fill a Seats property. Literals fit any matching base type. A read gives the type its projection declares, so declare the type the read's value goes on to fill.
+- Value types are nominal. An emitted value, a read's tag and what a handler sets take their declared type exactly: a CourseId does not fill a string property, a string parameter does not read a CourseId tag, an integer does not fill a Seats property, and set event.data.customerId does not fill a projection holding a ShareInviteeId. Literals fit any matching base type. There is no cast. A read gives the type its projection declares, so declare the type the read's value goes on to fill. Role tag types (ShareOwnerId, ShareInviteeId) are not needed: tag the event by CustomerId twice and let the handler pick the role with if event.data.invitee == customerId.
 - An event property of a tag type must be one of the event's tags. So a command that reads by an identifier and stores it on an event needs that event tagged by it.
-- A handler has no condition: it runs for every event of its type that carries the projection's tags. When the change depends on the case, the event holds the amount for each case, with 0 where nothing changes.
-- A read needs a value for each tag, so an optional parameter cannot read one. Write one command with the read and one without.
+- A handler runs for every event of its type that carries the projection's tags; its conditions only choose what it does with one. An event naming two values of a projection's tag type (from and to, owner and invitee) reaches both instances, so its handler says which side it is on: on MoneyTransferred { if event.data.from == accountId => decrement event.data.amount  if event.data.to == accountId => increment event.data.amount }. A condition reads only the event and the projection's tags – what depends on another projection's value is the command's to decide, onto the event.
+- A read needs a value for each tag, and is made only when a step reached needs it. So read by an optional parameter, or emit it into a required property, inside if x is not empty => … or after require x is not empty – not in a command of its own.
+- Cases that end differently are arms of one command, not one command each: if … => emit A { … }  else if … => emit B { … }  else => reject "…". Each arm that emits and each message owes a scenario.
 - "tag x?: T" is allowed: an event whose x is null carries no such tag, and a projection tagged by T does not see it.
+- An open read P(x, *) collects the instances whose value is not the projection's initial one, so setting the initial value removes one: count(ShareActive(contractId, *)) counts active shares. Where "ever existed" matters, the value never returns to the initial one. A running total kept in its own projection – and a field added to an event so a handler can subtract it again – is a sum(…) over the per-instance values instead.
+- An event that stores the identifiers of many instances as a list takes them from the open read itself: emit OrderCancelled { orderId, lineIds: list(LineOpen(orderId, *)) }. list(…) takes a read with one tag open and gives that tag's values, in the order each instance first appeared. count(xs) is a value wherever one goes, so count(LineOpen(orderId, *)) == count(lineIds) compares two counts – no loop rejecting in both directions.
+- A where compares value with parameters, aliases already bound and literals: alias partner = Partner(customerId) then count(Holder(customerId, *) where value == partner). A projection tagged by both parties only to make that comparison is not needed.
+- A handler takes a record's field one hop into the event, as a tag path does: on SignedUp => set event.data.signUp.emailAddress. A record projection read as .emailAddress only to reach it is not needed.
+- A projection holding a record is set whole by every handler. One that would set its fields one at a time is several projections, one per fact.
+- A scenario gives only what its outcome depends on: given CustomerWasAdded { customerId: "cu1" } where the name and email do not matter. Tags are always given. Reading a property the scenario left out is an error naming it, which is how a scenario reveals what it depends on; a then compares only the fields it lists. The values it does give are held to their types' constraints, so a value outside a pattern cannot be given at all – a require on it is shown with a value the type admits.
+- Time is data, never a clock: a command that needs the time takes now: datetime, and what expires stores its end – emit SeatsWereReserved { …, expiresAt: now + 15m } – so a rule reads it against now: sum(Reservation(courseId, *).seats where value.expiresAt > now). Expiring something at a time is a job outside the model calling a command, not a construct. A datetime needs its offset; one without is no value.
+- A rule on data the model does not hold – a block list, a payment provider, what the caller may do – is checked by the layer around the commands before it dispatches: write it as @external("…") on the command, not as a require on a parameter carrying the result. What the brief left open is @assumption("…"), or @unresolved("…") while nobody has answered; check counts the unresolved.
+- An event still stored but no longer emitted is @deprecated; any other event no command emits is advised. Personal data is marked on its type, @sensitive – never on a property – and the store hashes a sensitive tag; there are no hash or string functions.
+- A cascade – deleting a customer ends each of its shares, marking notifications read marks each one – is one command with a for each, not a reaction chain or one command per element: for each shareId in ShareActiveAsOwner(customerId, *) => emit ContractShareEnded { … }. Skip an element with if, rather than refusing the command over it.
 `;
 
-const SOURCE_REFERENCE_UNOFFERED = 'Not offered to agents: entities, lifecycles, scripted projections, '
-  + 'guarded emissions (emit … when …), optional reads (alias x? = …), excluding '
-  + 'and currentValue. A text or '
-  + 'definition that adds one is refused. A model that already uses them shows them in get_model_source; keep those parts as they are.';
+const SOURCE_REFERENCE_UNOFFERED = 'Not in the definition tools\' schemas: the arguments a read passes, '
+  + 'such as a group\'s projection read through an alias (x.p(a: …)). A model that already uses them shows them '
+  + 'in get_model_source; keep those parts as they are. Gone since 11.0, and refused wherever they are written: '
+  + 'scripted projections, currentValue, guarded emissions (emit … when …) and optional reads (alias x? = …).';
 
 function sourceLanguageReference() {
   return [
@@ -5012,28 +7036,28 @@ function sourceLanguageReference() {
 // ============================================================
 
 const SOURCE_KEYWORDS = [
-  'model', 'type', 'tag', 'enum', 'record', 'event', 'entity', 'lifecycle', 'untagged', 'derived', 'scripted',
-  'projection', 'min', 'max', 'initialState', 'exposes', 'on', 'set', 'increment', 'decrement', 'append',
-  'remove', 'command', 'alias', 'each', 'excluding', 'require', 'emit', 'when', 'and', 'not', 'is',
+  'model', 'type', 'tag', 'enum', 'record', 'event', 'group', 'untagged', 'derived',
+  'projection', 'min', 'max', 'on', 'set', 'increment', 'decrement', 'append',
+  'remove', 'command', 'alias', 'each', 'require', 'emit', 'when', 'and', 'or', 'not', 'is', 'if',
   'empty', 'in', 'contains', 'containsAny', 'startsWith', 'endsWith', 'count', 'successor',
-  'currentValue', 'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
-  'else', 'reject',
+  'sum', 'average', 'any', 'all', 'list', 'where',
+  'json', 'true', 'false', 'null', 'scenarios', 'scenario', 'given', 'then', 'nothing', 'rejected',
+  'else', 'reject', 'for',
 ];
 
 // The words a block's statements start with, coloured apart so the
 // shape of a command – what it reads, requires, emits – shows at a
 // glance.
-const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'when', 'on', 'scenarios', 'scenario', 'given', 'then'];
+const SOURCE_STATEMENTS = ['alias', 'require', 'emit', 'if', 'for', 'when', 'on', 'scenarios', 'scenario', 'given', 'then'];
 
 const SOURCE_MONARCH = {
   // Names may be written in any script: `\p{…}` above needs the `u` flag.
   unicode: true,
   keywords: SOURCE_KEYWORDS,
   statements: SOURCE_STATEMENTS,
-  baseTypes: [...SOURCE_BASE_TYPES],
+  baseTypes: [...SOURCE_BASE_TYPES, ...Object.keys(SOURCE_TIME_FORMATS)],
   tokenizer: {
     root: [
-      [/```/, { token: 'string.code', next: '@code', nextEmbedded: 'javascript' }],
       [/@[\p{L}_][\p{L}\p{M}\p{Nd}_]*/, 'annotation'],
       [/event(?=\.data\.)/, 'keyword'],
       [/\p{Lu}[\p{L}\p{M}\p{Nd}_]*/, 'type.identifier'],
@@ -5041,15 +7065,12 @@ const SOURCE_MONARCH = {
       { include: '@whitespace' },
       [/[{}()[\]]/, '@brackets'],
       [/=>|==|!=|<=|>=|[<>=?:.,]/, 'delimiter'],
+      // A duration, 15m or 1h30m (11.0), before the number it starts with.
+      [/\d+[dhms](\d+[dhms])*(?![\p{L}\p{Nd}_])/, 'number.duration'],
       [/\d+(\.\d+)?([eE][+-]?\d+)?/, 'number'],
       [/[-+*]/, 'operator'],
       [/"([^"\\]|\\.)*$/, 'string.invalid'],
       [/"/, 'string', '@string'],
-    ],
-    code: [
-      [/```/, { token: 'string.code', next: '@pop', nextEmbedded: '@pop' }],
-      [/[^`]+/, ''],
-      [/`/, ''],
     ],
     string: [
       [/[^\\"]+/, 'string'],

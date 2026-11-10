@@ -53,7 +53,7 @@ async function call(name, args) {
 (async () => {
   await check('every agreed tool is registered, each with a schema', () => {
     const kinds = [
-      'event_definition', 'projection_definition',
+      'group_definition', 'event_definition', 'projection_definition',
       'command_definition', 'custom_type_definition', 'scenario_definition',
       'projection_scenario_definition',
     ];
@@ -62,6 +62,7 @@ async function call(name, args) {
       'derive_boundary', 'evaluate_command', 'list_problems',
       'start_model', 'remove_definition', 'rename_definition', 'rename_member',
       'drive_command', 'get_sandbox', 'reset_sandbox',
+      'create_group', 'add_group_projection', 'move_projection_into_group', 'move_projection_out_of_group',
       ...kinds.map((k) => 'add_' + k), ...kinds.map((k) => 'update_' + k),
     ];
     eq([...registered.keys()].sort(), names.slice().sort(), 'tool names');
@@ -95,7 +96,7 @@ async function call(name, args) {
   await check('each add/update tool carries its kind\'s full schema, inlined', () => {
     const add = registered.get('add_command_definition').inputSchema;
     eq(Object.keys(add.properties).includes('boundary'), true, 'the real shape, not a free body');
-    eq(typeof add.properties.conditions.items, 'object', 'nested shapes spelled out in place');
+    eq(typeof add.properties.steps.items, 'object', 'nested shapes spelled out in place');
     const flat = JSON.stringify(add);
     eq(flat.includes('"$ref"') || flat.includes('"$defs"'), false,
       'nothing referencing anything – the consumers cannot resolve references');
@@ -108,25 +109,29 @@ async function call(name, args) {
 
   await check('nothing experimental is offered in any tool\'s schema', () => {
     const offered = (name) => registered.get(name).inputSchema.properties;
-    for (const name of ['remove_definition', 'rename_definition', 'rename_member']) {
-      eq(offered(name).kind.enum.includes('entity-definition'), false, `${name} offers no entities`);
+    for (const name of ['remove_definition', 'rename_definition']) {
+      eq(offered(name).kind.enum.includes('group-definition'), true, `${name} offers groups – they are not experimental`);
     }
+    const group = offered('add_group_definition');
+    eq('script' in group.projections.items.properties, false, 'no scripted grouped projections');
+    eq('script' in offered('add_group_projection'), false, 'nor through add_group_projection');
     const command = offered('add_command_definition');
     eq('feature' in command, true, 'feature groups are not experimental');
     eq('icon' in command, true, 'a command\'s icon is not experimental');
-    eq(Object.keys(command.boundary.items.properties || {}).includes('entity'), false, 'a binding is a projection read');
-    eq('when' in command.publishes.items.properties, false, 'no guarded emissions');
+    eq(JSON.stringify(command.boundary).includes('"isOptional"'), false, 'no optional reads');
+    const emission = command.steps.items.oneOf.find((shape) => shape.properties && 'name' in shape.properties);
+    eq('when' in emission.properties, false, 'no guarded emissions');
     const projection = offered('add_projection_definition');
     eq('derived' in projection, true, 'derived projections are offered');
     eq(projection.derived.properties.operator.enum, ['add', 'subtract', 'multiply', 'min', 'max'],
       'computing ones too');
     eq('script' in projection, false, 'no scripted projections');
     eq(JSON.stringify(projection).includes('"code"'), false, 'nor code handlers');
-    eq('arguments' in offered('add_command_definition').boundary.items.properties, false,
-      'nor the arguments a read passes a script');
+    const bindings = offered('add_command_definition').boundary.items.oneOf;
+    eq(bindings.map((b) => Object.keys(b.properties).sort()),
+      [['alias', 'group', 'tags'], ['alias', 'projection', 'tags']],
+      'a binding reads a group or a projection – with no optional read, nor the arguments a read passes');
     eq('icon' in offered('add_event_definition'), true, 'nor is an event\'s');
-    eq(JSON.stringify(registered.get('add_projection_definition').inputSchema).includes('"currentValue"'), false,
-      'no currentValue operand');
   });
 
   await check('the model language is there before any model is', async () => {
@@ -153,7 +158,7 @@ async function call(name, args) {
   // The rest runs against the first predefined model, opened the way
   // the page opens one – stored, not held.
   store.clear();
-  const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities'));
+  const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple'));
   sandbox.setActiveModelId(id);
   const model = () => projectState()[id];
 
@@ -167,7 +172,7 @@ async function call(name, args) {
   await check('derive_boundary reports reads and writes for a command', async () => {
     const { value, isError } = await call('derive_boundary', { commandName: 'DefineCourse' });
     eq(isError, false, 'not an error');
-    eq(value.items.map((i) => i.alias), ['course'], 'the one binding');
+    eq(value.items.map((i) => i.projection), ['CourseStatus'], 'the one read');
     eq(value.writes.length > 0, true, 'and what publishing writes');
   });
 
@@ -267,8 +272,8 @@ async function call(name, args) {
     await call('add_command_definition', {
       name: 'NoteProbe',
       properties: [{ name: 'note', propertyType: 'string', isOptional: true, isList: false }],
-      boundary: [], conditions: [],
-      publishes: [{ name: 'ProbeNoted', parameters: { note: { parameterName: 'note' } } }],
+      boundary: [],
+      steps: [{ name: 'ProbeNoted', parameters: { note: { parameterName: 'note' } } }],
     });
     const { value, isError } = await call('evaluate_command', { commandName: 'NoteProbe', arguments: {} });
     eq(isError, false, 'unset is a call, not a broken one');
@@ -304,8 +309,8 @@ async function call(name, args) {
   await check('an accepted edit that strands a reference echoes the advisory', async () => {
     const { isError, text } = await call('add_command_definition', {
       name: 'ProbeCommand',
-      properties: [], boundary: [], conditions: [],
-      publishes: [{ name: 'NoSuchEvent', parameters: {} }],
+      properties: [], boundary: [],
+      steps: [{ name: 'NoSuchEvent', parameters: {} }],
     });
     eq(isError, false, 'accepted, not refused – the demoted validations');
     eq(text.includes('Advisories introduced by this change'), true, 'the result says so');
@@ -368,6 +373,220 @@ async function call(name, args) {
     });
     eq(isError, false, 'not an error');
     eq('AgentProbeLogged' in model()['event-definitions'], false, 'gone');
+  });
+
+  // Groups: not experimental, so an agent makes, fills and moves them
+  // through the same command functions the page's gestures call.
+  const commandsSay = () => JSON.stringify(model()['command-definitions']);
+  const subscribe = (events) => call('evaluate_command', {
+    commandName: 'SubscribeStudentToCourse',
+    arguments: { courseId: 'c1', studentId: 's1' },
+    givenEvents: events,
+  });
+  const defined = [
+    { type: 'CourseDefined', data: { courseId: 'c1', capacity: 0 } },
+    { type: 'StudentRegistered', data: { studentId: 's1' } },
+  ];
+
+  await check('create_group starts an empty group, its tag type made alongside', async () => {
+    const { isError, text } = await call('create_group', {
+      name: 'Probe', tag: { name: 'probeId', tagType: 'ProbeId' }, icon: '🧪',
+    });
+    eq(isError, false, text);
+    eq(model()['group-definitions'].Probe,
+      { icon: '🧪', tag: { name: 'probeId', tagType: 'ProbeId' }, projections: [] }, 'stored empty');
+    eq(model()['custom-type-definitions'].ProbeId, { schema: { type: 'string' }, isTag: true }, 'the tag type made');
+    eq(text.includes('Advisories introduced by this change'), true, 'an empty group is said to be one');
+    await call('remove_definition', { kind: 'group-definition', name: 'Probe' });
+    await call('remove_definition', { kind: 'custom-type-definition', name: 'ProbeId' });
+    eq('Probe' in model()['group-definitions'], false, 'and removed like any definition');
+  });
+
+  await check('create_group refuses a name a projection already reads by', async () => {
+    const { isError, text } = await call('create_group', {
+      name: 'CourseStatus', tag: { name: 'courseId', tagType: 'CourseId' },
+    });
+    eq(isError, true, 'refused');
+    eq(text.includes('already exists'), true, text);
+  });
+
+  await check('move_projection_into_group renames it and rewrites every read', async () => {
+    await call('create_group', { name: 'Course', tag: { name: 'courseId', tagType: 'CourseId' } });
+    const before = (await subscribe(defined)).value;
+    const { value, isError, text } = await call('move_projection_into_group', {
+      projection: 'CourseCapacity', group: 'Course',
+    });
+    eq(isError, false, text);
+    eq(text.split('\n')[0], 'Course.capacity', 'answers the name it has now');
+    eq('CourseCapacity' in model()['projection-definitions'], false, 'no longer top-level');
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity'], 'owned by the group');
+    eq('tags' in model()['group-definitions'].Course.projections[0], false, 'without a tag of its own');
+    eq(commandsSay().includes('"CourseCapacity"'), false, 'no read left on the old name');
+    eq(commandsSay().includes('"group":"Course"') && commandsSay().includes('"property":"capacity"'), true,
+      'every read on the new one, through an alias of the group');
+    const after = (await subscribe(defined)).value;
+    eq([after.outcome, after.failedRule && after.failedRule.rejection],
+      [before.outcome, before.failedRule && before.failedRule.rejection], 'the model decides as before');
+    eq(before.failedRule.rejection, 'Course is full', '(a course of capacity 0 is full)');
+    const { text: source } = await call('get_model_source');
+    eq(source.includes('group Course (tag courseId: CourseId) {'), true, 'the code shows the group');
+    eq(source.includes('alias course = Course(courseId)') && source.includes('course.capacity'), true,
+      'and the read through it');
+  });
+
+  await check('move_projection_into_group refuses a projection the group\'s tag does not read', async () => {
+    const { isError, text } = await call('move_projection_into_group', {
+      projection: 'StudentSubscriptionCount', group: 'Course',
+    });
+    eq(isError, true, 'refused');
+    eq(text.includes('tagged by studentId: StudentId'), true, text);
+    eq('StudentSubscriptionCount' in model()['projection-definitions'], true, 'left where it was');
+  });
+
+  await check('a grouped projection is edited by its qualified name', async () => {
+    const body = { ...model()['group-definitions'].Course.projections[0] };
+    delete body.name;
+    const updated = await call('update_projection_definition', { name: 'Course.capacity', ...body, initialValue: 5 });
+    eq(updated.isError, false, updated.text);
+    eq(model()['group-definitions'].Course.projections[0].initialValue, 5, 'stored on its group');
+    eq((await subscribe([])).value.failedRule.rejection, 'Course is not active', 'read through the group');
+    const renamed = await call('rename_member', {
+      kind: 'group-definition', definitionName: 'Course', memberKind: 'projection',
+      previousName: 'capacity', newName: 'seats',
+    });
+    eq(renamed.isError, false, renamed.text);
+    eq(commandsSay().includes('"property":"seats"') && !commandsSay().includes('"property":"capacity"'), true,
+      'reads follow a renamed local name');
+    const back = await call('rename_definition', {
+      kind: 'projection-definition', previousName: 'Course.seats', newName: 'capacity',
+    });
+    eq(back.isError, false, back.text);
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity'], 'renamed within its group');
+  });
+
+  await check('a branched handler is offered, and lands as written', async () => {
+    const schema = registered.get('update_projection_definition').inputSchema;
+    eq(Object.keys(schema.properties.handlers.items.properties).includes('steps'), true, 'steps beside operation');
+    const body = { ...model()['group-definitions'].Course.projections.find((p) => p.name === 'capacity') };
+    delete body.name;
+    const branched = { event: 'CourseDefined', steps: [{
+      branches: [{ condition: { leftHandSide: { eventProperty: 'capacity' }, predicate: 'equals', rightHandSide: 0 },
+        operation: 'set', value: 1 }],
+      otherwise: { operation: 'set', value: { eventProperty: 'capacity' } },
+    }] };
+    const updated = await call('update_projection_definition', {
+      name: 'Course.capacity', ...body, handlers: [branched, ...body.handlers.filter((h) => h.event !== 'CourseDefined')],
+    });
+    eq(updated.isError, false, updated.text);
+    eq(model()['group-definitions'].Course.projections.find((p) => p.name === 'capacity').handlers[0], branched, 'stored as sent');
+    const restored = await call('update_projection_definition', { name: 'Course.capacity', ...body });
+    eq(restored.isError, false, restored.text);
+  });
+
+  await check('an open read in a collection function and a record value are offered, and land as written', async () => {
+    const schema = registered.get('add_projection_definition').inputSchema;
+    eq(/collect/.test(JSON.stringify(schema.properties.derived)), true, 'a collection function among a derived side\'s shapes');
+    eq(/"record"/.test(JSON.stringify(schema.properties.handlers)), true, 'a record among a handler\'s values');
+    const tags = [{ name: 'courseId', tagType: 'CourseId' }, { name: 'studentId', tagType: 'StudentId' }];
+    const added = await call('add_projection_definition', { name: 'Enrolled', tags, valueType: 'boolean', isList: false,
+      initialValue: false, handlers: [{ event: 'StudentSubscribedToCourse', operation: 'set', value: true }] });
+    eq(added.isError, false, added.text);
+    const derived = { leftHandSide: { collect: 'count', read: { projection: 'Enrolled',
+      tags: { courseId: { parameterName: 'courseId' }, studentId: { open: true } } },
+    where: { leftHandSide: { instanceValue: true }, predicate: 'isTrue' } } };
+    const counted = await call('add_projection_definition', { name: 'EnrolledCount', tags: tags.slice(0, 1),
+      valueType: 'integer', isList: false, derived });
+    eq(counted.isError, false, counted.text);
+    eq(model()['projection-definitions'].EnrolledCount.derived, derived, 'stored as sent');
+    eq(sandbox.modelAdvisories(model()).filter((a) => /Enrolled/.test(a.name)), [], 'advisory-clean');
+    for (const name of ['EnrolledCount', 'Enrolled']) await call('remove_definition', { kind: 'projection-definition', name });
+  });
+
+  await check('a for each is offered, lands as written and evaluates per element', async () => {
+    const schema = registered.get('add_command_definition').inputSchema;
+    eq(/forEach/.test(JSON.stringify(schema.properties.steps)), true, 'a loop among a command\'s steps');
+    const one = (name, propertyType, isList = false) => ({ name, propertyType, isOptional: false, isList });
+    const steps = [{ forEach: ['courseId'], in: { parameterName: 'courseIds' }, steps: [
+      { name: 'StudentSubscribedToCourse', parameters: { courseId: { parameterName: 'courseId' }, studentId: { parameterName: 'studentId' } } },
+    ] }];
+    const added = await call('add_command_definition', { name: 'SubscribeToAll',
+      properties: [one('studentId', 'StudentId'), one('courseIds', 'CourseId', true)], boundary: [], steps });
+    eq(added.isError, false, added.text);
+    eq(model()['command-definitions'].SubscribeToAll.steps, steps, 'stored as sent');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'SubscribeToAll'), [], 'advisory-clean');
+    const { value } = await call('evaluate_command', { commandName: 'SubscribeToAll', arguments: { studentId: 's1', courseIds: ['c2', 'c1'] } });
+    eq(value.events.map((e) => e.data.courseId), ['c2', 'c1'], 'one event per element, in order');
+    await call('remove_definition', { kind: 'command-definition', name: 'SubscribeToAll' });
+  });
+
+  await check('time is offered: datetime and duration types, a duration literal and arithmetic', async () => {
+    const schema = registered.get('add_command_definition').inputSchema;
+    const text = JSON.stringify(schema);
+    eq(['"datetime"', '"duration"', 'leftHandSide', '"subtract"'].every((word) => text.includes(word)), true, 'in the command schema');
+    const one = (name, propertyType) => ({ name, propertyType, isOptional: false, isList: false });
+    const event = await call('add_event_definition', { name: 'CourseScheduled', tags: ['courseId'],
+      properties: [one('courseId', 'CourseId'), one('startsAt', 'datetime'), one('length', 'duration')] });
+    eq(event.isError, false, event.text);
+    const steps = [
+      { condition: { leftHandSide: { parameterName: 'length' }, predicate: 'lessThanOrEquals', rightHandSide: { duration: 'PT8H' } }, rejection: 'Too long' },
+      { name: 'CourseScheduled', parameters: { courseId: { parameterName: 'courseId' },
+        startsAt: { operator: 'add', leftHandSide: { parameterName: 'now' }, rightHandSide: { duration: 'P1D' } }, length: { parameterName: 'length' } } },
+    ];
+    const added = await call('add_command_definition', { name: 'ScheduleCourse',
+      properties: [one('courseId', 'CourseId'), one('length', 'duration'), one('now', 'datetime')], boundary: [], steps });
+    eq(added.isError, false, added.text);
+    eq(model()['command-definitions'].ScheduleCourse.steps, steps, 'stored as sent');
+    eq(sandbox.modelAdvisories(model()).filter((a) => ['ScheduleCourse', 'CourseScheduled'].includes(a.name)), [], 'advisory-clean');
+    const { value } = await call('evaluate_command', { commandName: 'ScheduleCourse',
+      arguments: { courseId: 'c1', length: 'PT2H', now: '2026-01-01T10:00:00+01:00' } });
+    eq(value.events[0].data.startsAt, '2026-01-02T09:00:00Z', 'a day on, in UTC');
+    await call('remove_definition', { kind: 'command-definition', name: 'ScheduleCourse' });
+    await call('remove_definition', { kind: 'event-definition', name: 'CourseScheduled' });
+  });
+
+  await check('add_group_projection adds one under its local name, read by the group\'s tag', async () => {
+    const { isError, text } = await call('add_group_projection', {
+      group: 'Course', name: 'archived', valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'CourseArchived', operation: 'set', value: true }],
+    });
+    eq(isError, false, text);
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity', 'archived'], 'stored in the group');
+    const viaKind = await call('add_projection_definition', {
+      name: 'Course.defined', valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'CourseDefined', operation: 'set', value: true }],
+    });
+    eq(viaKind.isError, false, viaKind.text);
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity', 'archived', 'defined'],
+      'add_projection_definition with a qualified name lands there too');
+    const twice = await call('add_group_projection', {
+      group: 'Course', name: 'archived', valueType: 'boolean', initialValue: false, handlers: [],
+    });
+    eq(twice.isError, true, 'a local name is taken once');
+    const removed = await call('remove_definition', { kind: 'projection-definition', name: 'Course.defined' });
+    eq(removed.isError, false, removed.text);
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity', 'archived'], 'removed from its group');
+  });
+
+  await check('a grouped projection that is scripted is refused', async () => {
+    const { isError, text } = await call('add_group_projection', {
+      group: 'Course', name: 'scripted', valueType: 'integer', isList: false,
+      script: { initialState: 0 }, handlers: [{ event: 'CourseDefined', code: 'state + 1' }],
+    });
+    eq(isError, true, 'refused');
+    eq(text.includes('Projection "Course.scripted" is scripted – 11.0 has no scripted projections.'), true, text);
+    eq(model()['group-definitions'].Course.projections.length, 2, 'not stored');
+  });
+
+  await check('move_projection_out_of_group gives it back its tag and its reads', async () => {
+    const { value, isError, text } = await call('move_projection_out_of_group', { projection: 'Course.capacity' });
+    eq(isError, false, text);
+    eq(text.split('\n')[0], 'CourseCapacity', 'the name it has now');
+    eq(model()['projection-definitions'].CourseCapacity.tags, [{ name: 'courseId', tagType: 'CourseId' }], 'tagged again');
+    eq(commandsSay().includes('"Course.capacity"'), false, 'no read left on the grouped name');
+    eq((await subscribe(defined)).value.failedRule.rejection, 'Course is full', 'decides as before');
+    const removed = await call('remove_definition', { kind: 'group-definition', name: 'Course' });
+    eq(removed.isError, false, removed.text);
+    eq('Course' in model()['group-definitions'], false, 'the group goes, with what it owned');
   });
 
   await check('start_model opens a fresh, empty model', async () => {
@@ -494,6 +713,25 @@ async function call(name, args) {
     eq(stored.then, { outcome: 'rejected', events: [], rejection: 'Book already exists' }, 'recorded');
   });
 
+  await check('a record built in an emission, and an optional field, are offered and land as written', async () => {
+    const schema = registered.get('add_command_definition').inputSchema;
+    eq(/"record"/.test(JSON.stringify(schema.properties.steps)), true, 'a record among an emission field\'s values');
+    eq(/isOptional/.test(JSON.stringify(registered.get('add_custom_type_definition').inputSchema.properties.properties)), true, 'an optional field offered');
+    const source = `model "Shelves"
+tag type BookId = string
+record Shelf { room: string, row?: integer }
+event BookMoved { tag bookId: BookId, shelf: Shelf }
+command MoveBook(bookId: BookId, room: string) {
+  emit BookMoved { bookId, shelf: { room } }
+}
+`;
+    const { value, isError, text } = await call('start_model', { name: 'Shelves', source });
+    eq(isError, false, text);
+    eq(projectState()[value.id]['command-definitions'].MoveBook.steps[0].parameters.shelf, { record: { room: { parameterName: 'room' } } }, 'stored');
+    const run = await call('evaluate_command', { commandName: 'MoveBook', arguments: { bookId: 'b1', room: 'A' } });
+    eq(run.value.events[0].data.shelf, { room: 'A' }, 'built, the optional field left out');
+  });
+
   await check('start_model without code points the agent at the language', async () => {
     const { value } = await call('start_model', { name: 'Empty Again' });
     eq(value.next.includes('get_model_language') && value.next.includes('apply_model_source'), true, value.next);
@@ -507,46 +745,42 @@ async function call(name, args) {
     eq(modelCount(), before, 'no empty model left behind');
   });
 
-  await check('code adding an experimental construct is refused, naming its line', async () => {
+  await check('code saying what 11.0 removed is refused, naming its line', async () => {
     const before = modelCount();
-    const entity = LIBRARY + '\nentity Book (tag bookId: BookId) {}';
-    const started = await call('start_model', { name: 'Entities', source: entity });
+    const scripted = LIBRARY + [
+      '',
+      'group Book (tag bookId: BookId) {',
+      '  scripted projection adds: integer {',
+      '    initialState 0',
+      '    on BookAdded => ```state + 1```',
+      '  }',
+      '}',
+    ].join('\n');
+    const started = await call('start_model', { name: 'Scripted', source: scripted });
     eq(started.isError, true, 'refused when starting');
-    eq(started.text.includes('- line 10: Book uses entities'), true, started.text);
+    eq(started.text.includes('- line 11, column 3: "scripted" is gone'), true, started.text);
     eq(modelCount(), before, 'and nothing created');
     await call('start_model', { name: 'Guards', source: LIBRARY });
     const guarded = swap(LIBRARY, '  emit BookAdded { bookId }', '  emit BookAdded { bookId } when BookKnown(bookId) is false');
     const applied = await call('apply_model_source', { source: guarded });
     eq(applied.isError, true, 'refused when applying');
-    eq(applied.text.includes('- line 5: AddBook uses guarded emissions'), true, applied.text);
+    eq(/- line 8, column 29: "when" on an emission is gone/.test(applied.text), true, applied.text);
   });
 
-  await check('a definition adding an experimental construct is refused', async () => {
+  await check('a definition saying what 11.0 removed is refused', async () => {
     const { isError, text } = await call('add_command_definition', {
       name: 'ProbeGuarded',
       properties: [{ name: 'bookId', propertyType: 'BookId', isOptional: false, isList: false }],
-      boundary: [], conditions: [],
-      publishes: [{
+      boundary: [],
+      steps: [{
         name: 'BookAdded', parameters: { bookId: { parameterName: 'bookId' } },
         when: [{ leftHandSide: { parameterName: 'bookId' }, predicate: 'isNotEmpty' }],
       }],
     });
     eq(isError, true, 'refused');
-    eq(text.includes('ProbeGuarded uses guarded emissions'), true, text);
+    eq(text.includes('Command "ProbeGuarded" guards its emission of "BookAdded" (when …) – 11.0 has no guarded emissions.'),
+      true, text);
     eq('ProbeGuarded' in projectState()[sandbox.activeModelId()]['command-definitions'], false, 'not stored');
-  });
-
-  await check('a model already using experimental constructs stays editable', async () => {
-    const entitiesId = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities'));
-    sandbox.setActiveModelId(entitiesId);
-    const { text: source } = await call('get_model_source');
-    eq(source.includes('entity Course'), true, 'shown as stored');
-    const edited = swap(source, '"Course already exists"', '"Course was already defined"');
-    const applied = await call('apply_model_source', { source: edited });
-    eq(applied.isError, false, applied.text);
-    const command = projectState()[entitiesId]['command-definitions'].DefineCourse;
-    const updated = await call('update_command_definition', { name: 'DefineCourse', ...command });
-    eq(updated.isError, false, 'an entity binding it already had is kept: ' + updated.text);
   });
 
   await check('an agent edit is one undo step of its own', async () => {

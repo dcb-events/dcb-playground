@@ -1,6 +1,6 @@
 {
-  "$schema": "https://dcb.events/schemas/model/v10.json",
-  "dcbModelVersion": "10.0",
+  "$schema": "https://dcb.events/schemas/model/v11.json",
+  "dcbModelVersion": "11.0",
   "name": "Course Example (simple)",
   "customTypeDefinitions": [
     {
@@ -127,7 +127,7 @@
       ]
     }
   ],
-  "entityDefinitions": [],
+  "groupDefinitions": [],
   "projectionDefinitions": [
     {
       "name": "CourseStatus",
@@ -282,24 +282,24 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "CourseStatus",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseStatus",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "enumMember": "NonExistent"
             }
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "NonExistent"
-          },
           "rejection": "Course already exists"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "CourseDefined",
           "parameters": {
@@ -330,55 +330,59 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "CourseStatus",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseStatus",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "enumMember": "Existent"
             }
-          },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Existent"
           },
           "rejection": "Course is not active"
         },
         {
-          "leftHandSide": {
-            "projection": "CourseSubscriptionCount",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseSubscriptionCount",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
+            },
+            "predicate": "lessThanOrEquals",
+            "rightHandSide": {
+              "parameterName": "newCapacity"
             }
-          },
-          "predicate": "lessThanOrEquals",
-          "rightHandSide": {
-            "parameterName": "newCapacity"
           },
           "rejection": "Course has more subscriptions than that"
         },
         {
-          "leftHandSide": {
-            "projection": "CourseCapacity",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseCapacity",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
-            }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "parameterName": "newCapacity"
+            },
+            "negate": true
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "parameterName": "newCapacity"
-          },
-          "negate": true,
           "rejection": "Capacity is unchanged"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "CourseCapacityChanged",
           "parameters": {
@@ -403,24 +407,24 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "CourseStatus",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseStatus",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "enumMember": "Existent"
             }
           },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Existent"
-          },
           "rejection": "Course is not active"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "CourseArchived",
           "parameters": {
@@ -448,73 +452,79 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "CourseStatus",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseStatus",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "enumMember": "Existent"
             }
-          },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Existent"
           },
           "rejection": "Course is not active"
         },
         {
-          "leftHandSide": {
-            "projection": "CourseSubscriptionCount",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseSubscriptionCount",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
-            }
-          },
-          "predicate": "lessThan",
-          "rightHandSide": {
-            "projection": "CourseCapacity",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+            },
+            "predicate": "lessThan",
+            "rightHandSide": {
+              "projection": "CourseCapacity",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
             }
           },
           "rejection": "Course is full"
         },
         {
-          "leftHandSide": {
-            "projection": "CourseSubscribedStudentIds",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseSubscribedStudentIds",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
-            }
+            },
+            "predicate": "contains",
+            "rightHandSide": {
+              "parameterName": "studentId"
+            },
+            "negate": true
           },
-          "predicate": "contains",
-          "rightHandSide": {
-            "parameterName": "studentId"
-          },
-          "negate": true,
           "rejection": "Student is already subscribed"
         },
         {
-          "leftHandSide": {
-            "projection": "StudentSubscriptionCount",
-            "tags": {
-              "studentId": {
-                "parameterName": "studentId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "StudentSubscriptionCount",
+              "tags": {
+                "studentId": {
+                  "parameterName": "studentId"
+                }
               }
-            }
+            },
+            "predicate": "lessThan",
+            "rightHandSide": 10
           },
-          "predicate": "lessThan",
-          "rightHandSide": 10,
           "rejection": "Student is subscribed to too many courses"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "StudentSubscribedToCourse",
           "parameters": {
@@ -545,39 +555,41 @@
         }
       ],
       "boundary": [],
-      "conditions": [
+      "steps": [
         {
-          "leftHandSide": {
-            "projection": "CourseStatus",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseStatus",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
+            },
+            "predicate": "equals",
+            "rightHandSide": {
+              "enumMember": "Existent"
             }
-          },
-          "predicate": "equals",
-          "rightHandSide": {
-            "enumMember": "Existent"
           },
           "rejection": "Course is not active"
         },
         {
-          "leftHandSide": {
-            "projection": "CourseSubscribedStudentIds",
-            "tags": {
-              "courseId": {
-                "parameterName": "courseId"
+          "condition": {
+            "leftHandSide": {
+              "projection": "CourseSubscribedStudentIds",
+              "tags": {
+                "courseId": {
+                  "parameterName": "courseId"
+                }
               }
+            },
+            "predicate": "contains",
+            "rightHandSide": {
+              "parameterName": "studentId"
             }
           },
-          "predicate": "contains",
-          "rightHandSide": {
-            "parameterName": "studentId"
-          },
           "rejection": "Student is not subscribed"
-        }
-      ],
-      "publishes": [
+        },
         {
           "name": "StudentUnsubscribedFromCourse",
           "parameters": {

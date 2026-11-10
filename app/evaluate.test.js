@@ -25,6 +25,12 @@ loadApp(sandbox, ['model.js', 'evaluate.js'], {
 });
 const { check, eq, finish } = makeChecker();
 
+// Many fixtures here record events by hand that no command of theirs
+// emits, so the advisory saying so (11.0) is left out where a check is
+// about something else; the shipped models are held to it whole.
+const UNEMITTED = /^No command emits it\./;
+const advisedOtherwise = (model) => sandbox.modelAdvisories(model).filter((a) => !UNEMITTED.test(a.message));
+
 // Clearing the store is a write `appendEvents` never sees, so the
 // projection cache is told the world moved underneath it.
 function resetStore() {
@@ -32,36 +38,116 @@ function resetStore() {
   sandbox.bumpLogRevision();
 }
 
-// The course example with entities – what `course-simple` was before the
-// shipped models were stated without them. Tests about entities,
-// lifecycles and entity reads build this one.
-const ENTITIES = sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities');
 const PREDEFINED_INDEX = (slug) => sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === slug);
 
-function build(index) {
+// The course example as a 10.x document stated it with entities – what
+// `course-entities` shipped as until 11.0: `course-simple` with each of
+// its projections bound by the entity it is about, and every rule
+// reading the entity's property where the shipped model reads the
+// projection in place. Imported, it is the course example in groups,
+// `course.status` and all (`GROUPED`) – which is also what the import
+// conversion is tested against.
+const LEGACY_ENTITIES = {
+  Student: { icon: '🧑‍🎓', lifecycle: 'exists', properties: [
+    ['exists', 'StudentExists'], ['subscriptionCount', 'StudentSubscriptionCount']] },
+  Course: { icon: '📚', lifecycle: 'status', properties: [
+    ['status', 'CourseStatus'], ['capacity', 'CourseCapacity'],
+    ['subscriptionCount', 'CourseSubscriptionCount'], ['subscribedStudentIds', 'CourseSubscribedStudentIds']] },
+};
+function legacyEnvelope(index = PREDEFINED_INDEX('course-simple'), entities = LEGACY_ENTITIES) {
   resetStore();
   const id = sandbox.loadPredefinedModel(index);
-  return sandbox.projectState()[id];
+  const envelope = deepClone(buildShareEnvelope(sandbox.projectState()[id], []));
+  envelope.$schema = 'https://dcb.events/schemas/model/v10.json';
+  envelope.dcbModelVersion = '10.0';
+  delete envelope.groupDefinitions;
+  envelope.entityDefinitions = Object.entries(entities).map(([name, { icon, lifecycle, properties, identifierType }]) => ({
+    name, icon, ...(identifierType ? { identifierType } : {}),
+    properties: properties.map(([property, projection]) => ({ name: property, projection })), lifecycle,
+  }));
+  const owner = new Map();
+  for (const [name, { properties }] of Object.entries(entities)) {
+    for (const [property, projection] of properties) owner.set(projection, [name, property]);
+  }
+  for (const command of envelope.commandDefinitions) {
+    const bindings = [];
+    const toEntity = (operand) => {
+      if (Array.isArray(operand)) return operand.map(toEntity);
+      if (!operand || typeof operand !== 'object') return operand;
+      if (operand.projection !== undefined && owner.has(operand.projection)) {
+        const [entity, property] = owner.get(operand.projection);
+        const alias = entity.charAt(0).toLowerCase() + entity.slice(1);
+        if (!bindings.some((b) => b.alias === alias)) bindings.push({ alias, entity, id: Object.values(operand.tags)[0] });
+        return { alias, property };
+      }
+      return Object.fromEntries(Object.entries(operand).map(([key, value]) => [key, toEntity(value)]));
+    };
+    Object.assign(command, sandbox.commandLists(command));
+    delete command.steps;
+    command.conditions = toEntity(command.conditions);
+    command.publishes = toEntity(command.publishes);
+    command.boundary = [...bindings, ...command.boundary];
+  }
+  return envelope;
 }
+const GROUPED = 'grouped';
 
-// The same, but keeping the id, so a test can drive the editing
-// commands and read the model back after each one.
 function open_(index) {
+  if (index === GROUPED) {
+    const envelope = legacyEnvelope();
+    resetStore();
+    const { modelId } = importModelFromEnvelope(envelope);
+    return { id: modelId, model: () => sandbox.projectState()[modelId] };
+  }
   resetStore();
   const id = sandbox.loadPredefinedModel(index);
   return { id, model: () => sandbox.projectState()[id] };
 }
 
+function build(index) {
+  return open_(index).model();
+}
+
+// A group member's value, read the way a group binding reads it: the
+// qualified projection, by the group's tag.
+function foldMember(model, log, group, member, id, args) {
+  const tag = model['group-definitions'][group].tag;
+  return foldProjection(model, log, `${group}.${member}`, { tags: { [tag.name]: id }, args: args || {} });
+}
+
+const SIMPLE = PREDEFINED_INDEX('course-simple');
+const SEQUENCE = PREDEFINED_INDEX('course-sequence');
+const TENANT = PREDEFINED_INDEX('course-tenant');
+const PRICING = PREDEFINED_INDEX('pricing-simple');
+
 const {
-  evaluateCommand, foldEntityProperty, foldProjection, foldProjectionState, tagsOfEvent,
-  deriveThen, runScenario, setScriptsDisabled,
+  evaluateCommand, foldProjection, tagsOfEvent,
+  deriveThen, runScenario,
   deriveProjectionScenarioThen, runProjectionScenario,
-  addDefinition, updateDefinition, removeDefinition, renameDefinition, renameMember, reorderDefinitions,
+  removeDefinition, renameDefinition, renameMember, reorderDefinitions,
   createDcbModel,
   generateId, scenarioName, deepClone, evSuccessor,
-  definitionsToSchema, buildShareEnvelope, importModelFromEnvelope, envelopeHasScript, envelopeScripts,
+  definitionsToSchema, buildShareEnvelope, importModelFromEnvelope,
   envelopeVersionWarning, modelMatchingEnvelope, commandRejections,
 } = sandbox;
+
+// Most fixtures here state a command the way it reads without branches
+// – its rules, then what it emits – and edit it so. `lists` gives a
+// stored command that way (a copy, its `steps` kept), and the writers
+// below put the two lists back into the steps they came from
+// (`withCommandLists`), so a branch a fixture has is never lost.
+function lists(body) {
+  const copy = deepClone(body);
+  return Object.assign(copy, sandbox.commandLists(copy));
+}
+function unlists(kind, body) {
+  if (kind !== 'command-definition' || !body || (body.conditions === undefined && body.publishes === undefined)) return body;
+  const { conditions, publishes, ...rest } = body;
+  const kept = sandbox.commandLists(rest);
+  return { ...rest, steps: sandbox.withCommandLists(rest.steps, conditions || kept.conditions, publishes || kept.publishes) };
+}
+const addDefinition = (kind, id, name, body) => sandbox.addDefinition(kind, id, name, unlists(kind, body));
+const updateDefinition = (kind, id, name, body) => sandbox.updateDefinition(kind, id, name, unlists(kind, body));
 
 // An event a fixture adds, tagged by every tag-typed value it holds –
 // what an author listing them all would write. Events are tagged only
@@ -81,33 +167,24 @@ function openBlank(name) {
   return { id, model: () => sandbox.projectState()[id] };
 }
 
-// A fresh model with a scripted projection bound as an entity property
-// – for scripted-content tests (script round-tripping,
-// `envelopeHasScript`, safe mode) that need a fixture no
-// PREDEFINED_MODELS example carries. `Tick` reads the script through
-// its boundary.
-//
-// The script is tagged by the counter, which is what lets `Counter.total`
-// bind it: an instance reads it by its own identifier.
-function openScripted() {
-  const { id, model } = openBlank('Scripted');
-  addDefinition('entity-definition', id, 'Counter', { properties: [] });
+// A fresh model with a counter in a group, read through a group alias
+// – a fixture no PREDEFINED_MODELS example carries. `Tick` reads it
+// through its boundary, as `counter.total`.
+function openCounter() {
+  const { id, model } = openBlank('Counter');
+  sandbox.createGroup(id, 'Counter', { name: 'counterId', tagType: 'CounterId' });
   addTaggedEvent(id, 'Ticked', {
     properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
   });
-  addDefinition('projection-definition', id, 'CounterTotal', {
-    tags: [{ name: 'counterId', tagType: 'CounterId' }],
+  addDefinition('projection-definition', id, 'Counter.total', {
     valueType: 'integer',
     isList: false,
-    script: { initialState: 0 },
-    handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
-  });
-  updateDefinition('entity-definition', id, 'Counter', {
-    properties: [{ name: 'total', projection: 'CounterTotal' }],
+    initialValue: 0,
+    handlers: [{ event: 'Ticked', operation: 'increment', value: 1 }],
   });
   addDefinition('command-definition', id, 'Tick', {
     properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
-    boundary: [{ alias: 'counter', entity: 'Counter', id: { parameterName: 'counterId' } }],
+    boundary: [{ alias: 'counter', group: 'Counter', tags: { counterId: { parameterName: 'counterId' } } }],
     conditions: [{ leftHandSide: { alias: 'counter', property: 'total' }, predicate: 'lessThan', rightHandSide: 3 }],
     publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
   });
@@ -129,7 +206,7 @@ function drive(model, log, command, args) {
 // 1. Course example, identifiers supplied by the caller.
 // ---------------------------------------------------------------
 {
-  const model = build(ENTITIES);
+  const model = build(GROUPED);
 
   check('define a course, then a student, then subscribe', () => {
     const log = [];
@@ -138,9 +215,9 @@ function drive(model, log, command, args) {
     drive(model, log, 'RegisterStudent', { studentId: 's1' });
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
     eq(log.length, 3, 'log length');
-    eq(foldEntityProperty(model, log, 'Course', 'subscriptionCount', 'c1'), 1, 'subscriptionCount');
-    eq(foldEntityProperty(model, log, 'Course', 'subscribedStudentIds', 'c1'), ['s1'], 'subscribers');
-    eq(foldEntityProperty(model, log, 'Student', 'exists', 's1'), true, 'the student exists');
+    eq(foldMember(model, log, 'Course', 'subscriptionCount', 'c1'), 1, 'subscriptionCount');
+    eq(foldMember(model, log, 'Course', 'subscribedStudentIds', 'c1'), ['s1'], 'subscribers');
+    eq(foldMember(model, log, 'Student', 'exists', 's1'), true, 'the student exists');
   });
 
   check('a course cannot be defined twice', () => {
@@ -179,8 +256,8 @@ function drive(model, log, command, args) {
     for (const id of ['s1', 's2']) drive(model, log, 'RegisterStudent', { studentId: id });
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
     drive(model, log, 'UnsubscribeStudentFromCourse', { courseId: 'c1', studentId: 's1' });
-    eq(foldEntityProperty(model, log, 'Course', 'subscriptionCount', 'c1'), 0, 'count');
-    eq(foldEntityProperty(model, log, 'Course', 'subscribedStudentIds', 'c1'), [], 'subscribers');
+    eq(foldMember(model, log, 'Course', 'subscriptionCount', 'c1'), 0, 'count');
+    eq(foldMember(model, log, 'Course', 'subscribedStudentIds', 'c1'), [], 'subscribers');
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's2' });
   });
 
@@ -194,9 +271,9 @@ function drive(model, log, command, args) {
     const log = [];
     drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 5 });
     drive(model, log, 'DefineCourse', { courseId: 'c2', capacity: 7 });
-    eq(foldEntityProperty(model, log, 'Course', 'capacity', 'c1'), 5, 'c1 capacity');
-    eq(foldEntityProperty(model, log, 'Course', 'capacity', 'c2'), 7, 'c2 capacity');
-    eq(foldEntityProperty(model, log, 'Course', 'status', 'c3'), 'NonExistent', 'unseen instance');
+    eq(foldMember(model, log, 'Course', 'capacity', 'c1'), 5, 'c1 capacity');
+    eq(foldMember(model, log, 'Course', 'capacity', 'c2'), 7, 'c2 capacity');
+    eq(foldMember(model, log, 'Course', 'status', 'c3'), 'NonExistent', 'unseen instance');
   });
 }
 
@@ -204,7 +281,7 @@ function drive(model, log, command, args) {
 // 2. Identifiers minted by a parameterless projection.
 // ---------------------------------------------------------------
 {
-  const model = build(1);
+  const model = build(SEQUENCE);
 
   check('the numbering issues c1, c2, c3', () => {
     const log = [];
@@ -230,7 +307,7 @@ function drive(model, log, command, args) {
 // 3. A parameterised projection: numbering restarts per tenant.
 // ---------------------------------------------------------------
 {
-  const model = build(2);
+  const model = build(TENANT);
 
   check('course numbers restart per tenant, ids do not', () => {
     const log = [];
@@ -255,19 +332,87 @@ function drive(model, log, command, args) {
 }
 
 // ---------------------------------------------------------------
-// 4. Schedules: chained bindings, fan-out and `excluding`.
+// 4. Schedules: chained group bindings and fan-out.
+//
+// What `course-schedules` was until 11.0, in groups: a slot is an hour,
+// a course occupies some, and a student is never in two courses at
+// once – checked against each course's current schedule, read through
+// a group binding fanned out over the student's courses. Rescheduling
+// reads the subscribers, then all of their courses; with `excluding`
+// gone, those include the course being rescheduled, as of its old
+// slots.
 // ---------------------------------------------------------------
+function openSchedules() {
+  const { id, model } = open_(GROUPED);
+  const list = (name, propertyType) => ({ name, propertyType, isOptional: false, isList: true });
+  const one = (name, propertyType) => ({ name, propertyType, isOptional: false, isList: false });
+  const of = (alias, property) => ({ alias, property });
+  addDefinition('custom-type-definition', id, 'TimeSlot', {
+    schema: { type: 'string', pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$' },
+  });
+  const defined = deepClone(model()['event-definitions'].CourseDefined);
+  defined.properties.push(list('slots', 'TimeSlot'));
+  updateDefinition('event-definition', id, 'CourseDefined', defined);
+  addTaggedEvent(id, 'CourseRescheduled', { properties: [one('courseId', 'CourseId'), list('slots', 'TimeSlot')] });
+  addDefinition('projection-definition', id, 'Course.slots', {
+    valueType: 'TimeSlot', isList: true, initialValue: [],
+    handlers: [
+      { event: 'CourseDefined', operation: 'set', value: { eventProperty: 'slots' } },
+      { event: 'CourseRescheduled', operation: 'set', value: { eventProperty: 'slots' } },
+    ],
+  });
+  addDefinition('projection-definition', id, 'Student.subscribedCourseIds', {
+    valueType: 'CourseId', isList: true, initialValue: [],
+    handlers: [
+      { event: 'StudentSubscribedToCourse', operation: 'append', value: { eventProperty: 'courseId' } },
+      { event: 'StudentUnsubscribedFromCourse', operation: 'remove', value: { eventProperty: 'courseId' } },
+    ],
+  });
+  const define = lists(model()['command-definitions'].DefineCourse);
+  define.properties.push(list('slots', 'TimeSlot'));
+  define.publishes[0].parameters.slots = { parameterName: 'slots' };
+  updateDefinition('command-definition', id, 'DefineCourse', define);
+  const subscribe = lists(model()['command-definitions'].SubscribeStudentToCourse);
+  subscribe.boundary.push({ alias: 'others', group: 'Course',
+    tags: { courseId: { each: of('student', 'subscribedCourseIds') } } });
+  subscribe.conditions.push({ leftHandSide: of('others', 'slots'), predicate: 'containsAny',
+    rightHandSide: of('course', 'slots'), negate: true, rejection: 'Course clashes with the student\'s schedule' });
+  updateDefinition('command-definition', id, 'SubscribeStudentToCourse', subscribe);
+  addDefinition('command-definition', id, 'RescheduleCourse', {
+    properties: [one('courseId', 'CourseId'), list('slots', 'TimeSlot')],
+    boundary: [
+      { alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } },
+      { alias: 'students', group: 'Student', tags: { studentId: { each: of('course', 'subscribedStudentIds') } } },
+      { alias: 'theirs', group: 'Course', tags: { courseId: { each: of('students', 'subscribedCourseIds') } } },
+    ],
+    conditions: [
+      { leftHandSide: of('course', 'status'), predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
+        rejection: 'Course is not active' },
+      { leftHandSide: of('theirs', 'slots'), predicate: 'containsAny', rightHandSide: { parameterName: 'slots' },
+        negate: true, rejection: 'Slots clash with a subscriber\'s course' },
+    ],
+    publishes: [{ name: 'CourseRescheduled',
+      parameters: { courseId: { parameterName: 'courseId' }, slots: { parameterName: 'slots' } } }],
+  });
+  return { id, model };
+}
+
 {
-  const model = build(3);
+  const { model: current } = openSchedules();
+  const model = current();
 
   const setUp = () => {
     const log = [];
-    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T09'] });          // c1
-    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T09'] });          // c2
-    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T11'] });          // c3
+    drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 9, slots: ['2026-03-01T09'] });
+    drive(model, log, 'DefineCourse', { courseId: 'c2', capacity: 9, slots: ['2026-03-01T09'] });
+    drive(model, log, 'DefineCourse', { courseId: 'c3', capacity: 9, slots: ['2026-03-01T11'] });
     drive(model, log, 'RegisterStudent', { studentId: 's1' });
     return log;
   };
+
+  check('the schedules model is advisory-clean', () => {
+    eq(sandbox.modelAdvisories(model), [], 'advisories');
+  });
 
   check('a student cannot join two courses in the same slot', () => {
     const log = setUp();
@@ -275,16 +420,32 @@ function drive(model, log, command, args) {
     const result = evaluateCommand(model, log, 'SubscribeStudentToCourse', { courseId: 'c2', studentId: 's1' });
     eq(result.outcome, 'rejected', 'outcome');
     eq(result.failedRule.text, 'not(others.slots containsAny course.slots)', 'rule');
+    eq(result.reads.others.fanned, true, 'others fanned out');
+    eq(result.reads.others.instances.map((i) => [i.id, Object.keys(i.properties)]), [['c1', ['slots']]],
+      'one instance per course the student holds, each read for its slots alone');
   });
 
   check('a free slot is accepted', () => {
     const log = setUp();
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c3', studentId: 's1' });
-    eq(foldEntityProperty(model, log, 'Student', 'subscribedCourseIds', 's1'), ['c1', 'c3'], 'courses');
+    eq(foldMember(model, log, 'Student', 'subscribedCourseIds', 's1'), ['c1', 'c3'], 'courses');
   });
 
-  check('rescheduling onto a subscriber other course is refused', () => {
+  check('a fanned group binding is one query item, of the members its rules read', () => {
+    const items = sandbox.deriveDcb(model, model['command-definitions'].SubscribeStudentToCourse).items;
+    const others = items.filter((item) => item.alias === 'others');
+    eq(others.length, 1, 'one item');
+    eq(others[0].fannedOut, true, 'fanned out');
+    eq(others[0].tags, ['CourseId:{each student.subscribedCourseIds}'], 'by each of the student\'s courses');
+    eq(others[0].types, ['CourseDefined', 'CourseRescheduled'], 'and only the slots\' events');
+    eq(others[0].readProperties, ['slots'], 'which it says');
+    const course = items.find((item) => item.alias === 'course');
+    eq(course.readProperties, ['capacity', 'slots', 'status', 'subscribedStudentIds', 'subscriptionCount'],
+      'the course, for what its rules read of it');
+  });
+
+  check('rescheduling onto a subscriber\'s other course is refused', () => {
     const log = setUp();
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c3', studentId: 's1' });
@@ -294,19 +455,10 @@ function drive(model, log, command, args) {
     eq(result.failedRule.text, 'not(theirs.slots containsAny slots)', 'rule');
   });
 
-  check('excluding keeps a course from clashing with itself', () => {
-    const log = setUp();
-    drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
-    // Same slots it already occupies: `theirs` excludes c1, so there is
-    // nothing left to clash with.
-    drive(model, log, 'RescheduleCourse', { courseId: 'c1', slots: ['2026-03-01T09'] });
-    eq(foldEntityProperty(model, log, 'Course', 'slots', 'c1'), ['2026-03-01T09'], 'slots');
-  });
-
   check('a course with no subscribers reschedules freely', () => {
     const log = setUp();
     drive(model, log, 'RescheduleCourse', { courseId: 'c2', slots: ['2026-03-01T11'] });
-    eq(foldEntityProperty(model, log, 'Course', 'slots', 'c2'), ['2026-03-01T11'], 'slots');
+    eq(foldMember(model, log, 'Course', 'slots', 'c2'), ['2026-03-01T11'], 'slots');
   });
 }
 
@@ -314,7 +466,7 @@ function drive(model, log, command, args) {
 // 5. A cart: composite list values, fan-out and zipping.
 // ---------------------------------------------------------------
 {
-  const model = build(4);
+  const model = build(PRICING);
 
   const setUp = () => {
     const log = [];
@@ -368,7 +520,7 @@ function drive(model, log, command, args) {
 // 7. Broken inputs are not rejections.
 // ---------------------------------------------------------------
 {
-  const model = build(ENTITIES);
+  const model = build(GROUPED);
 
   const broken = (what, fn) => check(what, () => {
     try {
@@ -384,10 +536,10 @@ function drive(model, log, command, args) {
     () => evaluateCommand(model, [], 'DefineCourse', { courseId: 'c1' }));
   broken('an unknown command is broken',
     () => evaluateCommand(model, [], 'NoSuchCommand', {}));
-  broken('an unknown entity property is broken',
-    () => foldEntityProperty(model, [], 'Course', 'nope', 'c1'));
+  broken('an unknown group member is broken',
+    () => foldMember(model, [], 'Course', 'nope', 'c1'));
   broken('a projection read tagged by no value is broken',
-    () => foldProjection(build(2), [], 'TenantCourseNumbering', { tags: [{ type: 'TenantId', value: null }] }));
+    () => foldProjection(build(TENANT), [], 'TenantCourseNumbering', { tags: [{ type: 'TenantId', value: null }] }));
 }
 
 // ---------------------------------------------------------------
@@ -399,7 +551,7 @@ function drive(model, log, command, args) {
 // written, without needing a seventh example model to hold it.
 // ---------------------------------------------------------------
 {
-  const model = build(ENTITIES);
+  const model = build(GROUPED);
 
   // One course at capacity 5 with a single subscriber.
   const log = [];
@@ -408,16 +560,16 @@ function drive(model, log, command, args) {
   drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
 
   const archive = model['command-definitions'].ArchiveCourse;
-  const original = archive.conditions;
+  const original = archive.steps;
 
   // ArchiveCourse binds `course` and takes `courseId`, so any condition
   // over the course's state can stand in for its own.
   const holds = (condition) => {
-    archive.conditions = [condition];
+    archive.steps = sandbox.withCommandLists(original, [{ ...condition, rejection: 'No' }], lists(archive).publishes);
     try {
       return evaluateCommand(model, log, 'ArchiveCourse', { courseId: 'c1' }).outcome === 'published';
     } finally {
-      archive.conditions = original;
+      archive.steps = original;
     }
   };
 
@@ -476,7 +628,7 @@ function drive(model, log, command, args) {
 // 9. Successors keep the width they were written with.
 // ---------------------------------------------------------------
 {
-  const model = build(2);
+  const model = build(TENANT);
 
   check('a zero-padded numbering keeps its padding until it outgrows it', () => {
     model['projection-definitions'].TenantCourseNumbering.initialValue = '008';
@@ -512,7 +664,7 @@ function drive(model, log, command, args) {
   };
 
   check('a scenario is stored, derived and runs current', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     const stored = model()['scenario-definitions'][key];
     eq(stored.then.outcome, 'published', 'derived outcome');
@@ -521,7 +673,7 @@ function drive(model, log, command, args) {
   });
 
   check('a scenario is named from its outcome unless it says otherwise', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     eq(scenarioName(model()['scenario-definitions'][key]), 'records StudentSubscribedToCourse', 'derived');
     eq(scenarioName({ name: 'the happy path', then: { outcome: 'published', events: [] } }), 'the happy path', 'override');
@@ -530,12 +682,12 @@ function drive(model, log, command, args) {
   });
 
   check('changing a rule the command checks is reported as drift', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
 
     // A student may now be in at most zero courses, so what published
     // before is refused now.
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     command.conditions.find((c) => c.leftHandSide.property === 'subscriptionCount'
       && c.leftHandSide.alias === 'student').rightHandSide = 0;
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
@@ -553,14 +705,14 @@ function drive(model, log, command, args) {
   // student's existence would refuse too if it were asked first.
   const refused = () => ({ ...scenarioBody(), given: [] });
   const moveToFront = (model, id, pick) => {
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     const at = command.conditions.findIndex(pick);
     command.conditions.unshift(...command.conditions.splice(at, 1));
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
   };
 
   check('moving rules is not drift while the same rule refuses', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), refused());
     const before = model()['scenario-definitions'][key].then;
     moveToFront(model, id, (c) => c.leftHandSide.alias === 'student'
@@ -571,7 +723,7 @@ function drive(model, log, command, args) {
   });
 
   check('moving rules so another refuses first is drift', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), refused());
     const before = model()['scenario-definitions'][key].then;
     moveToFront(model, id, (c) => c.leftHandSide.alias === 'student'
@@ -582,12 +734,12 @@ function drive(model, log, command, args) {
   });
 
   check('rules sharing a message are one outcome, whichever of them refuses', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), refused());
     eq(model()['scenario-definitions'][key].then.rejection, 'Course is not active', 'the course rule refuses');
     // The student rule now says the same thing, and is moved ahead, so
     // it refuses first – but the outcome is the one the scenario names.
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     command.conditions.find((c) => c.leftHandSide.alias === 'student' && c.predicate === 'isTrue')
       .rejection = 'Course is not active';
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
@@ -602,8 +754,8 @@ function drive(model, log, command, args) {
   });
 
   check('a refusal by a rule without a message is not an outcome a scenario can name', () => {
-    const { id, model } = open_(ENTITIES);
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    const { id, model } = open_(GROUPED);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     delete command.conditions[0].rejection;
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
     const result = runScenario(model(), { ...refused(), then: { outcome: 'rejected', events: [],
@@ -616,23 +768,20 @@ function drive(model, log, command, args) {
     eq(sandbox.modelAdvisories(model()).some((a) => /has no rejection message/.test(a.message)), true, 'and it is advised');
   });
 
-  check('a rejection message is advised where it is missing, malformed, or on a guard', () => {
-    const { id, model } = open_(ENTITIES);
-    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+  check('a rejection message is advised where it is missing or malformed', () => {
+    const { id, model } = open_(GROUPED);
+    const command = lists(model()['command-definitions'].SubscribeStudentToCourse);
     command.conditions[1].rejection = '';
     command.conditions[2].rejection = 'two\nlines';
-    command.publishes[0].when = [{ leftHandSide: { alias: 'course', property: 'subscriptionCount' },
-      predicate: 'lessThan', rightHandSide: 5, rejection: 'Never shown' }];
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
     const found = sandbox.modelAdvisories(model()).filter((a) => a.name === 'SubscribeStudentToCourse')
       .map((a) => a.message);
     eq(found.some((m) => /rejection message of "student.exists isTrue" is empty/.test(m)), true, 'empty: ' + found);
     eq(found.some((m) => /spans several lines/.test(m)), true, 'several lines');
-    eq(found.some((m) => /a guard never rejects/.test(m)), true, 'on a guard');
   });
 
   check('a scenario never stops you deleting what it tests', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     store_(id, model(), { ...scenarioBody(), command: 'ArchiveCourse',
       when: { arguments: { courseId: 'c1' } } });
     // Nothing but the scenario references the command, and the
@@ -642,7 +791,7 @@ function drive(model, log, command, args) {
   });
 
   check('deleting what a scenario tests leaves it broken, not passing', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), { ...scenarioBody(), command: 'ArchiveCourse',
       when: { arguments: { courseId: 'c1' } } });
     removeDefinition('command-definition', id, 'ArchiveCourse');
@@ -651,17 +800,27 @@ function drive(model, log, command, args) {
     eq(result.actual, null, 'nothing to compare');
   });
 
-  check('an event gaining a property breaks the scenarios written before it', () => {
-    const { id, model } = open_(ENTITIES);
+  // Since 11.0 a field a Given leaves out is unspecified: the scenario
+  // holds until something reads it. A tag is always given.
+  check('an event gaining a property breaks the scenarios written before it once it is read, or is a tag', () => {
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     const event = deepClone(model()['event-definitions'].CourseDefined);
     event.properties.push({ name: 'title', propertyType: 'string', isOptional: false, isList: false });
     updateDefinition('event-definition', id, 'CourseDefined', event);
-    eq(runScenario(model(), model()['scenario-definitions'][key]).status, 'broken', 'status');
+    eq(runScenario(model(), model()['scenario-definitions'][key]).status, 'current', 'nothing reads it');
+    addDefinition('projection-definition', id, 'CourseTitle', { tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'string', isList: false,
+      initialValue: null, handlers: [{ event: 'CourseDefined', operation: 'set', value: { eventProperty: 'title' } }] });
+    const command = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
+    command.steps.unshift({ condition: { leftHandSide: { projection: 'CourseTitle', tags: { courseId: { parameterName: 'courseId' } } },
+      predicate: 'isNotEmpty' }, rejection: 'Untitled' });
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', command);
+    const run = runScenario(model(), model()['scenario-definitions'][key]);
+    eq([run.status, run.reason], ['broken', 'Reads unspecified field "title" of CourseDefined – the outcome depends on it, so the scenario gives it.'], 'once read');
   });
 
   check('renaming an event carries the Given and the expected outcome with it', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     renameDefinition('event-definition', id, 'StudentSubscribedToCourse', 'StudentEnrolled');
     renameDefinition('event-definition', id, 'CourseDefined', 'CourseOpened');
@@ -672,7 +831,7 @@ function drive(model, log, command, args) {
   });
 
   check('renaming an event property moves the key in every payload', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     renameMember('event-definition', id, 'CourseDefined', 'property', 'capacity', 'seats');
     const stored = model()['scenario-definitions'][key];
@@ -681,7 +840,7 @@ function drive(model, log, command, args) {
   });
 
   check('renaming a command property moves the key in the When', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     renameMember('command-definition', id, 'SubscribeStudentToCourse', 'property', 'studentId', 'enrolleeId');
     const stored = model()['scenario-definitions'][key];
@@ -690,7 +849,7 @@ function drive(model, log, command, args) {
   });
 
   check('renaming the command it tests carries the scenario', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     renameDefinition('command-definition', id, 'SubscribeStudentToCourse', 'EnrolStudent');
     const stored = model()['scenario-definitions'][key];
@@ -699,7 +858,7 @@ function drive(model, log, command, args) {
   });
 
   check('renaming a composite field reaches inside the stored values', () => {
-    const { id, model } = open_(4);
+    const { id, model } = open_(PRICING);
     const key = store_(id, model(), {
       command: 'OrderProducts',
       given: [
@@ -715,7 +874,7 @@ function drive(model, log, command, args) {
   });
 
   check('a scenario is identified by an id, so it is updated rather than renamed', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     try {
       renameDefinition('scenario-definition', id, key, 'SomethingElse');
@@ -731,7 +890,7 @@ function drive(model, log, command, args) {
   check('a payload with a property the event does not have is stored, not refused', () => {
     // The lenient regime: an invented payload property is inert – the
     // folds never read it – so storing it beats refusing the scenario.
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const body = scenarioBody();
     body.then = deriveThen(model(), body);
     body.given[0].data.colour = 'blue';
@@ -743,7 +902,7 @@ function drive(model, log, command, args) {
   });
 
   check('duplicating a scenario is a plain copy under a new id', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     const original = model()['scenario-definitions'][key];
     const copyKey = generateId();
@@ -754,7 +913,7 @@ function drive(model, log, command, args) {
   });
 
   check('reordering carries the swap through to how scenarios list', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const first = store_(id, model(), scenarioBody());
     const second = store_(id, model(), { ...scenarioBody(), command: 'ArchiveCourse',
       when: { arguments: { courseId: 'c1' } } });
@@ -764,7 +923,7 @@ function drive(model, log, command, args) {
   });
 
   check('reordering refuses an order that drops or invents a member', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const key = store_(id, model(), scenarioBody());
     try {
       reorderDefinitions('scenario-definition', id, [key, generateId()]);
@@ -785,7 +944,7 @@ function drive(model, log, command, args) {
 // sandbox showed when it did.
 // ---------------------------------------------------------------
 {
-  const model = build(ENTITIES);
+  const model = build(GROUPED);
 
   check('a published command reports what its conditions consulted', () => {
     const log = [];
@@ -812,7 +971,7 @@ function drive(model, log, command, args) {
   });
 
   check('a projection binding reports the value it issued', () => {
-    const seq = build(1);
+    const seq = build(SEQUENCE);
     const result = evaluateCommand(seq, [], 'DefineCourse', { capacity: 3 });
     eq(result.reads.courseNumbering, {
       // The arguments ride along with the value: a partition is half of
@@ -823,26 +982,21 @@ function drive(model, log, command, args) {
 }
 
 // ---------------------------------------------------------------
-// 12. An entity with an integer identifier: tagging and successor,
-// end to end.
+// 12. A group with an integer tag: tagging and successor, end to end.
 // ---------------------------------------------------------------
 {
   const { id, model } = openBlank();
 
-  addDefinition('entity-definition', id, 'Widget', { properties: [] });
+  sandbox.createGroup(id, 'Widget', { name: 'widgetId', tagType: 'WidgetId' });
   updateDefinition('custom-type-definition', id, 'WidgetId', { schema: { type: 'integer' }, isTag: true });
   addTaggedEvent(id, 'WidgetDefined', {
     properties: [{ name: 'widgetId', propertyType: 'WidgetId', isOptional: false, isList: false }],
   });
-  addDefinition('projection-definition', id, 'WidgetIsDefined', {
-    tags: [{ name: 'widgetId', tagType: 'WidgetId' }],
+  addDefinition('projection-definition', id, 'Widget.defined', {
     valueType: 'boolean',
     isList: false,
     initialValue: false,
     handlers: [{ event: 'WidgetDefined', operation: 'set', value: true }],
-  });
-  updateDefinition('entity-definition', id, 'Widget', {
-    properties: [{ name: 'defined', projection: 'WidgetIsDefined' }],
   });
   addDefinition('projection-definition', id, 'WidgetNumbering', {
     tags: [],
@@ -864,39 +1018,36 @@ function drive(model, log, command, args) {
     drive(model(), log, 'DefineWidget', {});
     eq(log[0].data.widgetId, 1, 'first id is a number');
     eq(tagsOfEvent(model(), 'WidgetDefined', { widgetId: 1 }), ['WidgetId:1'], 'tag');
-    eq(foldEntityProperty(model(), log, 'Widget', 'defined', 1), true, 'entity state');
+    eq(foldMember(model(), log, 'Widget', 'defined', 1), true, 'the grouped projection, by its integer tag');
     drive(model(), log, 'DefineWidget', {});
     eq(foldProjection(model(), log, 'WidgetNumbering', {}), 3, 'numbering advances by successor');
   });
 }
 
 // ---------------------------------------------------------------
-// 13 & 14. Composite identifiers: union-of-component tags, and a
-// standalone identifier type shared across two entities' composite ids.
+// 13 & 14. Composite identifiers: union-of-component tags, and a tag
+// type shared across two composite ids.
 //
-// `Course` and `Invoice` each compose a shared standalone `TenantTag`
-// with a component of their own (`CourseNumber`, `InvoiceNumber` – one
-// entity-derived, one standalone, exercising both origins in the same
-// composite). Tag derivation looks *through* the composite: the tags
-// are the union of the components' own tags, never renamespaced under
-// `CourseId`/`InvoiceId` – and because both entities compose in the
-// very same `TenantTag`, their events end up sharing that one tag.
+// `CourseId` and `InvoiceId` each compose a shared `TenantTag` with a
+// component of their own (`CourseNumber`, `InvoiceSeriesId`). Tag
+// derivation looks *through* the composite: the tags are the union of
+// the components' own tags, never renamespaced under
+// `CourseId`/`InvoiceId` – and because both compose in the very same
+// `TenantTag`, their events end up sharing that one tag.
 // ---------------------------------------------------------------
 {
   const { id, model } = openBlank();
 
   addDefinition('custom-type-definition', id, 'TenantTag', { schema: { type: 'string' }, isTag: true });
   addDefinition('custom-type-definition', id, 'CourseNumber', { schema: { type: 'string' }, isTag: true });
-  addDefinition('entity-definition', id, 'InvoiceSeries', { properties: [] });
-  addDefinition('entity-definition', id, 'Course', { properties: [] });
-  updateDefinition('custom-type-definition', id, 'CourseId', {
+  addDefinition('custom-type-definition', id, 'InvoiceSeriesId', { schema: { type: 'string' }, isTag: true });
+  addDefinition('custom-type-definition', id, 'CourseId', {
     properties: [
       { name: 'tenant', propertyType: 'TenantTag' },
       { name: 'number', propertyType: 'CourseNumber' },
     ],
   });
-  addDefinition('entity-definition', id, 'Invoice', { properties: [] });
-  updateDefinition('custom-type-definition', id, 'InvoiceId', {
+  addDefinition('custom-type-definition', id, 'InvoiceId', {
     properties: [
       { name: 'tenant', propertyType: 'TenantTag' },
       { name: 'series', propertyType: 'InvoiceSeriesId' },
@@ -917,12 +1068,12 @@ function drive(model, log, command, args) {
     );
   });
 
-  check('two entities sharing a standalone identifier-type component share its tag', () => {
+  check('two composite identifiers sharing a tag-type component share its tag', () => {
     const courseTags = tagsOfEvent(model(), 'CourseDefined', { courseId: { tenant: 't1', number: 'c1' } });
     const invoiceTags = tagsOfEvent(model(), 'InvoiceRaised', { invoiceId: { tenant: 't1', series: 'i1' } });
     eq(courseTags.includes('TenantTag:t1'), true, 'course carries the shared tag');
     eq(invoiceTags.includes('TenantTag:t1'), true, 'invoice carries the same shared tag');
-    eq(invoiceTags, ['TenantTag:t1', 'InvoiceSeriesId:i1'], 'invoice tags, entity-derived component included');
+    eq(invoiceTags, ['TenantTag:t1', 'InvoiceSeriesId:i1'], 'invoice tags, its own component included');
   });
 
   check('a successor over a composite saves, and the advisory says why it cannot work', () => {
@@ -959,70 +1110,9 @@ function drive(model, log, command, args) {
 }
 
 // ---------------------------------------------------------------
-// 16. Rename tracking for an entity's derived identifier – now an
-// ordinary custom-type-definition, auto-created alongside the entity.
-//
-// Three shapes: an entity whose identifier still tracks it (renaming
-// the entity moves the derived type's name along with it, both still
-// tracking afterward), an entity created with an explicit
-// `identifierType` (the rename leaves the type name alone), and a
-// direct rename of the value type itself (which pins a previously
-// tracking owner's `identifierType` explicit, since its default would
-// otherwise point at a name that no longer exists).
+// 16. Renaming a tag type, and what an emission may copy.
 // ---------------------------------------------------------------
 {
-  check('renaming an entity that still tracks its identifier moves the derived type', () => {
-    const { id, model } = openBlank();
-    addDefinition('entity-definition', id, 'Gadget', { properties: [] });
-    addTaggedEvent(id, 'GadgetDefined', {
-      properties: [{ name: 'gadgetId', propertyType: 'GadgetId', isOptional: false, isList: false }],
-    });
-    renameDefinition('entity-definition', id, 'Gadget', 'Widget');
-    eq('WidgetId' in model()['custom-type-definitions'], true, 'the derived type renamed too');
-    eq('GadgetId' in model()['custom-type-definitions'], false, 'old name gone');
-    eq('identifierType' in model()['entity-definitions'].Widget, false, 'still tracking, nothing pinned');
-    eq(model()['event-definitions'].GadgetDefined.properties[0].propertyType, 'WidgetId',
-      'the property type followed the rename');
-    eq(tagsOfEvent(model(), 'GadgetDefined', { gadgetId: 'g1' }), ['WidgetId:g1'], 'tags follow too');
-  });
-
-  check('renaming an entity whose identifier type was customised leaves the derived type alone', () => {
-    const { id, model } = openBlank();
-    addDefinition('entity-definition', id, 'Gizmo', {
-      identifierType: 'GizmoRef', properties: [],
-    });
-    addTaggedEvent(id, 'GizmoDefined', {
-      properties: [{ name: 'gizmoId', propertyType: 'GizmoRef', isOptional: false, isList: false }],
-    });
-    renameDefinition('entity-definition', id, 'Gizmo', 'Doohickey');
-    eq('Doohickey' in model()['entity-definitions'], true, 'entity renamed');
-    eq('Gizmo' in model()['entity-definitions'], false, 'old name gone');
-    eq(model()['entity-definitions'].Doohickey.identifierType, 'GizmoRef', 'the override stayed put');
-    eq(model()['event-definitions'].GizmoDefined.properties[0].propertyType, 'GizmoRef',
-      'the customised identifier type did not move');
-    eq(tagsOfEvent(model(), 'GizmoDefined', { gizmoId: 'g1' }), ['GizmoRef:g1'], 'tag unaffected by the rename');
-  });
-
-  check('renaming a tracking entity\'s derived value type directly pins it explicit', () => {
-    const { id, model } = openBlank();
-    addDefinition('entity-definition', id, 'Sprocket', { properties: [] });
-    addTaggedEvent(id, 'SprocketDefined', {
-      properties: [{ name: 'sprocketId', propertyType: 'SprocketId', isOptional: false, isList: false }],
-    });
-
-    renameDefinition('custom-type-definition', id, 'SprocketId', 'SprocketRef');
-    eq(model()['entity-definitions'].Sprocket.identifierType, 'SprocketRef',
-      'tracking is replaced by an explicit pointer at the new name');
-    eq(model()['event-definitions'].SprocketDefined.properties[0].propertyType, 'SprocketRef',
-      'the property type followed the rename');
-    eq(tagsOfEvent(model(), 'SprocketDefined', { sprocketId: 's1' }), ['SprocketRef:s1'], 'tag follows too');
-
-    // Now pinned, so renaming the *entity* no longer touches the type.
-    renameDefinition('entity-definition', id, 'Sprocket', 'Cog');
-    eq(model()['entity-definitions'].Cog.identifierType, 'SprocketRef', 'pin survives an entity rename');
-    eq('SprocketRef' in model()['custom-type-definitions'], true, 'the value type keeps its own name');
-  });
-
   check('renaming a standalone tag-marked custom type cascades like any other', () => {
     const { id, model } = openBlank();
     addDefinition('custom-type-definition', id, 'CourseNumber', { schema: { type: 'string' }, isTag: true });
@@ -1035,32 +1125,6 @@ function drive(model, log, command, args) {
     eq(model()['event-definitions'].CourseNumberIssued.properties[0].propertyType, 'CourseRef',
       'the reference followed the rename');
     eq(tagsOfEvent(model(), 'CourseNumberIssued', { number: 'c1' }), ['CourseRef:c1'], 'tag follows too');
-  });
-
-  check('an ordinary update may change identifierType, and the dangling type is an advisory', () => {
-    const { id, model } = openBlank();
-    addDefinition('entity-definition', id, 'Anvil', { properties: [] });
-    updateDefinition('entity-definition', id, 'Anvil', {
-      identifierType: 'AnvilRef', properties: [],
-    });
-    eq(model()['entity-definitions'].Anvil.identifierType, 'AnvilRef', 'the update went through');
-    // Nothing created "AnvilRef", and that is now the entity's problem
-    // to report rather than the update's to refuse.
-    eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'Anvil' && /AnvilRef/.test(a.message)
-    ), true, 'the unresolved identifier type is reported');
-  });
-
-  check('removing an entity-owned value type directly leaves the entity advisory-flagged', () => {
-    const { id, model } = openBlank();
-    addDefinition('entity-definition', id, 'Bolt', { properties: [] });
-    removeDefinition('custom-type-definition', id, 'BoltId');
-    eq('BoltId' in model()['custom-type-definitions'], false, 'removed, not refused');
-    eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'Bolt' && /BoltId/.test(a.message)
-    ), true, 'the entity reports its missing identifier type');
-    removeDefinition('entity-definition', id, 'Bolt');
-    eq('Bolt' in model()['entity-definitions'], false, 'entity removed');
   });
 
   check('an emission copying a differently typed value into an event field is an advisory', () => {
@@ -1113,15 +1177,15 @@ function drive(model, log, command, args) {
     tags: [{ name: 'regionCode', tagType: 'RegionCode' }],
     valueType: 'integer',
     isList: false,
-    script: { initialState: 0 },
-    handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
+    initialValue: 0,
+    handlers: [{ event: 'RegionOpened', operation: 'increment', value: 1 }],
   });
   addDefinition('projection-definition', id, 'OpenRegionTotal', {
     tags: [],
     valueType: 'integer',
     isList: false,
-    script: { initialState: 0 },
-    handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
+    initialValue: 0,
+    handlers: [{ event: 'RegionOpened', operation: 'increment', value: 1 }],
   });
 
   check('a read\'s tag resolves through a non-default tagSchema', () => {
@@ -1143,17 +1207,14 @@ function drive(model, log, command, args) {
 // rebuilds a model from it.
 // ---------------------------------------------------------------
 {
-  // Dynamic Product Price (simple) is the case that actually needs the
-  // retry pool: `Item`, a standalone composite custom type, names
-  // `ProductId` – the identifier type `Product` derives, which does not
-  // exist until the entity does. A synthesizer that added every custom
-  // type before any entity would refuse this model.
-  const original = build(4);
+  // Dynamic Product Price (simple): `Item`, a composite custom type,
+  // names `ProductId`, a tag type declared before it.
+  const original = build(PRICING);
   const envelope = buildShareEnvelope(original, []);
   const { modelId: importedId } = importModelFromEnvelope(envelope);
   const imported = sandbox.projectState()[importedId];
 
-  check('a model with a standalone type naming an entity-derived id round-trips', () => {
+  check('a model with a composite type naming a tag type round-trips', () => {
     eq(definitionsToSchema(imported), definitionsToSchema(original), 'the reconstructed model');
   });
 
@@ -1166,22 +1227,20 @@ function drive(model, log, command, args) {
 }
 
 {
-  // A scripted entity property cannot go through the bare pass with
-  // empty handlers the way a declared one can (`validateScript`
-  // requires at least one), so it has to be left out of the bare
-  // entity entirely and added whole once events exist.
-  const original = openScripted().model();
+  // A projection inside a group goes out and comes back inside it, and
+  // still folds through the group's tag.
+  const original = openCounter().model();
   const { modelId: importedId } = importModelFromEnvelope(buildShareEnvelope(original, []));
   const imported = sandbox.projectState()[importedId];
 
-  check('a model with a scripted entity property round-trips', () => {
+  check('a model with a grouped projection round-trips', () => {
     eq(definitionsToSchema(imported), definitionsToSchema(original), 'the reconstructed model');
   });
 
-  check('the imported scripted property still folds', () => {
+  check('the imported grouped projection still folds', () => {
     const log = [];
     drive(imported, log, 'Tick', { counterId: 'x1' });
-    eq(foldEntityProperty(imported, log, 'Counter', 'total', 'x1'), 1, 'one tick folded');
+    eq(foldMember(imported, log, 'Counter', 'total', 'x1'), 1, 'one tick folded');
   });
 }
 
@@ -1190,6 +1249,7 @@ function drive(model, log, command, args) {
   // only works if an imported model shares exactly what it was imported
   // from, for every shipped model.
   const envelopes = [0, 1, 2, 3, 4].map((index) => buildShareEnvelope(build(index), []));
+  envelopes.push(buildShareEnvelope(build(GROUPED), []));
   const imported = envelopes.map((envelope) => importModelFromEnvelope(envelope).modelId);
 
   check('an imported model is found again by the envelope it came from', () => {
@@ -1201,72 +1261,11 @@ function drive(model, log, command, args) {
   });
 
   check('an edited copy, or a link carrying a sandbox session, is not matched', () => {
-    const edited = JSON.parse(JSON.stringify(envelopes[4]));
+    const edited = JSON.parse(JSON.stringify(envelopes[PRICING]));
     edited.name += ' (edited)';
     eq(modelMatchingEnvelope(edited), null, 'a renamed envelope');
-    const withSteps = { ...JSON.parse(JSON.stringify(envelopes[4])), sandbox: { steps: [{ command: 'DefineProduct', args: {} }] } };
+    const withSteps = { ...JSON.parse(JSON.stringify(envelopes[PRICING])), sandbox: { steps: [{ command: 'DefineProduct', args: {} }] } };
     eq(modelMatchingEnvelope(withSteps), null, 'an envelope with sandbox steps');
-  });
-}
-
-{
-  const plain = build(4);
-  const scripted = openScripted().model(); // a scripted entity property
-
-  check('envelopeHasScript is false for a model with no scripts', () => {
-    eq(envelopeHasScript(buildShareEnvelope(plain, [])), false, 'plain model');
-  });
-  check('envelopeHasScript is true for a scripted entity property', () => {
-    eq(envelopeHasScript(buildShareEnvelope(scripted, [])), true, 'scripted model');
-  });
-
-  // None of the shipped models have a scripted *projection* (only the
-  // scripted property above), so this checks that side with a small
-  // ad-hoc one instead.
-  const { id, model } = openBlank();
-  addDefinition('custom-type-definition', id, 'RegionCode', { schema: { type: 'string' }, isTag: true });
-  addTaggedEvent(id, 'RegionOpened', {
-    properties: [{ name: 'regionCode', propertyType: 'RegionCode', isOptional: false, isList: false }],
-  });
-  addDefinition('projection-definition', id, 'OpenRegionCount', {
-    valueType: 'integer',
-    isList: false,
-    script: { initialState: 0 },
-    handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }],
-  });
-  check('envelopeHasScript is true for a scripted (standalone) projection', () => {
-    eq(envelopeHasScript(buildShareEnvelope(model(), [])), true, 'scripted projection');
-  });
-  check('envelopeScripts lists the code the gate asks about, and nothing else', () => {
-    eq(envelopeScripts(buildShareEnvelope(model(), [])),
-      [{ projection: 'OpenRegionCount', handlers: [{ event: 'RegionOpened', code: '(state || 0) + 1' }] }],
-      'the one scripted projection, with its handler');
-    eq(envelopeScripts(buildShareEnvelope(plain, [])), [], 'nothing for a plain model');
-  });
-}
-
-{
-  // The gate asks about `script`, so `script` alone decides whether
-  // code runs. A `code` slipped onto a declared handler – by a crafted
-  // link, an agent's edit or a JSON body in the code view – is inert:
-  // the gate rightly lets the envelope through, the declared operation
-  // is what folds, and the validator says the code is there.
-  const envelope = JSON.parse(JSON.stringify(buildShareEnvelope(build(1), [])));
-  const numbering = envelope.projectionDefinitions.find((p) => p.name === 'CourseNumbering');
-  numbering.handlers[0].code = '(globalThis.__declaredCodeRan = true, "x9")';
-
-  check('code on a declared handler does not pass for a script', () => {
-    eq(envelopeHasScript(envelope), false, 'no script, so no question at import');
-    const id = importModelFromEnvelope(envelope).modelId;
-    const model = sandbox.projectState()[id];
-    eq(model['projection-definitions'].CourseNumbering.handlers[0].code !== undefined, true, 'stored as authored');
-    const log = [];
-    drive(model, log, 'DefineCourse', { capacity: 10 });
-    eq(foldProjection(model, log, 'CourseNumbering', {}), 'c2', 'the declared successor folds');
-    eq(sandbox.__declaredCodeRan, undefined, 'the code never ran');
-    eq(sandbox.modelAdvisories(model).some(
-      (a) => a.name === 'CourseNumbering' && /also carries code/.test(a.message)
-    ), true, 'and it is advised');
   });
 }
 
@@ -1300,49 +1299,7 @@ function drive(model, log, command, args) {
 }
 
 {
-  // The case this regime exists for: a file whose command writes a tag
-  // its boundary never consults – valid JSON, defective model. It must
-  // load whole, the defect must come back as an advisory, and the
-  // command must still evaluate: an unguarded write is legal DCB.
-  //
-  // The tag has to be a *derived* one. A tag whose value came off the
-  // command payload is asserted by the caller and wants no read – only
-  // a value this command read somewhere is a claim about state, and
-  // only that is worth flagging.
-  const { id, model } = openBlank('Lenient');
-  addDefinition('entity-definition', id, 'Festlegung', { properties: [] });
-  addTaggedEvent(id, 'FestlegungErzeugt', {
-    properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: false, isList: false }],
-  });
-  addTaggedEvent(id, 'FestlegungVermerkt', {
-    properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: false, isList: false }],
-  });
-  // Folds a different event, so it is not the minting exemption: this
-  // is a value read from the log and then written as a tag.
-  addDefinition('projection-definition', id, 'LetzteFestlegung', {
-    parameters: [], valueType: 'FestlegungId', isList: false, initialValue: null,
-    handlers: [{ event: 'FestlegungVermerkt', operation: 'set', value: { eventProperty: 'festlegungId' } }],
-  });
-  const envelope = buildShareEnvelope(model(), []);
-  envelope.commandDefinitions.push({
-    name: 'ErzeugeFestlegung',
-    properties: [],
-    boundary: [{ alias: 'letzte', projection: 'LetzteFestlegung', arguments: {} }],
-    conditions: [],
-    publishes: [{ name: 'FestlegungErzeugt', parameters: { festlegungId: { alias: 'letzte' } } }],
-  });
-
-  check('an import with a write-coverage gap loads whole, advisory-flagged', () => {
-    const { modelId, skipped } = importModelFromEnvelope(envelope);
-    eq(skipped, [], 'nothing skipped');
-    const imported = sandbox.projectState()[modelId];
-    eq('ErzeugeFestlegung' in imported['command-definitions'], true, 'the command loaded');
-    eq(sandbox.modelAdvisories(imported).some(
-      (a) => a.name === 'ErzeugeFestlegung' && /without reading that Festlegung/.test(a.message)
-    ), true, 'and carries the coverage advisory');
-    const outcome = evaluateCommand(imported, [], 'ErzeugeFestlegung', {});
-    eq(outcome.outcome, 'published', 'the unguarded write still evaluates');
-  });
+  const envelope = buildShareEnvelope(build(SIMPLE), []);
 
   check('a structurally-broken definition is skipped; the rest of the file loads', () => {
     const bad = deepClone(envelope);
@@ -1353,7 +1310,7 @@ function drive(model, log, command, args) {
     eq(skipped[0].name, 'Broken', 'and by name');
     eq(/must be a list/.test(skipped[0].reason), true, 'with the structural reason');
     const imported = sandbox.projectState()[modelId];
-    eq('FestlegungErzeugt' in imported['event-definitions'], true, 'the sound one loaded');
+    eq('CourseDefined' in imported['event-definitions'], true, 'the sound one loaded');
     eq('Broken' in imported['event-definitions'], false, 'the broken one did not');
   });
 }
@@ -1383,7 +1340,7 @@ function drive(model, log, command, args) {
     ...(negate ? { negate: true } : {}),
   }];
   const outcomeWith = (conditions, args) => {
-    const body = deepClone(model()['command-definitions'].File);
+    const body = lists(model()['command-definitions'].File);
     body.conditions = conditions;
     updateDefinition('command-definition', id, 'File', body);
     return evaluateCommand(model(), [], 'File', args);
@@ -1422,7 +1379,7 @@ function drive(model, log, command, args) {
 
   check('the defects an equalsAny list can carry are advisories, not refusals', () => {
     const flagged = (conditions, pattern) => {
-      const body = deepClone(model()['command-definitions'].File);
+      const body = lists(model()['command-definitions'].File);
       body.conditions = conditions;
       updateDefinition('command-definition', id, 'File', body);
       eq(sandbox.modelAdvisories(model()).some(
@@ -1441,9 +1398,9 @@ function drive(model, log, command, args) {
 // resolves to, and renaming that member rewrites the entries – the same
 // promises the single-value comparison already keeps.
 {
-  const { id, model } = open_(ENTITIES);
+  const { id, model } = open_(GROUPED);
   const guardArchiveWith = (rightHandSide) => {
-    const body = deepClone(model()['command-definitions'].ArchiveCourse);
+    const body = lists(model()['command-definitions'].ArchiveCourse);
     body.conditions = [{
       leftHandSide: { alias: 'course', property: 'status' },
       predicate: 'equalsAny',
@@ -1462,7 +1419,7 @@ function drive(model, log, command, args) {
   check('renaming an enum member rewrites the references inside a list', () => {
     guardArchiveWith([{ enumMember: 'Existent' }, { enumMember: 'Archived' }]);
     renameMember('custom-type-definition', id, 'CourseStatus', 'member', 'Existent', 'Active');
-    eq(model()['command-definitions'].ArchiveCourse.conditions[0].rightHandSide,
+    eq(lists(model()['command-definitions'].ArchiveCourse).conditions[0].rightHandSide,
       [{ enumMember: 'Active' }, { enumMember: 'Archived' }], 'the listed entry repointed');
   });
 }
@@ -1490,8 +1447,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   // from: these two strings are the published contract, and a test that
   // derived them from the source could not notice one of them changing.
   check('an export carries both markers', () => {
-    eq(good.$schema, 'https://dcb.events/schemas/model/v10.json', '$schema');
-    eq(/^10\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is a 10.x');
+    eq(good.$schema, 'https://dcb.events/schemas/model/v11.json', '$schema');
+    eq(/^11\.\d+$/.test(good.dcbModelVersion), true, 'dcbModelVersion is an 11.x');
   });
 
   check('the definition arrays sit at the top level, under no wrapper', () => {
@@ -1503,7 +1460,11 @@ check('an import missing the definition arrays is refused, not silently accepted
 
   check('an import missing a required definition kind is refused', () => {
     refuses({ ...good, eventDefinitions: undefined }, 'no eventDefinitions');
-    refuses({ ...good, entityDefinitions: undefined }, 'no entityDefinitions');
+    refuses({ ...good, groupDefinitions: undefined }, 'no groupDefinitions');
+    const legacy = { ...good, dcbModelVersion: '10.0', groupDefinitions: undefined };
+    refuses(legacy, 'a 10.x document without entityDefinitions');
+    eq(typeof importModelFromEnvelope({ ...legacy, entityDefinitions: [] }).modelId, 'string',
+      'and with them, it reads');
     refuses({ ...good, commandDefinitions: 'nope' }, 'commandDefinitions not a list');
   });
 
@@ -1514,7 +1475,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an import from an unknown major is refused', () => {
-    refuses({ ...good, dcbModelVersion: '11.0' }, 'a newer major');
+    refuses({ ...good, dcbModelVersion: '12.0' }, 'a newer major');
     // 7.x tagged events by property type; read here, it would carry none.
     refuses({ ...good, dcbModelVersion: '7.0' }, 'the last major with implied tags');
     // 6.x has no rejection messages, and none can be invented for it.
@@ -1526,11 +1487,14 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   // 9.0 added computing derived projections and changed nothing an 8.x
-  // document says; 10.0 moved a script's arguments, which an import
-  // lifts. So 8.x and 9.x read whole – and with nothing to warn about.
-  check('an 8.x and a 9.x import still read', () => {
-    for (const major of [8, 9]) {
-      const older = { ...good, $schema: `https://dcb.events/schemas/model/v${major}.json`, dcbModelVersion: `${major}.0` };
+  // document says; 10.0 moved a script's arguments, which 11.0 refuses
+  // along with the script; 11.0 replaced entities, which an import lifts
+  // into groups.
+  // So 8.x to 10.x read whole – and with nothing to warn about.
+  check('an 8.x, 9.x and 10.x import still read', () => {
+    for (const major of [8, 9, 10]) {
+      const older = { ...good, $schema: `https://dcb.events/schemas/model/v${major}.json`, dcbModelVersion: `${major}.0`,
+        groupDefinitions: undefined, entityDefinitions: [] };
       eq(typeof importModelFromEnvelope(older).modelId, 'string', `${major}.x imported`);
       eq(envelopeVersionWarning(older), '', `${major}.x: nothing dropped`);
     }
@@ -1542,7 +1506,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a newer minor imports, and says what it is dropping', () => {
-    const newer = { ...good, dcbModelVersion: '10.99' };
+    const newer = { ...good, dcbModelVersion: '11.99' };
     eq(typeof importModelFromEnvelope(newer).modelId, 'string', 'imported');
     eq(envelopeVersionWarning(newer).length > 0, true, 'warned');
     eq(envelopeVersionWarning(good), '', 'nothing to warn about at the current version');
@@ -1557,9 +1521,10 @@ check('an import missing the definition arrays is refused, not silently accepted
 // ---------------------------------------------------------------
 // 18. One kind of fold.
 //
-// An entity property is a binding to an ordinary projection, so the
-// things that used to be true of only one of them are now true of
-// both – and the things that told them apart are gone.
+// A grouped projection is an ordinary projection that its group owns:
+// read through a group alias, in place by its qualified name, or bound
+// by it, it is the same fold – and what is true of a top-level one is
+// true of it.
 // ---------------------------------------------------------------
 {
   // The write goes through and the defect is reported instead: `fn`
@@ -1575,74 +1540,53 @@ check('an import missing the definition arrays is refused, not silently accepted
     }
   });
 
-  check('a property and a direct read of the same projection agree', () => {
-    const model = build(ENTITIES);
+  check('a member read and a read in place of the same projection agree', () => {
+    const model = build(GROUPED);
     const log = [];
     drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 7 });
-    // Through the entity, and through the projection it binds. Same
-    // fold, reached two ways.
-    eq(foldEntityProperty(model, log, 'Course', 'capacity', 'c1'), 7, 'as a property');
-    eq(foldProjection(model, log, 'CourseCapacity', { tags: { courseId: 'c1' } }), 7, 'as a projection');
+    eq(foldMember(model, log, 'Course', 'capacity', 'c1'), 7, 'by the group\'s tag');
+    const body = lists(model['command-definitions'].ChangeCourseCapacity);
+    body.conditions = [{ leftHandSide: { projection: 'Course.capacity', tags: { courseId: { parameterName: 'courseId' } } },
+      predicate: 'equals', rightHandSide: 7, rejection: 'Not seven' }];
+    body.boundary = [];
+    model['command-definitions'].ChangeCourseCapacity = unlists('command-definition', body);
+    eq(evaluateCommand(model, log, 'ChangeCourseCapacity', { courseId: 'c1', newCapacity: 3 }).outcome,
+      'published', 'Course(courseId).capacity, in place');
   });
 
-  check('one projection may be bound by two entities that share an identifier', () => {
-    const { id, model } = openBlank();
-    addDefinition('entity-definition', id, 'Course', { properties: [] });
-    addTaggedEvent(id, 'CourseDefined', {
-      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
-    });
-    addDefinition('projection-definition', id, 'CourseExists', {
-      tags: [{ name: 'courseId', tagType: 'CourseId' }],
-      valueType: 'boolean', isList: false, initialValue: false,
-      handlers: [{ event: 'CourseDefined', operation: 'set', value: true }],
-    });
-    // Two names for one fold, on the same entity – legal, and the
-    // point of a property being a reference rather than a definition.
-    updateDefinition('entity-definition', id, 'Course', {
-      properties: [
-        { name: 'exists', projection: 'CourseExists' },
-        { name: 'isDefined', projection: 'CourseExists' },
-      ],
-    });
-    const log = [{ type: 'CourseDefined', data: { courseId: 'c1' } }];
-    eq(foldEntityProperty(model(), log, 'Course', 'exists', 'c1'), true, 'under one name');
-    eq(foldEntityProperty(model(), log, 'Course', 'isDefined', 'c1'), true, 'under the other');
-  });
-
-  check('deleting a bound projection leaves the binding advisory-flagged, not refused', () => {
-    const { id, model } = open_(ENTITIES);
-    removeDefinition('projection-definition', id, 'CourseCapacity');
-    eq('CourseCapacity' in model()['projection-definitions'], false, 'removed');
+  check('deleting a grouped projection leaves its reads advisory-flagged, not refused', () => {
+    const { id, model } = open_(GROUPED);
+    removeDefinition('projection-definition', id, 'Course.capacity');
+    eq(model()['group-definitions'].Course.projections.some((p) => p.name === 'capacity'), false, 'removed');
     eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'Course' && /CourseCapacity/.test(a.message)
-    ), true, 'the entity reports its dangling binding');
+      (a) => a.name === 'SubscribeStudentToCourse' && /Course has no projection "capacity"/.test(a.message)
+    ), true, 'the command reports its dangling read');
   });
 
-  check('renaming a projection moves every property that binds it', () => {
-    const { id, model } = open_(ENTITIES);
-    renameDefinition('projection-definition', id, 'CourseCapacity', 'CourseSeats');
-    const course = model()['entity-definitions'].Course;
-    eq(course.properties.find((p) => p.name === 'capacity').projection, 'CourseSeats', 'the binding followed');
+  check('renaming a grouped projection moves every read of it', () => {
+    const { id, model } = open_(GROUPED);
+    renameDefinition('projection-definition', id, 'Course.capacity', 'seats');
+    const rule = lists(model()['command-definitions'].SubscribeStudentToCourse).conditions
+      .find((c) => c.rejection === 'Course is full');
+    eq(rule.rightHandSide, { alias: 'course', property: 'seats' }, 'the member read followed');
     const log = [];
     drive(model(), log, 'DefineCourse', { courseId: 'c1', capacity: 4 });
-    eq(foldEntityProperty(model(), log, 'Course', 'capacity', 'c1'), 4, 'still folds');
+    eq(foldMember(model(), log, 'Course', 'seats', 'c1'), 4, 'still folds');
+    eq(sandbox.modelAdvisories(model()), [], 'and nothing dangles');
   });
 
-  advises('Course', /binds "StudentExists", which is tagged by studentId: StudentId/,
-    'a property bound to a projection tagged by something else binds, with an advisory', () => {
-      const { id, model } = open_(ENTITIES);
-      // A course reads its properties by its CourseId; a student's
-      // existence is tagged by a StudentId, which no course instance
-      // has – the entity says so instead of the update refusing.
-      updateDefinition('entity-definition', id, 'Course', {
-        icon: '📚', properties: [{ name: 'studentExists', projection: 'StudentExists' }],
-      });
+  advises('Course', /Course\.capacity declares tags of its own/,
+    'a grouped projection declaring tags of its own saves, with an advisory', () => {
+      const { id, model } = open_(GROUPED);
+      const group = deepClone(model()['group-definitions'].Course);
+      group.projections.find((p) => p.name === 'capacity').tags = [{ name: 'studentId', tagType: 'StudentId' }];
+      updateDefinition('group-definition', id, 'Course', group);
       return model;
     });
 
   advises('CourseCapacity', /is tagged by StudentId, but "CourseDefined", which it handles, is tagged by no StudentId/,
     'a projection tagged by what its events do not carry saves, with an advisory', () => {
-      const { id, model } = open_(ENTITIES);
+      const { id, model } = open_(SIMPLE);
       const body = {
         ...deepClone(model()['projection-definitions'].CourseCapacity),
         tags: [{ name: 'studentId', tagType: 'StudentId' }],
@@ -1651,124 +1595,17 @@ check('an import missing the definition arrays is refused, not silently accepted
       return model;
     });
 
-  check('a scripted projection bound as a property is scoped by the instance', () => {
-    const { model } = openScripted();
+  check('a grouped projection is scoped by the instance', () => {
+    const { model } = openCounter();
     const log = [
       { type: 'Ticked', data: { counterId: 'x1' } },
       { type: 'Ticked', data: { counterId: 'x2' } },
       { type: 'Ticked', data: { counterId: 'x1' } },
     ];
-    eq(foldEntityProperty(model(), log, 'Counter', 'total', 'x1'), 2, 'x1 counted its own');
-    eq(foldEntityProperty(model(), log, 'Counter', 'total', 'x2'), 1, 'x2 counted its own');
+    eq(foldMember(model(), log, 'Counter', 'total', 'x1'), 2, 'x1 counted its own');
+    eq(foldMember(model(), log, 'Counter', 'total', 'x2'), 1, 'x2 counted its own');
   });
 
-  check('a scripted projection may hold a record, and a condition reads it whole', () => {
-    const { id, model } = openScripted();
-    addDefinition('custom-type-definition', id, 'CounterStats', {
-      properties: [
-        { name: 'count', propertyType: 'integer' },
-        { name: 'odd', propertyType: 'boolean' },
-      ],
-    });
-    addDefinition('projection-definition', id, 'CounterStatsView', {
-      tags: [{ name: 'counterId', tagType: 'CounterId' }],
-      valueType: 'CounterStats', isList: false,
-      script: { initialState: null },
-      handlers: [{
-        event: 'Ticked',
-        code: '{ count: ((state && state.count) || 0) + 1, odd: !(state && state.odd) }',
-      }],
-    });
-    updateDefinition('entity-definition', id, 'Counter', {
-      properties: [
-        { name: 'total', projection: 'CounterTotal' },
-        { name: 'stats', projection: 'CounterStatsView' },
-      ],
-    });
-    addDefinition('command-definition', id, 'TickAtStats', {
-      properties: [
-        { name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false },
-        { name: 'expected', propertyType: 'CounterStats', isOptional: false, isList: false },
-      ],
-      boundary: [{ alias: 'counter', entity: 'Counter', id: { parameterName: 'counterId' } }],
-      conditions: [{
-        leftHandSide: { alias: 'counter', property: 'stats' },
-        predicate: 'equals',
-        rightHandSide: { parameterName: 'expected' },
-      }],
-      publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
-    });
-
-    const log = [
-      { type: 'Ticked', data: { counterId: 'x1' } },
-      { type: 'Ticked', data: { counterId: 'x2' } },
-      { type: 'Ticked', data: { counterId: 'x1' } },
-    ];
-    eq(foldEntityProperty(model(), log, 'Counter', 'stats', 'x1'),
-      { count: 2, odd: false }, 'the record, whole');
-    const held = evaluateCommand(model(), log, 'TickAtStats',
-      { counterId: 'x1', expected: { count: 2, odd: false } });
-    eq(held.outcome, 'published', 'equality on a record is deep');
-    const refused = evaluateCommand(model(), log, 'TickAtStats',
-      { counterId: 'x1', expected: { count: 2, odd: true } });
-    eq(refused.outcome, 'rejected', 'and one differing field refuses');
-  });
-
-  check('`exposes` trims a reader to one field; the state fold keeps the record', () => {
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'CounterAudit', {
-      tags: [{ name: 'counterId', tagType: 'CounterId' }],
-      valueType: 'integer', isList: false,
-      script: {
-        initialState: { total: 0, last: null },
-        exposes: 'total',
-      },
-      handlers: [{
-        event: 'Ticked',
-        code: '{ total: state.total + 1, last: event.data.counterId }',
-      }],
-    });
-
-    const log = [
-      { type: 'Ticked', data: { counterId: 'x1' } },
-      { type: 'Ticked', data: { counterId: 'x2' } },
-      { type: 'Ticked', data: { counterId: 'x1' } },
-    ];
-    eq(foldProjection(model(), log, 'CounterAudit', { tags: { counterId: 'x1' } }),
-      2, 'a reader sees the exposed field');
-    eq(foldProjectionState(model(), log, 'CounterAudit', { tags: { counterId: 'x1' } }),
-      { total: 2, last: 'x1' }, 'the state fold keeps the bookkeeping');
-    eq(foldProjectionState(model(), [], 'CounterAudit', { tags: { counterId: 'x1' } }),
-      { total: 0, last: null }, 'before anything happens, it is the initial state');
-    eq(foldProjectionState(model(), log, 'CounterTotal', { tags: { counterId: 'x1' } }),
-      foldProjection(model(), log, 'CounterTotal', { tags: { counterId: 'x1' } }),
-      'without `exposes` the two readings coincide');
-  });
-
-  advises('GlobalTicks', /states a tag filter/,
-    'a script with a tag filter of its own saves, with an advisory', () => {
-      const { id, model } = openScripted();
-      addDefinition('projection-definition', id, 'GlobalTicks', {
-        valueType: 'integer', isList: false,
-        script: { initialState: 0, tagFilter: [] },
-        handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
-      });
-      return model;
-    });
-
-  check('a script sees the tags it is read by, and the arguments it is given', () => {
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'TicksSeen', {
-      tags: [{ name: 'counterId', tagType: 'CounterId' }],
-      arguments: [{ name: 'prefix', propertyType: 'string' }],
-      valueType: 'string', isList: false,
-      script: { initialState: '' },
-      handlers: [{ event: 'Ticked', code: 'args.prefix + tags.counterId' }],
-    });
-    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
-    eq(foldProjection(model(), log, 'TicksSeen', { tags: { counterId: 'x1' }, args: { prefix: '#' } }),
-      '#x1', 'tags.counterId – by its name – and args.prefix');
-  });
 }
 
 // ---------------------------------------------------------------
@@ -1845,8 +1682,8 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an integer projection is offered increment and decrement', () => {
-    // The operations a standalone projection may use come from its own
-    // declared type, exactly as an entity property's always did.
+    // The operations a projection may use come from its own declared
+    // type, wherever it lives.
     add('Nudges', {
       valueType: 'integer', initialValue: 0,
       handlers: [{ event: 'Nudged', operation: 'increment', value: 1 }],
@@ -1872,7 +1709,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   };
 
   check('a scenario over a global numbering derives what it issues next', () => {
-    const { id, model } = open_(1);
+    const { id, model } = open_(SEQUENCE);
     const key = store_(id, model(), {
       projection: 'CourseNumbering',
       given: [
@@ -1886,7 +1723,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a scenario over a parameterised projection is per partition', () => {
-    const { id, model } = open_(2);
+    const { id, model } = open_(TENANT);
     const given = [
       { event: 'TenantRegistered', data: { tenantId: 't1' } },
       { event: 'CourseDefined', data: { tenantId: 't1', courseId: 'c1', capacity: 1, courseNumber: '1' } },
@@ -1906,22 +1743,24 @@ check('an import missing the definition arrays is refused, not silently accepted
     eq([at('t1'), at('t2'), at('t3')], ['2', '2', '1'], 'each tenant counted on its own');
   });
 
-  check('an entity property and a standalone projection are asserted the same way', () => {
-    const { id, model } = open_(1);
+  check('a grouped projection and a top-level one are asserted the same way', () => {
+    const { id, model } = open_(SEQUENCE);
+    sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' });
+    sandbox.moveProjectionIntoGroup(id, 'CourseCapacity', 'Course');
     const given = [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 9 } }];
     const capacity = store_(id, model(), {
-      projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, given,
+      projection: 'Course.capacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, given,
     });
     const numbering = store_(id, model(), {
       projection: 'CourseNumbering', given,
     });
-    eq(model()['projection-scenario-definitions'][capacity].then, 9, 'the bound one');
+    eq(model()['projection-scenario-definitions'][capacity].then, 9, 'the grouped one, by its qualified name');
     eq(model()['projection-scenario-definitions'][numbering].then, 'c2',
       'and the standalone one, in the same shape');
   });
 
   check('a value a projection really holds is not mistaken for an absent Then', () => {
-    const { id, model } = open_(1);
+    const { id, model } = open_(SEQUENCE);
     // `null`, `0` and `[]` are answers. A Then read by truthiness would
     // call all three "not run yet".
     const key = store_(id, model(), {
@@ -1933,7 +1772,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('changing what a projection does is reported as drift', () => {
-    const { id, model } = open_(1);
+    const { id, model } = open_(SEQUENCE);
     const key = store_(id, model(), {
       projection: 'CourseNumbering',
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
@@ -1949,18 +1788,18 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a scenario never stops you deleting the projection it is about', () => {
-    const { id, model } = open_(1);
+    const { id, model } = open_(SEQUENCE);
     const key = store_(id, model(), {
       projection: 'CourseNumbering', given: [],
     });
     // Only the scenario and the command read it; drop the command first,
     // and the scenario must not be what refuses.
-    const define = deepClone(model()['command-definitions'].DefineCourse);
+    const define = lists(model()['command-definitions'].DefineCourse);
     define.properties = [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
       { name: 'capacity', propertyType: 'integer', isOptional: false, isList: false }];
     // Supplying the id instead of minting it – which is what makes the
     // numbering unreferenced, and the point of the check.
-    define.boundary = [{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }];
+    define.boundary = [];
     define.publishes[0].parameters.courseId = { parameterName: 'courseId' };
     updateDefinition('command-definition', id, 'DefineCourse', define);
     removeDefinition('projection-definition', id, 'CourseNumbering');
@@ -1970,7 +1809,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('renaming a projection carries every scenario about it', () => {
-    const { id, model } = open_(1);
+    const { id, model } = open_(SEQUENCE);
     const key = store_(id, model(), {
       projection: 'CourseNumbering',
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
@@ -1982,7 +1821,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('renaming an event moves a projection scenario Given with it', () => {
-    const { id, model } = open_(1);
+    const { id, model } = open_(SEQUENCE);
     const key = store_(id, model(), {
       projection: 'CourseNumbering',
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
@@ -1994,7 +1833,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a scenario with wrong arguments saves, and the break is its run\'s to report', () => {
-    const { id, model } = open_(2);
+    const { id, model } = open_(TENANT);
     const stored = (body) => {
       const key = generateId();
       addDefinition('projection-scenario-definition', id, key, { given: [], then: null, ...body });
@@ -2010,31 +1849,8 @@ check('an import missing the definition arrays is refused, not silently accepted
     stored({ projection: 'CourseNumbering', arguments: { tenantId: 't1' } });
   });
 
-  check('safe mode compiles a script to a thrower and leaves declared folds alone', () => {
-    // The model as a plain object: `build(1)` below resets the store,
-    // but the fold only ever reads the object it is handed.
-    const scripted = openScripted().model();
-    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
-    eq(foldEntityProperty(scripted, log, 'Counter', 'total', 'x1'), 1, 'runs when scripts are on');
-    setScriptsDisabled(true);
-    try {
-      let failure = null;
-      try {
-        foldEntityProperty(scripted, log, 'Counter', 'total', 'x1');
-      } catch (error) {
-        failure = error;
-      }
-      eq((failure || {}).name, 'EvaluationError', 'an evaluation error, not a crash');
-      eq(/safe mode/.test((failure || {}).message), true, 'which says why');
-      eq(foldProjection(build(1), [], 'CourseNumbering', {}), 'c1', 'a declared fold is untouched');
-    } finally {
-      setScriptsDisabled(false);
-    }
-    eq(foldEntityProperty(scripted, log, 'Counter', 'total', 'x1'), 1, 'and back on afterwards');
-  });
-
-  check('a scenario over a scripted projection is read by its tags', () => {
-    const { id, model } = openScripted();
+  check('a scenario over a grouped projection is read by its tags', () => {
+    const { id, model } = openCounter();
     const given = [
       { event: 'Ticked', data: { counterId: 'x1' } },
       { event: 'Ticked', data: { counterId: 'x2' } },
@@ -2042,7 +1858,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     ];
     const at = (counterId) => {
       const key = store_(id, model(), {
-        projection: 'CounterTotal', tags: { counterId: { tagType: 'CounterId', tagValue: counterId } }, given,
+        projection: 'Counter.total', tags: { counterId: { tagType: 'CounterId', tagValue: counterId } }, given,
       });
       return model()['projection-scenario-definitions'][key].then;
     };
@@ -2050,7 +1866,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a projection scenario round-trips through an export', () => {
-    const { id, model } = open_(1);
+    const { id, model } = open_(SEQUENCE);
     store_(id, model(), {
       projection: 'CourseNumbering',
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 5 } }],
@@ -2069,57 +1885,16 @@ check('an import missing the definition arrays is refused, not silently accepted
 }
 
 // ---------------------------------------------------------------
-// `excluding` on a fanned binding compacts the instance list, but a
-// zipped parameter is still read at each instance's original fan-out
-// index – the pairing must not shift. `excluding` is an entity read's
-// (experimental), so this is the pricing model before it was stated
-// without entities: its seed alone.
-// ---------------------------------------------------------------
-{
-  const model = (() => {
-    const { id, model: current } = openBlank('Pricing with entities');
-    sandbox.seedProductPricing(id);
-    return current();
-  })();
-
-  check('an excluded line does not shift the price pairing of the rest', () => {
-    const log = [];
-    drive(model, log, 'DefineProduct', { productId: 'p1', price: 100 });
-    drive(model, log, 'DefineProduct', { productId: 'p2', price: 250 });
-    drive(model, log, 'DefineProduct', { productId: 'p3', price: 400 });
-    const modified = deepClone(model);
-    const command = modified['command-definitions'].OrderProducts;
-    command.properties.push({ name: 'skipProductId', propertyType: 'ProductId', isOptional: false, isList: false });
-    command.boundary.find((b) => b.alias === 'product').excluding = { parameterName: 'skipProductId' };
-    // The middle line is excluded and priced wrong on purpose: with the
-    // pairing kept by source index, p1 and p3 are each checked against
-    // their own submitted price and the order goes through. Read at the
-    // compacted index instead, and p3 would be checked against p2's 999.
-    const result = evaluateCommand(modified, log, 'OrderProducts', {
-      orderId: 'o1',
-      skipProductId: 'p2',
-      items: [
-        { productId: 'p1', price: 100 },
-        { productId: 'p2', price: 999 },
-        { productId: 'p3', price: 400 },
-      ],
-    });
-    eq(result.outcome, 'published', 'outcome');
-  });
-}
-
-// ---------------------------------------------------------------
 // A fan chained off another fan (`Course(each student.courses)`)
 // inherits its list: a parameter zipped with it pairs each course with
 // the element its *student* came from – not with the course's own
 // position in the flattened list, which runs past the list as soon as
-// a student holds more than one course, or shifts when `excluding`
-// leaves a student out.
+// a student holds more than one course.
 // ---------------------------------------------------------------
 {
   const { id, model } = openBlank('Chained fan');
-  addDefinition('entity-definition', id, 'Student', { properties: [] });
-  addDefinition('entity-definition', id, 'Course', { properties: [] });
+  sandbox.createGroup(id, 'Student', { name: 'studentId', tagType: 'StudentId' });
+  sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' });
   addDefinition('custom-type-definition', id, 'Requirement', {
     properties: [{ name: 'studentId', propertyType: 'StudentId' }, { name: 'minimum', propertyType: 'integer' }],
   });
@@ -2127,21 +1902,19 @@ check('an import missing the definition arrays is refused, not silently accepted
   addTaggedEvent(id, 'Enrolled', { properties: [prop('studentId', 'StudentId'), prop('courseId', 'CourseId')] });
   addTaggedEvent(id, 'CapacitySet', { properties: [prop('courseId', 'CourseId'), prop('capacity', 'integer')] });
   addTaggedEvent(id, 'Checked', { properties: [prop('requirements', 'Requirement', true)] });
-  addDefinition('projection-definition', id, 'StudentCourses', {
-    tags: [{ name: 'studentId', tagType: 'StudentId' }], valueType: 'CourseId', isList: true, initialValue: [],
+  addDefinition('projection-definition', id, 'Student.courses', {
+    valueType: 'CourseId', isList: true, initialValue: [],
     handlers: [{ event: 'Enrolled', operation: 'append', value: { eventProperty: 'courseId' } }],
   });
-  addDefinition('projection-definition', id, 'CourseCapacity', {
-    tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false, initialValue: 0,
+  addDefinition('projection-definition', id, 'Course.capacity', {
+    valueType: 'integer', isList: false, initialValue: 0,
     handlers: [{ event: 'CapacitySet', operation: 'set', value: { eventProperty: 'capacity' } }],
   });
-  updateDefinition('entity-definition', id, 'Student', { properties: [{ name: 'courses', projection: 'StudentCourses' }] });
-  updateDefinition('entity-definition', id, 'Course', { properties: [{ name: 'capacity', projection: 'CourseCapacity' }] });
   addDefinition('command-definition', id, 'Check', {
-    properties: [prop('requirements', 'Requirement', true), { ...prop('skip', 'StudentId'), isOptional: true }],
+    properties: [prop('requirements', 'Requirement', true)],
     boundary: [
-      { alias: 'student', entity: 'Student', id: { each: { parameterName: 'requirements', property: 'studentId' } } },
-      { alias: 'course', entity: 'Course', id: { each: { alias: 'student', property: 'courses' } } },
+      { alias: 'student', group: 'Student', tags: { studentId: { each: { parameterName: 'requirements', property: 'studentId' } } } },
+      { alias: 'course', group: 'Course', tags: { courseId: { each: { alias: 'student', property: 'courses' } } } },
     ],
     conditions: [{
       leftHandSide: { alias: 'course', property: 'capacity' }, predicate: 'greaterThanOrEquals',
@@ -2158,24 +1931,20 @@ check('an import missing the definition arrays is refused, not silently accepted
   ];
 
   check('a chained fan pairs a zipped parameter by the element it came from', () => {
-    eq(sandbox.isZipped(model(), model()['command-definitions'].Check, model()['command-definitions'].Check.conditions[0],
+    eq(sandbox.isZipped(model(), model()['command-definitions'].Check, lists(model()['command-definitions'].Check).conditions[0],
       { parameterName: 'requirements', property: 'minimum' }), true, 'the minimum is zipped with the courses');
     // s1's courses are cA (10) and cB (3) and s1 asks for 5; s2 holds none.
     const result = evaluateCommand(model(), log, 'Check', {
-      requirements: [{ studentId: 's1', minimum: 5 }, { studentId: 's2', minimum: 1 }], skip: null,
+      requirements: [{ studentId: 's1', minimum: 5 }, { studentId: 's2', minimum: 1 }],
     });
     eq(result.outcome, 'rejected', 'cB is checked against s1\'s minimum, not s2\'s');
-  });
-
-  check('and excluding a student does not shift the pairing', () => {
-    const body = deepClone(model()['command-definitions'].Check);
-    body.boundary[0].excluding = { parameterName: 'skip' };
-    updateDefinition('command-definition', id, 'Check', body);
-    // s1 is left out; s3's one course, cA (10), meets s3's 5.
-    const result = evaluateCommand(model(), log, 'Check', {
-      requirements: [{ studentId: 's1', minimum: 100 }, { studentId: 's3', minimum: 5 }], skip: 's1',
+    eq(result.failedRule.atInstance, 1, 'the second course bound, cB');
+    const fine = evaluateCommand(model(), log, 'Check', {
+      requirements: [{ studentId: 's2', minimum: 100 }, { studentId: 's3', minimum: 5 }],
     });
-    eq(result.outcome, 'published', 'cA is checked against s3\'s minimum, not s1\'s');
+    eq(fine.outcome, 'published', 's3\'s one course, cA (10), meets s3\'s 5 – s2 holds none');
+    eq(fine.reads.course.instances.map((i) => i.id), ['cA'], 'a group fanned off a group, one instance per course');
+    eq(advisedOtherwise(model()), [], 'and the model is clean');
   });
 }
 
@@ -2184,7 +1953,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 // where the next append would overwrite the only copy.
 // ---------------------------------------------------------------
 {
-  open_(ENTITIES);
+  open_(GROUPED);
   const logKey = [...store.keys()].find((k) => /:events:v\d+$/.test(k));
 
   check('a corrupt log is moved aside rather than erased on the next append', () => {
@@ -2217,7 +1986,7 @@ check('an import missing the definition arrays is refused, not silently accepted
 // ---------------------------------------------------------------
 {
   const KINDS = [
-    'entity-definition', 'event-definition', 'projection-definition', 'command-definition',
+    'group-definition', 'event-definition', 'projection-definition', 'command-definition',
     'custom-type-definition', 'scenario-definition', 'projection-scenario-definition',
   ];
   const collOf = (kind) => kind + 's';
@@ -2237,7 +2006,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     return out;
   };
 
-  for (let i = 0; i < 5; i++) {
+  for (const i of [0, 1, 2, 3, 4, GROUPED]) {
     check(`shipped model ${i}: every computed reference survives renaming its target`, () => {
       const { id, model } = open_(i);
       eq(dangling(model()), [], 'baseline has no dangling references');
@@ -2256,12 +2025,12 @@ check('an import missing the definition arrays is refused, not silently accepted
         }
       }
       for (const target of targets) {
-        // A cascade from an earlier rename (an entity moving its
-        // derived identifier) may have renamed this one already.
         if (!(target.name in model()[collOf(target.kind)])) continue;
         renameDefinition(target.kind, id, target.name, target.name + 'X');
       }
       eq(dangling(model()), [], 'no reference was left behind');
+      eq(sandbox.modelAdvisories(model()).filter((a) => /does not define|has no projection/.test(a.message)), [],
+        'and no read lost what it reads');
     });
   }
 }
@@ -2272,24 +2041,22 @@ check('an import missing the definition arrays is refused, not silently accepted
 // value, while an operand missing its name is a gap however it prints.
 // ---------------------------------------------------------------
 {
-  const { id, model } = open_(ENTITIES);
+  const { id, model } = open_(GROUPED);
 
-  check('a literal identifier containing "?" is a value, not a gap', () => {
-    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
-    // The emission writes the same literal, so write coverage still
-    // sees the tag the boundary consults – only the '?' is under test.
-    body.boundary[0].id = 'what?';
-    body.publishes[0].parameters.courseId = 'what?';
+  check('a literal tag containing "?" is a value, not a gap', () => {
+    const body = lists(model()['command-definitions'].ChangeCourseCapacity);
+    body.boundary[0].tags.courseId = { tagType: 'CourseId', tagValue: 'what?' };
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
-    eq(model()['command-definitions'].ChangeCourseCapacity.boundary[0].id, 'what?', 'stored');
+    eq(model()['command-definitions'].ChangeCourseCapacity.boundary[0].tags.courseId.tagValue, 'what?', 'stored');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'ChangeCourseCapacity'), [], 'and no gap advised');
   });
 
-  check('an identifier operand missing its name saves, and the advisory names the gap', () => {
-    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
-    body.boundary[0].id = { parameterName: '' };
+  check('a tag operand missing its name saves, and the advisory names the gap', () => {
+    const body = lists(model()['command-definitions'].ChangeCourseCapacity);
+    body.boundary[0].tags.courseId = { parameterName: '' };
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
     eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'ChangeCourseCapacity' && /no identifier operand/.test(a.message)
+      (a) => a.name === 'ChangeCourseCapacity' && /with no value for its "courseId" tag/.test(a.message)
     ), true, 'the incomplete operand is reported');
   });
 }
@@ -2314,7 +2081,7 @@ check('an import missing the definition arrays is refused, not silently accepted
     throw new Error('did not fail');
   });
 
-  addDefinition('entity-definition', id, 'Anordnung', { properties: [] });
+  sandbox.createGroup(id, 'Anordnung', { name: 'anordnungId', tagType: 'AnordnungId' });
   addTaggedEvent(id, 'AnordnungErzeugt', {
     properties: [
       { name: 'anordnungId', propertyType: 'AnordnungId', isOptional: false, isList: false },
@@ -2368,11 +2135,12 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('an unmapped optional event property publishes null, advisory-free', () => {
     const outcome = evaluateCommand(model(), [], 'ErzeugeOhneNotiz', { anordnungId: 'a1' });
     eq(outcome.events[0].data, { anordnungId: 'a1', notiz: null }, 'the omission is the null');
-    eq(sandbox.modelAdvisories(model()).length, 0, 'nothing here is a hazard');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.kind !== 'group-definition').length, 0,
+      'nothing here is a hazard');
   });
 
   check('a condition reads the null; isEmpty holds, ordering breaks', () => {
-    const body = deepClone(model()['command-definitions'].ErzeugeAnordnung);
+    const body = lists(model()['command-definitions'].ErzeugeAnordnung);
     body.conditions = [{ leftHandSide: { parameterName: 'notiz' }, predicate: 'isNotEmpty' }];
     updateDefinition('command-definition', id, 'ErzeugeAnordnung', body);
     const outcome = evaluateCommand(model(), [], 'ErzeugeAnordnung', { anordnungId: 'a1' });
@@ -2386,23 +2154,19 @@ check('an import missing the definition arrays is refused, not silently accepted
     updateDefinition('command-definition', id, 'ErzeugeAnordnung', body);
   });
 
-  // A projection reading the optional property, bound as an entity
-  // property – the fold sees the same null whether the Given spelled
-  // it out or left the key off.
-  addDefinition('projection-definition', id, 'AnordnungNotiz', {
-    tags: [{ name: 'anordnungId', tagType: 'AnordnungId' }],
+  // A projection reading the optional property, in a group – the fold
+  // sees the same null whether the Given spelled it out or left the key
+  // off.
+  addDefinition('projection-definition', id, 'Anordnung.notiz', {
     valueType: 'string', isList: false,
     initialValue: null,
     handlers: [{ event: 'AnordnungErzeugt', operation: 'set', value: { eventProperty: 'notiz' } }],
   });
-  updateDefinition('entity-definition', id, 'Anordnung', {
-    properties: [{ name: 'notiz', projection: 'AnordnungNotiz' }],
-  });
 
   check('the fold reads an omitted optional event property as null', () => {
     const log = [{ type: 'AnordnungErzeugt', data: { anordnungId: 'a1' } }];
-    eq(foldEntityProperty(model(), log, 'Anordnung', 'notiz', 'a1'), null, 'null, not undefined');
-    eq(foldEntityProperty(model(), [
+    eq(foldMember(model(), log, 'Anordnung', 'notiz', 'a1'), null, 'null, not undefined');
+    eq(foldMember(model(), [
       { type: 'AnordnungErzeugt', data: { anordnungId: 'a1', notiz: 'da' } },
     ], 'Anordnung', 'notiz', 'a1'), 'da', 'and a value when one is there');
   });
@@ -2417,7 +2181,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('an unset optional tag-marked property writes no tag', () => {
-    addDefinition('entity-definition', id, 'Festlegung', { properties: [] });
+    sandbox.createGroup(id, 'Festlegung', { name: 'festlegungId', tagType: 'FestlegungId' });
     addTaggedEvent(id, 'FestlegungGeprueft', {
       properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: true, isList: false }],
     });
@@ -2429,7 +2193,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   check('a boundary identifier from an unset optional errors, and the advisory said so', () => {
     addDefinition('command-definition', id, 'PruefeFestlegung', {
       properties: [{ name: 'festlegungId', propertyType: 'FestlegungId', isOptional: true, isList: false }],
-      boundary: [{ alias: 'festlegung', entity: 'Festlegung', id: { parameterName: 'festlegungId' } }],
+      boundary: [{ alias: 'festlegung', group: 'Festlegung', tags: { festlegungId: { parameterName: 'festlegungId' } } }],
       conditions: [],
       publishes: [{ name: 'FestlegungGeprueft', parameters: { festlegungId: { parameterName: 'festlegungId' } } }],
     });
@@ -2445,7 +2209,7 @@ check('an import missing the definition arrays is refused, not silently accepted
   });
 
   check('a required event property fed from an optional parameter is advised', () => {
-    const body = deepClone(model()['command-definitions'].ErzeugeAnordnung);
+    const body = lists(model()['command-definitions'].ErzeugeAnordnung);
     body.properties = body.properties.map((p) => p.name === 'anordnungId' ? { ...p, isOptional: true } : p);
     addDefinition('command-definition', id, 'WackligErzeugen', body);
     eq(sandbox.modelAdvisories(model()).some(
@@ -2454,13 +2218,12 @@ check('an import missing the definition arrays is refused, not silently accepted
     removeDefinition('command-definition', id, 'WackligErzeugen');
   });
 
-  check('optional and list together is advised, and evaluates as a plain list', () => {
+  // 11.0: an optional list is allowed, its null its absence.
+  check('an optional list is allowed, and null is its absence', () => {
     addTaggedEvent(id, 'Doppelt', {
       properties: [{ name: 'notizen', propertyType: 'string', isOptional: true, isList: true }],
     });
-    eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'Doppelt' && /both optional and a list/.test(a.message)
-    ), true, 'two spellings of none');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Doppelt' && /optional/.test(a.message)), [], 'no advisory');
     removeDefinition('event-definition', id, 'Doppelt');
   });
 }
@@ -2486,11 +2249,9 @@ check('every predefined model ships advisory-clean', () => {
 });
 
 // ---------------------------------------------------------------
-// Optional bindings, and one fact per event.
+// One fact per event.
 //
-// A binding derived from a value nothing has set yet may declare the
-// absence expected and bind nothing instead of erroring. And the
-// reassignment shape – one command moving two instructors' partitions
+// The reassignment shape – one command moving two instructors' partitions
 // in opposite directions – is expressed by *splitting the event*: an
 // Assigned and an Unassigned each carry one instructor tag, so one
 // plain handler per event type is enough; an event that names two
@@ -2499,8 +2260,8 @@ check('every predefined model ships advisory-clean', () => {
 {
   function openAssignment() {
     const { id, model } = openBlank('Assignment');
-    addDefinition('entity-definition', id, 'Course', { properties: [] });
-    addDefinition('entity-definition', id, 'Instructor', { properties: [] });
+    sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' });
+    sandbox.createGroup(id, 'Instructor', { name: 'instructorId', tagType: 'InstructorId' });
     addTaggedEvent(id, 'Assigned', {
       properties: [
         { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
@@ -2516,24 +2277,16 @@ check('every predefined model ships advisory-clean', () => {
         { name: 'instructorId', propertyType: 'InstructorId', isOptional: true, isList: false },
       ],
     });
-    addDefinition('projection-definition', id, 'CourseInstructorId', {
-      tags: [{ name: 'courseId', tagType: 'CourseId' }],
+    addDefinition('projection-definition', id, 'Course.instructorId', {
       valueType: 'InstructorId', isList: false, initialValue: null,
       handlers: [{ event: 'Assigned', operation: 'set', value: { eventProperty: 'instructorId' } }],
     });
-    addDefinition('projection-definition', id, 'InstructedCourses', {
-      tags: [{ name: 'instructorId', tagType: 'InstructorId' }],
+    addDefinition('projection-definition', id, 'Instructor.instructedCourses', {
       valueType: 'CourseId', isList: true, initialValue: [],
       handlers: [
         { event: 'Assigned', operation: 'append', value: { eventProperty: 'courseId' } },
         { event: 'Unassigned', operation: 'remove', value: { eventProperty: 'courseId' } },
       ],
-    });
-    updateDefinition('entity-definition', id, 'Course', {
-      properties: [{ name: 'instructorId', projection: 'CourseInstructorId' }],
-    });
-    updateDefinition('entity-definition', id, 'Instructor', {
-      properties: [{ name: 'instructedCourses', projection: 'InstructedCourses' }],
     });
     addDefinition('command-definition', id, 'Assign', {
       properties: [
@@ -2546,9 +2299,9 @@ check('every predefined model ships advisory-clean', () => {
       // derived from `course.instructorId`, which is a claim about
       // state this command looked at.
       boundary: [
-        { alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } },
-        { alias: 'previousInstructor', entity: 'Instructor',
-          id: { alias: 'course', property: 'instructorId' }, isOptional: true },
+        { alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } },
+        { alias: 'previousInstructor', group: 'Instructor',
+          tags: { instructorId: { alias: 'course', property: 'instructorId' } } },
       ],
       conditions: [
         { leftHandSide: { alias: 'previousInstructor', property: 'instructedCourses' },
@@ -2577,57 +2330,17 @@ check('every predefined model ships advisory-clean', () => {
   check('the split events move the two partitions in opposite directions', () => {
     const { model } = openAssignment();
     const log = [assigned('c1', 'i1'), assigned('c1', 'i2'), unassigned('c1', 'i1')];
-    eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i2'), ['c1'],
+    eq(foldMember(model(), log, 'Instructor', 'instructedCourses', 'i2'), ['c1'],
       'the new instructor gains the course');
-    eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i1'), [],
+    eq(foldMember(model(), log, 'Instructor', 'instructedCourses', 'i1'), [],
       'the previous instructor loses it');
   });
 
   check('an Unassigned with a null identifier carries no tag and reaches nobody', () => {
     const { model } = openAssignment();
     const log = [assigned('c1', 'i1'), unassigned('c1', null)];
-    eq(foldEntityProperty(model(), log, 'Instructor', 'instructedCourses', 'i1'), ['c1'],
+    eq(foldMember(model(), log, 'Instructor', 'instructedCourses', 'i1'), ['c1'],
       'a first assignment removes nothing from anyone');
-  });
-
-  check('an optional binding with an unset identifier binds nothing', () => {
-    const { model } = openAssignment();
-    const result = evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' });
-    eq(result.outcome, 'published', 'no error, and the condition over the absent alias held vacuously');
-    eq(result.events.map((e) => e.type), ['Assigned', 'Unassigned'], 'both facts recorded');
-    eq(result.events[1].data.instructorId, null, 'the no-predecessor case publishes the explicit null');
-    eq(result.reads.previousInstructor.absent, true, 'the reads say the alias bound nothing');
-    eq(result.reads.previousInstructor.instances, [], 'zero instances, not a phantom');
-  });
-
-  check('an inline read tagged by an optional binding is advised: absent, it is an error', () => {
-    const { id, model } = openAssignment();
-    // An instructor's mentor, another instructor – a value read off the
-    // optional binding, and the tag of a read.
-    addDefinition('projection-definition', id, 'InstructorMentor', {
-      tags: [{ name: 'instructorId', tagType: 'InstructorId' }],
-      valueType: 'InstructorId', isList: false, initialValue: null, handlers: [],
-    });
-    updateDefinition('entity-definition', id, 'Instructor', {
-      properties: [
-        ...model()['entity-definitions'].Instructor.properties,
-        { name: 'mentorId', projection: 'InstructorMentor' },
-      ],
-    });
-    const body = deepClone(model()['command-definitions'].Assign);
-    body.conditions.push({
-      leftHandSide: { projection: 'InstructedCourses',
-        tags: { instructorId: { alias: 'previousInstructor', property: 'mentorId' } } },
-      predicate: 'isNotEmpty', rejection: 'The previous instructor teaches nothing',
-    });
-    updateDefinition('command-definition', id, 'Assign', body);
-    const advisories = sandbox.modelAdvisories(model()).filter((a) => a.name === 'Assign');
-    const advisory = advisories.find((a) => /may be absent/.test(a.message));
-    eq(!!advisory, true, 'advised ahead of time: ' + JSON.stringify(advisories));
-    eq(/previousInstructor/.test(advisory.message) && /InstructedCourses/.test(advisory.message), true, advisory.message);
-    let message = '';
-    try { evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' }); } catch (error) { message = error.message; }
-    eq(message !== '', true, 'and, absent, the evaluation error it said would come');
   });
 
   check('the condition over the bound previous instructor still decides', () => {
@@ -2638,36 +2351,18 @@ check('every predefined model ships advisory-clean', () => {
     eq(result.events[1].data.instructorId, 'i1', 'and the Unassigned names the predecessor');
   });
 
-  check('without the flag, an unset identifier stays the loud error', () => {
-    const { id, model } = openAssignment();
-    const body = deepClone(model()['command-definitions'].Assign);
-    delete body.boundary[1].isOptional;
-    updateDefinition('command-definition', id, 'Assign', body);
+  check('an unset identifier is the loud error', () => {
+    const { model } = openAssignment();
     let message = '';
     try { evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' }); }
     catch (error) { message = error.message; }
     eq(/unset \(null\)/.test(message), true, 'errored: ' + message);
   });
 
-  check('reading a property of an absent alias yields null', () => {
-    const { id, model } = openAssignment();
-    const body = deepClone(model()['command-definitions'].Assign);
-    body.conditions = [];
-    // Route the read through the absent alias itself rather than
-    // through `course` – nothing was read at all, so the value is
-    // null, the one spelling of no value.
-    body.publishes[1].parameters.instructorId = {
-      alias: 'previousInstructor', property: 'instructedCourses',
-    };
-    updateDefinition('command-definition', id, 'Assign', body);
-    const result = evaluateCommand(model(), [], 'Assign', { courseId: 'c1', instructorId: 'i1' });
-    eq(result.outcome, 'published', 'published');
-    eq(result.events[1].data.instructorId, null, 'null, not an empty list and not an error');
-  });
-
   check('an event naming two instances of one type is flagged as ambiguous', () => {
     const { id, model } = openAssignment();
-    eq(sandbox.modelAdvisories(model()).length, 0, 'the split-event shape is clean');
+    const ambiguous = () => sandbox.modelAdvisories(model()).some((a) => /Give its handler a condition on one of them .*split the event.*or tag it by one/.test(a.message));
+    eq(ambiguous(), false, 'the split-event shape is not ambiguous');
     // The unsplit shape: one event carrying both the new holder and
     // the one replaced – a handler on it fires for both partitions.
     addTaggedEvent(id, 'Reassigned', {
@@ -2677,104 +2372,29 @@ check('every predefined model ships advisory-clean', () => {
         { name: 'previousInstructorId', propertyType: 'InstructorId', isOptional: true, isList: false },
       ],
     });
-    const body = deepClone(model()['projection-definitions'].InstructedCourses);
+    const body = deepClone(model()['group-definitions'].Instructor.projections.find((p) => p.name === 'instructedCourses'));
     body.handlers.push({ event: 'Reassigned', operation: 'append', value: { eventProperty: 'courseId' } });
-    updateDefinition('projection-definition', id, 'InstructedCourses', body);
+    updateDefinition('projection-definition', id, 'Instructor.instructedCourses', body);
     const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
-    eq(/Tag it by one, split the event/.test(found), true, 'the advisory names the fixes: ' + found);
+    eq(/Give its handler a condition on one of them .*split the event.*or tag it by one/.test(found), true, 'the advisory names the fixes: ' + found);
   });
 
-  check('an unflagged binding off a null-starting projection is advised ahead of time', () => {
-    const { id, model } = openAssignment();
-    const body = deepClone(model()['command-definitions'].Assign);
-    delete body.boundary[1].isOptional;
-    updateDefinition('command-definition', id, 'Assign', body);
+  check('a binding off a null-starting projection is advised ahead of time', () => {
+    const { model } = openAssignment();
     const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
-    eq(/may be absent/.test(found), true, 'the advisory names the fix: ' + found);
-  });
-}
-
-// ---------------------------------------------------------------
-// Guarded emissions (6.0). A guard decides what an accepted command
-// *records*, never whether it happens: a failing guard skips its
-// emission silently, and every guard failing publishes nothing at all
-// – still a `published` outcome. Exercised against the shipped
-// guarded-emissions variant of the content-decisions family, whose
-// UpdateText carries the complementary pair.
-// ---------------------------------------------------------------
-{
-  const GUARDED = 8;
-  const added = { type: 'DocumentAdded', data: { id: 'd1' } };
-  const changed = (text) => ({ type: 'TextChanged', data: { docId: 'd1', text } });
-  const published = (text) => ({ type: 'DocumentPublished', data: { docId: 'd1', text } });
-
-  check('complementary guards fire exactly one of the two emissions', () => {
-    const model = build(GUARDED);
-    const differs = evaluateCommand(model, [added], 'UpdateText', { docId: 'd1', text: 'x' });
-    eq(differs.outcome, 'published', 'accepted');
-    eq(differs.events.map((e) => e.type), ['TextChanged'], 'the text differs from the published one');
-
-    const reverts = evaluateCommand(
-      model, [added, changed('a'), published('a'), changed('b')],
-      'UpdateText', { docId: 'd1', text: 'a' });
-    eq(reverts.outcome, 'published', 'accepted');
-    eq(reverts.events.map((e) => e.type), ['TextRevertedToPublished'],
-      're-typing the published text is recorded as the fact it is');
-  });
-
-  check('every guard failing publishes nothing – an accepted command, not a rejection', () => {
-    const { id, model } = openBlank('Guarded');
-    addTaggedEvent(id, 'Pinged', { properties: [] });
-    addDefinition('command-definition', id, 'Ping', {
-      properties: [{ name: 'loud', propertyType: 'boolean', isOptional: false, isList: false }],
-      boundary: [],
-      conditions: [],
-      publishes: [{
-        name: 'Pinged',
-        when: [{ leftHandSide: { parameterName: 'loud' }, predicate: 'isTrue' }],
-        parameters: {},
-      }],
-    });
-    const quiet = evaluateCommand(model(), [], 'Ping', { loud: false });
-    eq(quiet.outcome, 'published', 'accepted either way');
-    eq(quiet.events, [], 'nothing recorded');
-    eq(evaluateCommand(model(), [], 'Ping', { loud: true }).events.map((e) => e.type),
-      ['Pinged'], 'and the guard holding publishes');
-  });
-
-  check('a guard read joins the derived DCB – it may hide nothing from the query', () => {
-    const model = build(GUARDED);
-    const dcb = sandbox.deriveDcb(model, model['command-definitions'].UpdateText);
-    const published = dcb.items.find((item) => item.projection === 'DocumentPublishedText');
-    eq(!!published, true, 'the projection only the guards read is a read');
-    eq(published.types.includes('DocumentPublished'), true,
-      'so its events are in the query');
-  });
-
-  check('renaming an enum member rewrites emission guards too', () => {
-    const { id, model } = open_(GUARDED);
-    const body = deepClone(model()['command-definitions'].PublishDocument);
-    body.publishes[0].when = [{
-      leftHandSide: { projection: 'DocumentStatus', tags: { documentId: { parameterName: 'docId' } } },
-      predicate: 'equals',
-      rightHandSide: { enumMember: 'PendingChanges' },
-    }];
-    updateDefinition('command-definition', id, 'PublishDocument', body);
-    renameMember('custom-type-definition', id, 'DocumentStatus', 'member', 'PendingChanges', 'Dirty');
-    const guard = model()['command-definitions'].PublishDocument.publishes[0].when[0];
-    eq(guard.rightHandSide.enumMember, 'Dirty', 'the guard moved with the member');
+    eq(/starts at null – evaluation errors until something sets it/.test(found), true, found);
   });
 }
 
 // ---------------------------------------------------------------
 // Derived projections (6.0). One predicate over other projections –
-// no handlers, no initial value, one boolean – declared once, bound
-// as an entity property, read by command guards, and contributing its
+// no handlers, no initial value, one boolean – declared once, read by
+// command rules, and contributing its
 // operands' queries to any boundary that binds it. Exercised against
 // the shipped derived variant of the content-decisions family.
 // ---------------------------------------------------------------
 {
-  const DERIVED = 9;
+  const DERIVED = PREDEFINED_INDEX('content-decisions-derived');
   const added = { type: 'DocumentAdded', data: { id: 'd1' } };
   const updated = (text) => ({ type: 'TextUpdated', data: { docId: 'd1', text } });
   const published = (text) => ({ type: 'DocumentPublished', data: { docId: 'd1', text } });
@@ -2844,10 +2464,6 @@ check('every predefined model ships advisory-clean', () => {
     eq(derived.leftHandSide.projection, 'DocumentDraftText', 'the operand moved with the rename');
   });
 
-  check('derived is data, not code – the import gate stays closed', () => {
-    const model = build(DERIVED);
-    eq(envelopeHasScript(buildShareEnvelope(model, [])), false, 'nothing to confirm');
-  });
 }
 
 // ---------------------------------------------------------------
@@ -2921,7 +2537,7 @@ check('every predefined model ships advisory-clean', () => {
     const body = deepClone(model()['projection-definitions'].DeveloperAvailableHoursPerWeek);
     body.initialValue = null;
     updateDefinition('projection-definition', id, 'DeveloperAvailableHoursPerWeek', body);
-    const command = deepClone(model()['command-definitions'].AllocateHours);
+    const command = lists(model()['command-definitions'].AllocateHours);
     command.conditions = command.conditions.slice(3);
     updateDefinition('command-definition', id, 'AllocateHours', command);
     let broke = null;
@@ -2941,50 +2557,54 @@ check('every predefined model ships advisory-clean', () => {
     ], 'the registration is not tagged by the week, and is still in the boundary');
   });
 
-  check('read through an entity, a derived property is the same queries', () => {
-    // `Course.full` compares the course's subscriptions with a limit
-    // kept for all courses. Read as a projection, the limit is a query
-    // of its own; read through the entity, it used to be ANDed with the
-    // course's tag – and the untagged event that changes it fell out of
-    // the append condition the decision depends on.
-    const { id, model } = openBlank('Derived through an entity');
-    addDefinition('entity-definition', id, 'Course', { properties: [] });
+  check('a derived projection in a group reads its siblings by local name, and others by its tag', () => {
+    // `Course.full` compares the course's subscriptions – its sibling,
+    // read bare, by the group's tag implied – with a limit kept for all
+    // courses, a top-level projection read untagged. Read through the
+    // group or bound by its qualified name, it is the same queries: the
+    // limit a query of its own, never ANDed with the course's tag.
+    const { id, model } = openBlank('Derived in a group');
+    sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' });
     const courseId = { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false };
     addTaggedEvent(id, 'Subscribed', { properties: [courseId] });
     addTaggedEvent(id, 'LimitSet', { properties: [{ name: 'max', propertyType: 'integer', isOptional: false, isList: false }] });
-    const own = { courseId: { parameterName: 'courseId' } };
-    addDefinition('projection-definition', id, 'SubscriptionCount', {
-      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false, initialValue: 0,
+    addDefinition('projection-definition', id, 'Course.subscriptionCount', {
+      valueType: 'integer', isList: false, initialValue: 0,
       handlers: [{ event: 'Subscribed', operation: 'increment', value: 1 }],
     });
     addDefinition('projection-definition', id, 'Limit', {
       tags: [], valueType: 'integer', isList: false, initialValue: 10,
       handlers: [{ event: 'LimitSet', operation: 'set', value: { eventProperty: 'max' } }],
     });
-    addDefinition('projection-definition', id, 'CourseFull', {
-      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'boolean', isList: false,
-      derived: { leftHandSide: { projection: 'SubscriptionCount', tags: own }, predicate: 'greaterThanOrEquals',
+    addDefinition('projection-definition', id, 'Course.full', {
+      valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'subscriptionCount' }, predicate: 'greaterThanOrEquals',
         rightHandSide: { projection: 'Limit', tags: {} } },
     });
-    updateDefinition('entity-definition', id, 'Course', { properties: [{ name: 'full', projection: 'CourseFull' }] });
     const subscribe = (boundary, leftHandSide) => ({
       properties: [courseId], boundary,
       conditions: [{ leftHandSide, predicate: 'isFalse', rejection: 'The course is full.' }],
       publishes: [{ name: 'Subscribed', parameters: { courseId: { parameterName: 'courseId' } } }],
     });
-    addDefinition('command-definition', id, 'SubscribeThroughEntity',
-      subscribe([{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }], { alias: 'course', property: 'full' }));
+    const own = { courseId: { parameterName: 'courseId' } };
+    addDefinition('command-definition', id, 'SubscribeThroughGroup',
+      subscribe([{ alias: 'course', group: 'Course', tags: own }], { alias: 'course', property: 'full' }));
     addDefinition('command-definition', id, 'SubscribeThroughProjection',
-      subscribe([{ alias: 'full', projection: 'CourseFull', tags: own }], { alias: 'full' }));
+      subscribe([{ alias: 'full', projection: 'Course.full', tags: own }], { alias: 'full' }));
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.kind !== 'event-definition'), [], 'advisory-clean');
 
     const queries = (name) => sandbox.deriveDcb(model(), model()['command-definitions'][name]).items
       .map((item) => JSON.stringify([item.tags, item.types])).sort();
-    eq(queries('SubscribeThroughEntity'), queries('SubscribeThroughProjection'), 'one boundary, however it is read');
-    eq(queries('SubscribeThroughEntity').includes(JSON.stringify([[], ['LimitSet']])), true, 'the limit is read untagged');
+    eq(queries('SubscribeThroughGroup'), queries('SubscribeThroughProjection'), 'one boundary, however it is read');
+    eq(queries('SubscribeThroughGroup'), [JSON.stringify([['CourseId:{courseId}'], ['Subscribed']]), JSON.stringify([[], ['LimitSet']])],
+      'the sibling under the course\'s tag, the limit untagged');
 
     const log = [{ type: 'Subscribed', data: { courseId: 'c1' } }, { type: 'LimitSet', data: { max: 1 } }];
-    eq(evaluateCommand(model(), log, 'SubscribeThroughEntity', { courseId: 'c1' }).outcome, 'rejected',
+    eq(evaluateCommand(model(), log, 'SubscribeThroughGroup', { courseId: 'c1' }).outcome, 'rejected',
       'and the decision does depend on it');
+    eq(evaluateCommand(model(), log, 'SubscribeThroughGroup', { courseId: 'c2' }).outcome, 'published',
+      'another course has its own count');
+    eq(foldMember(model(), log, 'Course', 'full', 'c1'), true, 'folded by the group\'s tag alone');
   });
 
   // A course's free seats, and derived projections over them that take
@@ -3015,7 +2635,7 @@ check('every predefined model ships advisory-clean', () => {
     eq(has([], 3), true, 'three free, three asked');
     eq(has([subscribe('s1')], 3), false, 'two free, three asked');
     eq(has([subscribe('s1')], 2), true, 'the argument is the read\'s to give');
-    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
   });
 
   check('a command reads it with an argument from its payload, and its boundary is the operand\'s', () => {
@@ -3063,7 +2683,7 @@ check('every predefined model ships advisory-clean', () => {
         courseId: { parameterName: 'courseId' }, studentId: { parameterName: 'studentId' } } },
       predicate: 'equals', rightHandSide: true },
     });
-    eq(sandbox.modelAdvisories(model()).map((a) => a.message), [], 'advisory-clean');
+    eq(advisedOtherwise(model()).map((a) => a.message), [], 'advisory-clean');
     eq(foldProjection(model(), [], 'FreeAfterTwice', { tags: { courseId: 'c1' }, args: { each: 1 } }), 1, 'passed on and computed with');
     const is = (studentId) => foldProjection(model(), [subscribe('s1')], 'IsSubscribed',
       { tags: { courseId: 'c1' }, args: { studentId } });
@@ -3120,7 +2740,7 @@ check('every predefined model ships advisory-clean', () => {
     const body = model()['projection-definitions'].HasSeats;
     eq(body.arguments, [{ name: 'wanted', propertyType: 'integer' }], 'the declaration');
     eq(body.derived.rightHandSide, { parameterName: 'wanted' }, 'its own side');
-    eq(model()['command-definitions'].Book.conditions[0].leftHandSide.arguments,
+    eq(lists(model()['command-definitions'].Book).conditions[0].leftHandSide.arguments,
       { wanted: { parameterName: 'seats' } }, 'the command\'s read, keyed by the new name');
   });
 
@@ -3151,7 +2771,7 @@ check('every predefined model ships advisory-clean', () => {
     const body = model()['projection-definitions'].NotSubscribed;
     eq([body.tags, body.arguments], [[{ name: 'courseId', tagType: 'CourseId' }], [{ name: 'studentId', propertyType: 'StudentId' }]],
       'an argument now, first among them');
-    const read = model()['command-definitions'].Subscribe.conditions[0].leftHandSide;
+    const read = lists(model()['command-definitions'].Subscribe).conditions[0].leftHandSide;
     eq([read.tags, read.arguments], [{ courseId: { parameterName: 'courseId' } }, { studentId: 's1' }],
       'the read gives it as an argument, as a bare literal');
     eq(sandbox.modelAdvisories(model()).map((a) => a.message), [], 'advisory-clean');
@@ -3159,24 +2779,10 @@ check('every predefined model ships advisory-clean', () => {
       'rejected', 'and it reads the same');
 
     sandbox.setProjectionParameterIsTag(id, 'NotSubscribed', 'studentId', true);
-    const back = model()['command-definitions'].Subscribe.conditions[0].leftHandSide;
+    const back = lists(model()['command-definitions'].Subscribe).conditions[0].leftHandSide;
     eq([back.tags, back.arguments], [{ courseId: { parameterName: 'courseId' }, studentId: { tagType: 'StudentId', tagValue: 's1' } }, undefined],
       'and back, the literal typed again');
     eq(model()['projection-definitions'].NotSubscribed.arguments, undefined, 'no empty list left behind');
-  });
-
-  check('a 9.x script\'s arguments are lifted onto its projection on import', () => {
-    const { model } = seatsModel('Lifted');
-    const envelope = buildShareEnvelope(model(), []);
-    envelope.dcbModelVersion = '9.0';
-    envelope.projectionDefinitions.push({
-      name: 'Prefixed', tags: [], valueType: 'string', isList: false,
-      script: { initialState: '', arguments: [{ name: 'prefix', propertyType: 'string' }] },
-      handlers: [],
-    });
-    const { modelId } = importModelFromEnvelope(envelope);
-    const body = sandbox.projectState()[modelId]['projection-definitions'].Prefixed;
-    eq([body.arguments, body.script.arguments], [[{ name: 'prefix', propertyType: 'string' }], undefined], 'lifted');
   });
 
   check('the shipped model is advisory-clean and its scenarios hold', () => {
@@ -3242,7 +2848,7 @@ check('every predefined model ships advisory-clean', () => {
     return { id, model };
   };
   const prop = (name, type, isList = false) => ({ name, propertyType: type, isOptional: false, isList });
-  const advised = (model, name) => sandbox.modelAdvisories(model)
+  const advised = (model, name) => advisedOtherwise(model)
     .filter((a) => a.kind === 'event-definition' && a.name === name).map((a) => a.message);
 
   check('an event carries the tags it lists, and only those', () => {
@@ -3320,7 +2926,7 @@ check('every predefined model ships advisory-clean', () => {
 // ---------------------------------------------------------------
 {
   check('a projection is read by the tags it declares, and only by them', () => {
-    const model = build(ENTITIES);
+    const model = build(SIMPLE);
     const log = [];
     drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 5 });
     drive(model, log, 'DefineCourse', { courseId: 'c2', capacity: 5 });
@@ -3338,7 +2944,7 @@ check('every predefined model ships advisory-clean', () => {
     const { id, model } = open_(PREDEFINED_INDEX('content-decisions-derived'));
     renameMember('projection-definition', id, 'DocumentCurrentText', 'tag', 'documentId', 'docId');
     eq(model()['projection-definitions'].DocumentCurrentText.tags, [{ name: 'docId', tagType: 'DocumentId' }], 'declared');
-    eq(model()['command-definitions'].UpdateText.conditions[1].leftHandSide.tags,
+    eq(lists(model()['command-definitions'].UpdateText).conditions[1].leftHandSide.tags,
       { docId: { parameterName: 'docId' } }, 'a read in place');
     eq(model()['projection-definitions'].DocumentHasPendingChanges.derived.leftHandSide.tags,
       { docId: { parameterName: 'documentId' } }, 'a derived operand, which still passes its own tag on');
@@ -3348,15 +2954,15 @@ check('every predefined model ships advisory-clean', () => {
     eq(sandbox.modelAdvisories(model()), [], 'nothing left dangling');
   });
 
-  check('an entity read over a list says each, or is advised and refused', () => {
-    const { id, model } = open_(3);
-    const body = deepClone(model()['command-definitions'].SubscribeStudentToCourse);
-    body.boundary.find((b) => b.alias === 'others').id = { alias: 'student', property: 'subscribedCourseIds' };
+  check('a group read over a list says each, or is advised and refused', () => {
+    const { id, model } = openSchedules();
+    const body = lists(model()['command-definitions'].SubscribeStudentToCourse);
+    body.boundary.find((b) => b.alias === 'others').tags.courseId = { alias: 'student', property: 'subscribedCourseIds' };
     updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
     const found = sandbox.modelAdvisories(model()).map((a) => a.message);
-    eq(found.some((m) => /Course\(each student\.subscribedCourseIds\) reads one instance per element/.test(m)), true, found.join('; '));
+    eq(found.some((m) => /"each student\.subscribedCourseIds" reads it once per element/.test(m)), true, found.join('; '));
     const log = [];
-    drive(model(), log, 'DefineCourse', { capacity: 9, slots: [] });
+    drive(model(), log, 'DefineCourse', { courseId: 'c1', capacity: 9, slots: [] });
     drive(model(), log, 'RegisterStudent', { studentId: 's1' });
     let message = '';
     try { evaluateCommand(model(), log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' }); }
@@ -3365,8 +2971,8 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('a read by a tag literal folds what the literal names', () => {
-    const { id, model } = open_(1);
-    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    const { id, model } = open_(SEQUENCE);
+    const body = lists(model()['command-definitions'].ChangeCourseCapacity);
     body.boundary.push({ alias: 'first', projection: 'CourseCapacity', tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } } });
     body.conditions.push({ leftHandSide: { alias: 'first' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'The first course has no seats' });
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
@@ -3384,10 +2990,12 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('a read by a value of another type, by an untyped literal or unnamed is advised – and a run refuses it', () => {
-    const { id, model } = open_(ENTITIES);
-    const body = deepClone(model()['command-definitions'].ChangeCourseCapacity);
+    const { id, model } = open_(SIMPLE);
+    const body = lists(model()['command-definitions'].ChangeCourseCapacity);
     body.boundary.push({ alias: 'odd', projection: 'CourseCapacity', tags: { courseId: { parameterName: 'newCapacity' } } });
-    body.conditions.push({ leftHandSide: { alias: 'odd' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'Odd' });
+    // First, since reads are lazy: a read behind a rule that refuses is
+    // never made.
+    body.conditions.unshift({ leftHandSide: { alias: 'odd' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'Odd' });
     updateDefinition('command-definition', id, 'ChangeCourseCapacity', body);
     const advised = () => sandbox.modelAdvisories(model()).filter((a) => a.name === 'ChangeCourseCapacity').map((a) => a.message);
     let found = advised();
@@ -3414,13 +3022,13 @@ check('every predefined model ships advisory-clean', () => {
 // ---------------------------------------------------------------
 {
   check('a null entry among an event\'s or a command\'s properties is skipped', () => {
-    const { id, model } = openScripted();
+    const { id, model } = openCounter();
     const event = model()['event-definitions'].Ticked;
     updateDefinition('event-definition', id, 'Ticked', { ...event, properties: [null, ...event.properties] });
     const command = model()['command-definitions'].Tick;
     updateDefinition('command-definition', id, 'Tick', { ...command, properties: [null, ...command.properties] });
     eq(evaluateCommand(model(), [], 'Tick', { counterId: 'x1' }).outcome, 'published', 'evaluates');
-    eq(foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'CounterTotal', { tags: { counterId: 'x1' } }),
+    eq(foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'Counter.total', { tags: { counterId: 'x1' } }),
       1, 'folds');
     eq(runScenario(model(), {
       given: [{ event: 'Ticked', data: { counterId: 'x1' } }], command: 'Tick',
@@ -3428,45 +3036,8 @@ check('every predefined model ships advisory-clean', () => {
     }).status, 'drifted', 'and a scenario runs');
   });
 
-  check('a script with no initial state starts from null', () => {
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'Unstarted', {
-      valueType: 'integer', isList: false, script: {},
-      handlers: [{ event: 'Ticked', code: '(state || 0) + 1' }],
-    });
-    eq(foldProjection(model(), [], 'Unstarted', {}), null, 'nothing folded');
-  });
-
-  check('a script cannot change the events it folds', () => {
-    // The log is shared – by every fold, every read, every repaint – so
-    // an event a script changed would change what the next fold sees.
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'Tamperer', {
-      valueType: 'integer', isList: false, script: { initialState: 0 },
-      handlers: [{ event: 'Ticked', code: '(event.data.counterId = "forged", state + 1)' }],
-    });
-    const log = [{ type: 'Ticked', data: { counterId: 'x1' } }];
-    let message = '';
-    try { foldProjection(model(), log, 'Tamperer', {}); } catch (error) { message = error.message; }
-    eq(/threw/.test(message), true, message || 'refused');
-    eq(log[0].data.counterId, 'x1', 'the log as it was');
-    eq(foldProjection(model(), log, 'CounterTotal', { tags: { counterId: 'x1' } }), 1, 'and other folds read it so');
-  });
-
-  check('a script that throws something other than an Error is an evaluation error', () => {
-    const { id, model } = openScripted();
-    addDefinition('projection-definition', id, 'Thrower', {
-      valueType: 'integer', isList: false, script: { initialState: 0 },
-      handlers: [{ event: 'Ticked', code: '(() => { throw null; })()' }],
-    });
-    let caught;
-    try { foldProjection(model(), [{ type: 'Ticked', data: { counterId: 'x1' } }], 'Thrower', {}); } catch (error) { caught = error; }
-    eq(caught && caught.constructor.name, 'EvaluationError', 'an EvaluationError');
-    eq(/threw: null/.test(caught.message), true, caught.message);
-  });
-
   check('anything unforeseen in a scenario run is that scenario\'s error, not the page\'s', () => {
-    const { model } = openScripted();
+    const { model } = openCounter();
     const broken = deepClone(model());
     // A shape the write path would never let through, standing in for
     // whatever a defect the point fixes do not foresee looks like.
@@ -3474,8 +3045,8 @@ check('every predefined model ships advisory-clean', () => {
     const run = runScenario(broken, { given: [], command: 'Tick', when: { arguments: { counterId: 'x1' } }, then: null });
     eq(run.status, 'broken', 'broken, not thrown');
     eq(typeof run.reason, 'string', 'with a reason');
-    broken['projection-definitions'].CounterTotal.handlers = 7;
-    const projected = runProjectionScenario(broken, { given: [], projection: 'CounterTotal', tags: { counterId: { tagValue: 'x1' } }, then: 0 });
+    broken['group-definitions'].Counter.projections[0].handlers = 7;
+    const projected = runProjectionScenario(broken, { given: [], projection: 'Counter.total', tags: { counterId: { tagValue: 'x1' } }, then: 0 });
     eq(projected.status, 'broken', 'a projection scenario too');
   });
 }
@@ -3488,7 +3059,7 @@ check('every predefined model ships advisory-clean', () => {
 // ---------------------------------------------------------------
 {
   check('a required argument named like a prototype key is still required', () => {
-    const { id, model } = openScripted();
+    const { id, model } = openCounter();
     addTaggedEvent(id, 'Built', {
       properties: [{ name: 'constructor', propertyType: 'string', isOptional: false, isList: false }],
     });
@@ -3505,7 +3076,7 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('a command or a Given event named like a prototype key is not in the model', () => {
-    const { model } = openScripted();
+    const { model } = openCounter();
     let message = '';
     try { evaluateCommand(model(), [], 'hasOwnProperty', {}); } catch (error) { message = error.message; }
     eq(message, 'This model has no command "hasOwnProperty".', 'no such command');
@@ -3517,7 +3088,7 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('an event without a field reads nothing there, whatever the field is called', () => {
-    const { id, model } = openScripted();
+    const { id, model } = openCounter();
     addDefinition('projection-definition', id, 'LastMaker', {
       valueType: 'string', isList: false, initialValue: null,
       handlers: [{ event: 'Ticked', operation: 'set', value: { eventProperty: 'constructor' } }],
@@ -3546,7 +3117,7 @@ check('every predefined model ships advisory-clean', () => {
     .reduce((n, collection) => n + Object.keys(model[collection]).length, 0);
 
   check('past the threshold the log compacts itself, and every model stays as it is', () => {
-    const { id } = open_(ENTITIES);
+    const { id } = open_(GROUPED);
     const doomed = createDcbModel('Doomed');
     sandbox.deleteDcbModel(doomed);
     renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
@@ -3566,8 +3137,20 @@ check('every predefined model ships advisory-clean', () => {
     eq(sandbox.loadEvents().map((e) => e.sequence), sandbox.loadEvents().map((_, i) => i), 'numbered afresh');
   });
 
+  check('compaction keeps a model\'s description', () => {
+    const { id } = open_(GROUPED);
+    sandbox.describeDcbModel(id, 'Courses and students.');
+    sandbox.setLogCompactionThreshold(1);
+    try {
+      renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
+    } finally {
+      sandbox.setLogCompactionThreshold(1000 * 1000);
+    }
+    eq(sandbox.projectState()[id].description, 'Courses and students.', 'still described');
+  });
+
   check('compaction keeps the events from the floor on, as they were, and says how far they moved', () => {
-    const { id } = open_(ENTITIES);
+    const { id } = open_(GROUPED);
     renameDefinition('event-definition', id, 'CourseDefined', 'CourseCreated');
     const floor = sandbox.loadEvents().length;
     renameDefinition('event-definition', id, 'CourseCreated', 'CourseOpened');
@@ -3590,7 +3173,7 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('a full storage compacts and tries again before refusing', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     // History worth folding: four renames that end where they started.
     const names = ['CourseDefined', 'CourseCreated', 'CourseOpened', 'CourseStarted', 'CourseDefined'];
     names.slice(1).forEach((name, i) => renameDefinition('event-definition', id, names[i], name));
@@ -3606,7 +3189,7 @@ check('every predefined model ships advisory-clean', () => {
   });
 
   check('a change that does not fit even compacted is refused, and nothing is written', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     const length = sandbox.loadEvents().length;
     const restore = quotaAbove(0);
     let caught;
@@ -3666,10 +3249,10 @@ check('every predefined model ships advisory-clean', () => {
   check('a tag value with a dollar sign is that value, not a replacement pattern', () => {
     eq(sandbox.renderTag({ name: 'CourseId', tagSchema: '{type}:{value}' }, "a$'"), "CourseId:a$'", '$\' kept');
     eq(sandbox.renderTag({ name: 'CourseId', tagSchema: '{type}:{value}' }, 'a$&b'), 'CourseId:a$&b', '$& kept');
-    const model = build(ENTITIES);
+    const model = build(GROUPED);
     const log = [];
     drive(model, log, 'DefineCourse', { courseId: 'a', capacity: 1 });
-    eq(foldEntityProperty(model, log, 'Course', 'status', "a$'"), 'NonExistent', 'course a$\' is not course a');
+    eq(foldMember(model, log, 'Course', 'status', "a$'"), 'NonExistent', 'course a$\' is not course a');
   });
 }
 
@@ -3700,8 +3283,8 @@ check('every predefined model ships advisory-clean', () => {
   });
 }
 
-// The shipped models and the fixtures, whose scenarios cover scripted,
-// guarded and derived reads.
+// The shipped models and the fixtures, whose scenarios cover plain,
+// fanned-out and derived reads.
 function modelsWithScenarios() {
   return [
     ...sandbox.PREDEFINED_MODELS.map((shipped, index) => ({ name: shipped.slug, model: build(index) })),
@@ -3750,26 +3333,27 @@ function modelsWithScenarios() {
         compared++;
       }
     }
-    eq(compared > 50, true, `${compared} scenarios compared`);
+    eq(compared > 40, true, `${compared} scenarios compared`);
   });
 
   check('a chained boundary reads by what the read it waits for answered', () => {
-    const model = build(PREDEFINED_INDEX('course-schedules'));
+    const model = openSchedules().model();
     const log = [];
-    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T09'] });          // c1
-    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T11'] });          // c2
+    drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 9, slots: ['2026-03-01T09'] });
+    drive(model, log, 'DefineCourse', { courseId: 'c2', capacity: 9, slots: ['2026-03-01T11'] });
     drive(model, log, 'RegisterStudent', { studentId: 's1' });
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c2', studentId: 's1' });
     eq(sandbox.deriveRounds(model['command-definitions'].RescheduleCourse).length > 1, true, 'chained');
     const { calls, query } = sameThroughPort(model, log, 'RescheduleCourse', { courseId: 'c1', slots: ['2026-03-01T11'] },
       'rescheduling onto a subscriber\'s other course');
+    // Without `excluding`, the subscribers' courses include c1 itself –
+    // asked again for its slots, which the first call did not fetch.
     eq(calls.map((items) => items.map((item) => item.tags)), [
       [['CourseId:c1']],
       [['StudentId:s1']],
-      [['CourseId:c2']],
+      [['CourseId:c1'], ['CourseId:c2']],
     ], 'one call per link of the chain, c2 known only from c1\'s subscribers');
-    eq(query.map((item) => item.tags), [['CourseId:c1'], ['StudentId:s1'], ['CourseId:c2']], 'the query decided on');
   });
 
   check('reads that hang off the arguments alone are asked in one call, merged by their tags', () => {
@@ -3793,7 +3377,7 @@ function modelsWithScenarios() {
   });
 
   check('a fold that handles no event reads nothing', () => {
-    const { id, model } = open_(ENTITIES);
+    const { id, model } = open_(GROUPED);
     addDefinition('projection-definition', id, 'Nothing', {
       tags: [], valueType: 'integer', isList: false, initialValue: 7, handlers: [],
     });
@@ -3842,7 +3426,7 @@ function modelsWithScenarios() {
         compared++;
       }
     }
-    eq(compared > 50, true, `${compared} scenarios compared`);
+    eq(compared > 40, true, `${compared} scenarios compared`);
   });
 
   check('every command scenario asks the store as its plan says: head when chained, never a call too many', () => {
@@ -3868,7 +3452,7 @@ function modelsWithScenarios() {
         compared++;
       }
     }
-    eq(compared > 50, true, `${compared} scenarios compared`);
+    eq(compared > 40, true, `${compared} scenarios compared`);
   });
 
   check('a query item names at least one type, or leaves types out to match any type', () => {
@@ -3907,27 +3491,27 @@ function modelsWithScenarios() {
     eq(looked > 20, true, `${looked} commands planned`);
   });
 
-  check('a read of any type under a tag is planned with types left out', () => {
-    const { id, model } = openBlank('Any type');
-    addDefinition('entity-definition', id, 'Counter', { properties: [] });
+  check('a group bound and read for nothing adds nothing to the query', () => {
+    const { id, model } = openBlank('Bound for nothing');
+    sandbox.createGroup(id, 'Counter', { name: 'counterId', tagType: 'CounterId' });
     addTaggedEvent(id, 'Ticked', {
       properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
     });
-    addDefinition('projection-definition', id, 'CounterTotal', {
-      tags: [{ name: 'counterId', tagType: 'CounterId' }], valueType: 'integer', isList: false,
-      initialValue: 0, handlers: [{ event: 'Ticked', operation: 'increment', value: 1 }],
+    addDefinition('projection-definition', id, 'Counter.total', {
+      valueType: 'integer', isList: false, initialValue: 0, handlers: [{ event: 'Ticked', operation: 'increment', value: 1 }],
     });
-    updateDefinition('entity-definition', id, 'Counter', { properties: [{ name: 'total', projection: 'CounterTotal' }] });
-    // Bound, and nothing of it read: the boundary still names the
-    // counter's tag, with no type to narrow it.
+    // Bound, and nothing of it read: a group is a name, not a boundary,
+    // so there is nothing to ask the store – an entity bound like this
+    // used to read any type under its tag.
     addDefinition('command-definition', id, 'Tick', {
       properties: [{ name: 'counterId', propertyType: 'CounterId', isOptional: false, isList: false }],
-      boundary: [{ alias: 'counter', entity: 'Counter', id: { parameterName: 'counterId' } }],
+      boundary: [{ alias: 'counter', group: 'Counter', tags: { counterId: { parameterName: 'counterId' } } }],
       conditions: [],
       publishes: [{ name: 'Ticked', parameters: { counterId: { parameterName: 'counterId' } } }],
     });
-    const [[item]] = sandbox.commandPlan(sandbox.boundarySummary(model(), model()['command-definitions'].Tick)).calls;
-    eq(item, { tags: ['CounterId:{counterId}'], from: ['counter'], fannedOut: false }, 'no types key at all');
+    eq(sandbox.commandPlan(sandbox.boundarySummary(model(), model()['command-definitions'].Tick)).calls, [], 'no call');
+    eq(sandbox.modelAdvisories(model()).some((a) => a.name === 'Tick' && /Reads nothing consults: counter/.test(a.message)),
+      true, 'and the read is advised as one nothing consults');
   });
 
   check('a projection\'s plan is the reads its fold makes: a call each, of the types planned', () => {
@@ -4000,10 +3584,10 @@ function modelsWithScenarios() {
   });
 
   const scheduled = () => {
-    const model = build(PREDEFINED_INDEX('course-schedules'));
+    const model = openSchedules().model();
     const log = [];
-    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T09'] });          // c1
-    drive(model, log, 'DefineCourse', { capacity: 9, slots: ['2026-03-01T11'] });          // c2
+    drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 9, slots: ['2026-03-01T09'] });
+    drive(model, log, 'DefineCourse', { courseId: 'c2', capacity: 9, slots: ['2026-03-01T11'] });
     drive(model, log, 'RegisterStudent', { studentId: 's1' });
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
     drive(model, log, 'SubscribeStudentToCourse', { courseId: 'c2', studentId: 's1' });
@@ -4178,7 +3762,7 @@ function modelsWithScenarios() {
         checked++;
       }
     }
-    eq(checked > 50, true, `${checked} scenarios checked`);
+    eq(checked > 40, true, `${checked} scenarios checked`);
   });
 
   check('a command\'s schema is closed, and an optional argument may be left out or null', () => {
@@ -4196,7 +3780,7 @@ function modelsWithScenarios() {
   });
 
   check('a custom type is its own schema, a composite its fields', () => {
-    const model = build(PREDEFINED_INDEX('course-schedules'));
+    const model = build(SEQUENCE);
     const types = model['custom-type-definitions'];
     const scalar = Object.keys(types).find((t) => types[t].schema && types[t].schema.pattern);
     eq(sandbox.customTypeSchema(model, scalar), types[scalar].schema, `${scalar} carried over whole`);
@@ -4207,6 +3791,1499 @@ function modelsWithScenarios() {
     eq([schema.type, schema.additionalProperties, schema.required.length],
       ['object', false, cart['custom-type-definitions'][composite].properties.length], `${composite} as an object`);
     eq(sandbox.valueTypeSchema(cart, 'NoSuchType'), {}, 'an unresolved type allows anything');
+  });
+}
+
+// ---------------------------------------------------------------
+// Groups (11.0).
+//
+// A group owns projections that share its one tag; it is a name, not a
+// boundary. Reading `course.capacity` reads that projection and
+// nothing else, a projection moves in and out with every read of it
+// rewritten, and a document from before 11.0 has its entities lifted
+// into groups where that says the same thing.
+// ---------------------------------------------------------------
+{
+  check('a grouped name is local inside the group and qualified outside', () => {
+    eq(sandbox.groupLocalName('Course', 'CourseCapacity'), 'capacity', 'the group\'s name dropped where it leads');
+    eq(sandbox.groupLocalName('Course', 'SubscriptionCount'), 'subscriptionCount', 'lowered either way');
+    eq(sandbox.groupLocalName('Course', 'Coursework'), 'coursework', 'only a whole word is dropped');
+    eq(sandbox.ungroupedProjectionName('Course', 'capacity'), 'CourseCapacity', 'and back');
+    eq(sandbox.operandText({ projection: 'Course.capacity', tags: { courseId: { parameterName: 'courseId' } } }),
+      'Course(courseId).capacity', 'a read in place, spelled through its group');
+    eq(sandbox.operandText({ alias: 'course', property: 'seatsOn', arguments: { slot: { parameterName: 's' } } }),
+      'course.seatsOn(s)', 'a member read with its own arguments');
+  });
+
+  check('an empty group is legal, and advised', () => {
+    const { id, model } = openBlank('Empty');
+    sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' }, { icon: '📚' });
+    eq(model()['custom-type-definitions'].CourseId, { schema: { type: 'string' }, isTag: true },
+      'a tag type named for the first time is created alongside it');
+    eq(model()['group-definitions'].Course, { icon: '📚', tag: { name: 'courseId', tagType: 'CourseId' }, projections: [] },
+      'stored');
+    eq(sandbox.modelAdvisories(model()).map((a) => [a.kind, a.name, /no projections yet/.test(a.message)]),
+      [['group-definition', 'Course', true]], 'one advisory: it is empty');
+    eq(sandbox.experimentalFeatures(model()), [], 'and nothing experimental');
+  });
+
+  check('a group and a top-level projection share one namespace', () => {
+    const { id, model } = open_(SIMPLE);
+    const refused = (fn) => { try { fn(); return ''; } catch (error) { return error.message; } };
+    eq(/already exists/.test(refused(() => sandbox.createGroup(id, 'CourseStatus', { name: 'courseId', tagType: 'CourseId' }))),
+      true, 'a group named like a projection');
+    sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' });
+    eq(/already exists/.test(refused(() => addDefinition('projection-definition', id, 'Course',
+      { tags: [], valueType: 'integer', isList: false, initialValue: 0, handlers: [] }))), true, 'a projection named like a group');
+    eq(/already exists/.test(refused(() => renameDefinition('projection-definition', id, 'CourseStatus', 'Course'))),
+      true, 'a projection renamed into a group\'s name');
+    eq(/already exists/.test(refused(() => renameDefinition('group-definition', id, 'Course', 'CourseCapacity'))),
+      true, 'a group renamed into a projection\'s name');
+    const imported = deepClone(buildShareEnvelope(model(), []));
+    imported.projectionDefinitions.push({ ...imported.projectionDefinitions[0], name: 'Course' });
+    const { skipped } = importModelFromEnvelope(imported);
+    eq(skipped.map((s) => [s.kind, s.name]), [['projection-definition', 'Course']], 'and on import the second is skipped');
+    const collections = {};
+    for (const kind of ['group-definition', 'event-definition', 'projection-definition', 'command-definition', 'custom-type-definition']) {
+      collections[kind] = deepClone(model()[sandbox.DEF_COLLECTIONS[kind]]);
+    }
+    collections['projection-definition'].Course = collections['projection-definition'].CourseStatus;
+    eq(/both named "Course"/.test(refused(() => sandbox.replaceDefinitions(id, { collections }))), true,
+      'and a text naming both is refused whole');
+  });
+
+  check('moving a projection in drops its tag, names it locally and rewrites every read', () => {
+    const { id, model } = open_(PREDEFINED_INDEX('content-decisions-derived'));
+    sandbox.createGroup(id, 'Document', { name: 'docId', tagType: 'DocumentId' });
+    // Tagged `documentId`, moved into a group whose tag is `docId`: the
+    // tag goes, and every read keyed by the old name is keyed by the new.
+    eq(sandbox.groupsAccepting(model(), 'DocumentCurrentText'), ['Document'], 'offered where the tag type matches');
+    eq(sandbox.moveProjectionIntoGroup(id, 'DocumentCurrentText', 'Document'), 'Document.currentText', 'named locally');
+    const inner = model()['group-definitions'].Document.projections[0];
+    eq([inner.name, inner.tags], ['currentText', undefined], 'no tag of its own');
+    eq('DocumentCurrentText' in model()['projection-definitions'], false, 'gone from the top level');
+    // A read in place is said through an alias of the group, named off
+    // the value it is read by – not `Document(docId).currentText` in
+    // front of every rule.
+    eq(lists(model()['command-definitions'].UpdateText).conditions[1].leftHandSide,
+      { alias: 'doc', property: 'currentText' }, 'a read in place, through an alias of the group');
+    const docAlias = { alias: 'doc', group: 'Document', tags: { docId: { parameterName: 'docId' } } };
+    eq(model()['command-definitions'].UpdateText.boundary.filter((b) => b.group), [docAlias], 'bound once');
+    eq(model()['projection-definitions'].DocumentHasPendingChanges.derived.leftHandSide,
+      { projection: 'Document.currentText', tags: { docId: { parameterName: 'documentId' } } }, 'a derived operand outside');
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+
+    // The derived one moved in too reads its sibling bare, and its own
+    // tag reference follows the group's name.
+    sandbox.moveProjectionIntoGroup(id, 'DocumentPublishedText', 'Document');
+    sandbox.moveProjectionIntoGroup(id, 'DocumentHasPendingChanges', 'Document');
+    const pending = model()['group-definitions'].Document.projections.find((p) => p.name === 'hasPendingChanges');
+    eq(pending.derived.leftHandSide, { projection: 'currentText' }, 'a sibling, by local name');
+    eq(pending.derived.rightHandSide, { projection: 'publishedText' }, 'both sides');
+    eq(model()['command-definitions'].UpdateText.boundary.filter((b) => b.group), [docAlias],
+      'the commands\' reads of the later ones gathered under the same alias');
+    eq(sandbox.modelAdvisories(model()), [], 'still clean');
+    const log = [{ type: 'DocumentAdded', data: { id: 'd1' } }, { type: 'TextUpdated', data: { docId: 'd1', text: 'a' } }];
+    eq(foldMember(model(), log, 'Document', 'hasPendingChanges', 'd1'), true, 'and it derives as before');
+    eq(evaluateCommand(model(), log, 'PublishDocument', { docId: 'd1' }).outcome, 'published', 'and commands decide as before');
+  });
+
+  check('a projection whose tag does not match is not moved in', () => {
+    const { id } = open_(SIMPLE);
+    sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' });
+    let message = '';
+    try { sandbox.moveProjectionIntoGroup(id, 'StudentExists', 'Course'); } catch (error) { message = error.message; }
+    eq(/only a projection tagged by exactly that moves in/.test(message), true, message);
+    sandbox.moveProjectionIntoGroup(id, 'CourseStatus', 'Course');
+    message = '';
+    try { sandbox.moveProjectionIntoGroup(id, 'CourseCapacity', 'Course', 'status'); } catch (error) { message = error.message; }
+    eq(/already has a projection named "status"/.test(message), true, message);
+  });
+
+  check('moving every projection in and out again is the model it was', () => {
+    const { id, model } = open_(SEQUENCE);
+    const before = definitionsToSchema(model());
+    sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' });
+    for (const name of ['CourseStatus', 'CourseCapacity', 'CourseSubscriptionCount', 'CourseSubscribedStudentIds']) {
+      sandbox.moveProjectionIntoGroup(id, name, 'Course');
+    }
+    eq(sandbox.modelAdvisories(model()), [], 'clean in a group');
+    for (const local of ['status', 'capacity', 'subscriptionCount', 'subscribedStudentIds']) {
+      sandbox.moveProjectionOutOfGroup(id, `Course.${local}`);
+    }
+    removeDefinition('group-definition', id, 'Course');
+    const after = definitionsToSchema(model());
+    eq(after.commandDefinitions, before.commandDefinitions, 'every read where it was');
+    eq(after.projectionDefinitions.map((p) => p.name).sort(), before.projectionDefinitions.map((p) => p.name).sort(),
+      'every projection back under its name');
+    eq(after.projectionDefinitions.find((p) => p.name === 'CourseCapacity').tags, [{ name: 'courseId', tagType: 'CourseId' }],
+      'its tag restored');
+  });
+
+  check('moving a projection out turns a member read into the read it stood for', () => {
+    const { id, model } = open_(GROUPED);
+    eq(sandbox.moveProjectionOutOfGroup(id, 'Student.subscriptionCount'), 'StudentSubscriptionCount', 'named from its group');
+    const subscribe = lists(model()['command-definitions'].SubscribeStudentToCourse);
+    eq(subscribe.conditions.find((c) => c.rejection === 'Student is subscribed to too many courses').leftHandSide,
+      { projection: 'StudentSubscriptionCount', tags: { studentId: { parameterName: 'studentId' } } }, 'read in place');
+    eq(subscribe.boundary.some((b) => b.alias === 'student'), true, 'the group binding stays while a rule still reads it');
+    sandbox.moveProjectionOutOfGroup(id, 'Student.exists');
+    eq(model()['command-definitions'].SubscribeStudentToCourse.boundary.some((b) => b.alias === 'student'), false,
+      'and goes with the last member it was read for');
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.kind !== 'group-definition'), [], 'clean');
+    const log = [];
+    drive(model(), log, 'DefineCourse', { courseId: 'c1', capacity: 1 });
+    drive(model(), log, 'RegisterStudent', { studentId: 's1' });
+    drive(model(), log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
+    eq(foldProjection(model(), log, 'StudentSubscriptionCount', { tags: { studentId: 's1' } }), 1, 'and folds');
+  });
+
+  check('renaming a group moves its bindings and every qualified read', () => {
+    const { id, model } = open_(GROUPED);
+    const body = lists(model()['command-definitions'].ArchiveCourse);
+    body.conditions.push({ leftHandSide: { projection: 'Course.capacity', tags: { courseId: { parameterName: 'courseId' } } },
+      predicate: 'greaterThan', rightHandSide: 0, rejection: 'No seats' });
+    updateDefinition('command-definition', id, 'ArchiveCourse', body);
+    renameDefinition('group-definition', id, 'Course', 'Lecture');
+    const archive = lists(model()['command-definitions'].ArchiveCourse);
+    eq(archive.boundary[0].group, 'Lecture', 'the binding');
+    eq(archive.conditions[1].leftHandSide.projection, 'Lecture.capacity', 'the read in place');
+    eq(sandbox.modelAdvisories(model()), [], 'nothing dangles');
+  });
+
+  check('a member takes its own arguments, and each is its own read', () => {
+    const { id, model } = open_(GROUPED);
+    addDefinition('projection-definition', id, 'Course.hasRoomFor', {
+      arguments: [{ name: 'seats', propertyType: 'integer' }],
+      valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'free' }, predicate: 'greaterThanOrEquals', rightHandSide: { parameterName: 'seats' } },
+    });
+    addDefinition('projection-definition', id, 'Course.free', {
+      valueType: 'integer', isList: false,
+      derived: { leftHandSide: { projection: 'capacity' }, operator: 'subtract', rightHandSide: { projection: 'subscriptionCount' } },
+    });
+    const body = lists(model()['command-definitions'].SubscribeStudentToCourse);
+    body.conditions = body.conditions.filter((c) => c.rejection !== 'Course is full');
+    body.conditions.push({ leftHandSide: { alias: 'course', property: 'hasRoomFor', arguments: { seats: 1 } },
+      predicate: 'isTrue', rejection: 'Course is full' });
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
+    eq(sandbox.modelAdvisories(model()), [], 'clean');
+    const log = [];
+    drive(model(), log, 'DefineCourse', { courseId: 'c1', capacity: 1 });
+    drive(model(), log, 'RegisterStudent', { studentId: 's1' });
+    drive(model(), log, 'RegisterStudent', { studentId: 's2' });
+    drive(model(), log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' });
+    const refused = evaluateCommand(model(), log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's2' });
+    eq([refused.outcome, refused.failedRule.text], ['rejected', 'course.hasRoomFor(1) isTrue'], 'refused by it');
+    eq(refused.reads.course.instances[0].properties['hasRoomFor(1)'], false, 'reported under its arguments');
+    const types = sandbox.deriveDcb(model(), model()['command-definitions'].SubscribeStudentToCourse).items
+      .find((item) => item.alias === 'course').types;
+    eq(types.includes('CourseCapacityChanged'), true, 'its siblings\' events are in the query');
+
+    const missing = deepClone(body);
+    delete missing.conditions[missing.conditions.length - 1].leftHandSide.arguments;
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', missing);
+    eq(sandbox.modelAdvisories(model()).some((a) => /without "seats", which it takes as an argument/.test(a.message)), true,
+      'a member read without its argument is advised');
+  });
+
+  check('moving in folds a command\'s reads into aliases of the group, as one would write them', () => {
+    const { id, model } = open_(PREDEFINED_INDEX('course-simple'));
+    const byCourse = () => ({ courseId: { parameterName: 'courseId' } });
+    addDefinition('command-definition', id, 'Probe', {
+      properties: [
+        { name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false },
+        { name: 'course', propertyType: 'string', isOptional: false, isList: false },
+        { name: 'courseIds', propertyType: 'CourseId', isOptional: false, isList: true },
+      ],
+      boundary: [
+        { alias: 'cap', projection: 'CourseCapacity', tags: byCourse() },
+        { alias: 'status', projection: 'CourseStatus', tags: byCourse() },
+      ],
+      conditions: [
+        { leftHandSide: { alias: 'cap' }, predicate: 'lessThan', rightHandSide: 100, rejection: 'a' },
+        { leftHandSide: { alias: 'status' }, predicate: 'equals', rightHandSide: { enumMember: 'Existent' }, rejection: 'b' },
+        { leftHandSide: { projection: 'CourseSubscriptionCount', tags: byCourse() }, predicate: 'lessThan',
+          rightHandSide: 10, rejection: 'c' },
+        { leftHandSide: { projection: 'CourseSubscriptionCount', tags: { courseId: { each: { parameterName: 'courseIds' } } } },
+          predicate: 'lessThan', rightHandSide: 10, rejection: 'd' },
+      ],
+      publishes: [],
+    });
+    sandbox.createGroup(id, 'Course', { name: 'courseId', tagType: 'CourseId' });
+    for (const name of ['CourseCapacity', 'CourseStatus', 'CourseSubscriptionCount']) sandbox.moveProjectionIntoGroup(id, name, 'Course');
+    const probe = lists(model()['command-definitions'].Probe);
+    // `course` is a payload property, so the alias is numbered past it.
+    eq(probe.boundary, [
+      { alias: 'course2', group: 'Course', tags: byCourse() },
+      { alias: 'courses', group: 'Course', tags: { courseId: { each: { parameterName: 'courseIds' } } } },
+    ], 'aliases of projections with the same tags fold into one of the group, a fan-out named off its list');
+    eq(probe.conditions.map((c) => c.leftHandSide), [
+      { alias: 'course2', property: 'capacity' },
+      { alias: 'course2', property: 'status' },
+      { alias: 'course2', property: 'subscriptionCount' },
+      { alias: 'courses', property: 'subscriptionCount' },
+    ], 'every use a member read; a read in place reuses the alias with the same tags');
+    eq(sandbox.aliasBaseFor('Course', { courseId: { parameterName: 'otherCourseId' } }), 'otherCourse', 'named off the value');
+    eq(sandbox.aliasBaseFor('Course', { courseId: { tagType: 'CourseId', tagValue: 'c1' } }), 'course', 'or the group');
+    eq(sandbox.aliasBaseFor('Course', { courseId: { each: { alias: 'student', property: 'subscribedCourseIds' } } }),
+      'subscribedCourses', 'a fan-out off its list');
+  });
+
+  check('a 10.x entity becomes a group where every projection it binds is its own', () => {
+    resetStore();
+    const envelope = legacyEnvelope();
+    // A read in place of a bound projection, and a scenario about one:
+    // both are rewritten to go through the group.
+    envelope.commandDefinitions.find((c) => c.name === 'ArchiveCourse').conditions.push({
+      leftHandSide: { projection: 'CourseCapacity', tags: { courseId: { parameterName: 'courseId' } } },
+      predicate: 'greaterThan', rightHandSide: 0, rejection: 'No seats' });
+    envelope.projectionScenarioDefinitions = [{ id: 'cap', projection: 'CourseCapacity',
+      tags: { courseId: { tagType: 'CourseId', tagValue: 'c1' } }, given: [], then: 0 }];
+    resetStore();
+    const { modelId, skipped, converted } = importModelFromEnvelope(envelope);
+    const model = sandbox.projectState()[modelId];
+    eq(skipped, [], 'nothing skipped');
+    eq(converted.map((c) => c.note), ['Entity Student became the group Student.', 'Entity Course became the group Course.'],
+      'what became of each entity');
+    eq(Object.keys(model['projection-definitions']), [], 'every projection moved into its group');
+    eq(model['group-definitions'].Course.projections.map((p) => p.name),
+      ['status', 'capacity', 'subscriptionCount', 'subscribedStudentIds'], 'under the names it bound them by');
+    eq([model['group-definitions'].Course.icon, model['group-definitions'].Course.tag], ['📚', { name: 'courseId', tagType: 'CourseId' }],
+      'its icon kept, its tag its identifier\'s');
+    eq(model['command-definitions'].ArchiveCourse.boundary, [{ alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } }],
+      'an entity binding is a group binding');
+    eq(lists(model['command-definitions'].ArchiveCourse).conditions[1].leftHandSide, { alias: 'course', property: 'capacity' },
+      'a read in place, through the alias the entity was read by');
+    eq(model['projection-scenario-definitions'].cap.projection, 'Course.capacity', 'a scenario');
+    eq(sandbox.modelAdvisories(model), [], 'advisory-clean');
+    eq(sandbox.experimentalFeatures(model), [], 'and nothing experimental is left');
+  });
+
+  check('a 10.x entity that would not say the same as a group is restated as plain reads', () => {
+    // Course binds `CourseCapacity`, and so does Lecture: one projection
+    // cannot be owned by two groups.
+    const entities = { ...LEGACY_ENTITIES,
+      Lecture: { icon: '🎓', identifierType: 'CourseId', properties: [['seats', 'CourseCapacity']] } };
+    const envelope = legacyEnvelope(SIMPLE, entities);
+    const subscribe = envelope.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse');
+    subscribe.boundary.push({ alias: 'lecture', entity: 'Lecture', id: { parameterName: 'courseId' } });
+    subscribe.conditions.push({ leftHandSide: { alias: 'lecture', property: 'seats' }, predicate: 'greaterThan',
+      rightHandSide: 0, rejection: 'No seats' });
+    resetStore();
+    const { modelId, converted } = importModelFromEnvelope(envelope);
+    const model = sandbox.projectState()[modelId];
+    eq(converted.map((c) => c.note), [
+      'Entity Student became the group Student.',
+      'Entity Course was restated as plain reads – CourseCapacity is bound more than once.',
+      'Entity Lecture was restated as plain reads – CourseCapacity is bound more than once.',
+    ], 'said, with the reason');
+    eq(Object.keys(model['group-definitions']), ['Student'], 'only the clean one is a group');
+    const body = lists(model['command-definitions'].SubscribeStudentToCourse);
+    eq(body.boundary.map((b) => b.alias), ['student'], 'the restated bindings are gone');
+    eq(body.conditions[0].leftHandSide, { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } },
+      'a property read is the read in place it stood for');
+    eq(body.conditions[1].leftHandSide, { alias: 'student', property: 'exists' }, 'a clean group\'s read stays a member read');
+    eq(sandbox.modelAdvisories(model), [], 'advisory-clean');
+    const log = [];
+    drive(model, log, 'DefineCourse', { courseId: 'c1', capacity: 1 });
+    drive(model, log, 'RegisterStudent', { studentId: 's1' });
+    eq(evaluateCommand(model, log, 'SubscribeStudentToCourse', { courseId: 'c1', studentId: 's1' }).outcome, 'published',
+      'and it decides as it did');
+  });
+
+  check('a 10.x excluding keeps its command out of the import, and says so', () => {
+    const envelope = legacyEnvelope();
+    const course = envelope.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse');
+    course.boundary.push({ alias: 'others', entity: 'Course', id: { each: { parameterName: 'courseIds' } },
+      excluding: { parameterName: 'courseId' } });
+    course.properties.push({ name: 'courseIds', propertyType: 'CourseId', isOptional: false, isList: true });
+    course.conditions.push({ leftHandSide: { alias: 'others', property: 'status' }, predicate: 'equals',
+      rightHandSide: { enumMember: 'Existent' }, rejection: 'Another course is not active' });
+    resetStore();
+    const { modelId, converted } = importModelFromEnvelope(envelope);
+    const model = sandbox.projectState()[modelId];
+    eq(converted.some((c) => c.name === 'SubscribeStudentToCourse'
+      && /"others" excluded courseId/.test(c.note) && /not imported/.test(c.note)), true,
+      'the note says what was refused, and why');
+    eq(model['command-definitions'].SubscribeStudentToCourse, undefined,
+      'reading every instance would change its rules, so the command stays out');
+    eq(!!model['command-definitions'].DefineCourse, true, 'the rest of the model loads');
+  });
+
+  check('a 10.x derived projection bound by an entity reads its siblings bare once lifted', () => {
+    const entities = { Document: { icon: '📄', lifecycle: 'status', properties: [
+      ['status', 'DocumentLifecycle'], ['currentText', 'DocumentCurrentText'], ['publishedText', 'DocumentPublishedText'],
+      ['hasPendingChanges', 'DocumentHasPendingChanges']] } };
+    const envelope = legacyEnvelope(PREDEFINED_INDEX('content-decisions-derived'), entities);
+    resetStore();
+    const { modelId } = importModelFromEnvelope(envelope);
+    const model = sandbox.projectState()[modelId];
+    const pending = model['group-definitions'].Document.projections.find((p) => p.name === 'hasPendingChanges');
+    eq([pending.derived.leftHandSide, pending.derived.rightHandSide],
+      [{ projection: 'currentText' }, { projection: 'publishedText' }], 'siblings, by local name');
+    eq(sandbox.modelAdvisories(model), [], 'advisory-clean');
+    const log = [{ type: 'DocumentAdded', data: { id: 'd1' } }];
+    eq(evaluateCommand(model, log, 'PublishDocument', { docId: 'd1' }).outcome, 'published', 'it decides');
+    eq(foldMember(model, log, 'Document', 'hasPendingChanges', 'd1'), true, 'and derives');
+  });
+}
+
+// 11.0 removed scripted projections, currentValue, guarded emissions and
+// optional reads. A document saying one of the first two is refused
+// whole – nothing else in it can be trusted to decide what it decided –
+// and a command saying one of the last two is left out, and said, as
+// an `excluding` is: dropping it would change what the command decides.
+{
+  const refusal = (envelope) => {
+    resetStore();
+    try { importModelFromEnvelope(envelope); } catch (error) { return error instanceof sandbox.DomainError ? error.message : `threw ${error}`; }
+    return null;
+  };
+  const current = () => deepClone(buildShareEnvelope(build(SIMPLE), []));
+  const grouped = () => deepClone(buildShareEnvelope(build(GROUPED), []));
+
+  check('a scripted projection refuses the whole document, top-level or grouped, 10.x or 11.0', () => {
+    const top = current();
+    const count = top.projectionDefinitions.find((p) => p.name === 'CourseSubscriptionCount');
+    count.script = { initialState: 0 };
+    count.handlers = count.handlers.map((h) => ({ event: h.event, code: 'state + 1' }));
+    eq(refusal(top), 'Projection "CourseSubscriptionCount" is scripted – 11.0 has no scripted projections, '
+      + 'so this model cannot be imported.', 'named, with the definition');
+    eq(Object.keys(sandbox.projectState()).length, 0, 'nothing loaded');
+
+    const inGroup = grouped();
+    const capacity = inGroup.groupDefinitions.find((g) => g.name === 'Course').projections.find((p) => p.name === 'capacity');
+    capacity.script = { initialState: 0 };
+    eq(/^Projection "Course\.capacity" is scripted/.test(refusal(inGroup)), true, 'a grouped one, named qualified');
+
+    const legacy = legacyEnvelope();
+    legacy.projectionDefinitions.find((p) => p.name === 'StudentExists').script = { initialState: false };
+    eq(/^Projection "StudentExists" is scripted/.test(refusal(legacy)), true, 'and in a 10.x document');
+
+    const codeOnly = current();
+    codeOnly.projectionDefinitions.find((p) => p.name === 'CourseCapacity').handlers[0].code = 'state';
+    eq(/^Projection "CourseCapacity" is scripted/.test(refusal(codeOnly)), true, 'code on a handler is a script too');
+  });
+
+  check('the write path refuses a script', () => {
+    const { id, model } = open_(SIMPLE);
+    const capacity = deepClone(model()['projection-definitions'].CourseCapacity);
+    let refused = null;
+    try {
+      updateDefinition('projection-definition', id, 'CourseCapacity', { ...capacity, script: { initialState: 0 } });
+    } catch (error) { refused = error.message; }
+    eq(refused, 'Projection "CourseCapacity" is scripted – 11.0 has no scripted projections.', 'named');
+  });
+
+  check('currentValue refuses the whole document', () => {
+    const envelope = current();
+    const capacity = envelope.projectionDefinitions.find((p) => p.name === 'CourseCapacity');
+    capacity.handlers.push({ event: 'StudentSubscribedToCourse', operation: 'set', value: { currentValue: true } });
+    eq(refusal(envelope), 'Projection "CourseCapacity" sets a value from currentValue – 11.0 has no currentValue, '
+      + 'so this model cannot be imported.', 'named, with the definition');
+    eq(Object.keys(sandbox.projectState()).length, 0, 'nothing loaded');
+  });
+
+  check('a guarded emission keeps its command out of the import, and says so', () => {
+    const envelope = current();
+    const subscribe = envelope.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse');
+    subscribe.steps.find((step) => step.name)['when'] = [{ leftHandSide: { parameterName: 'courseId' }, predicate: 'equals', rightHandSide: 'c1' }];
+    resetStore();
+    const { modelId, converted } = importModelFromEnvelope(envelope);
+    const model = sandbox.projectState()[modelId];
+    eq(converted.filter((c) => c.name === 'SubscribeStudentToCourse').map((c) => c.note),
+      ['SubscribeStudentToCourse\'s emission of "StudentSubscribedToCourse" was guarded (when …), which nothing can say '
+        + 'any more – the command was not imported, since publishing it every time would change what it decides.'],
+      'the note says what was refused, and why');
+    eq(model['command-definitions'].SubscribeStudentToCourse, undefined, 'the command stays out');
+    eq(!!model['command-definitions'].DefineCourse, true, 'the rest of the model loads');
+  });
+
+  check('the write path refuses a guarded emission', () => {
+    const { id, model } = open_(SIMPLE);
+    const subscribe = lists(model()['command-definitions'].SubscribeStudentToCourse);
+    subscribe.publishes[0].when = [{ leftHandSide: { parameterName: 'courseId' }, predicate: 'equals', rightHandSide: 'c1' }];
+    let refused = null;
+    try { updateDefinition('command-definition', id, 'SubscribeStudentToCourse', subscribe); } catch (error) { refused = error.message; }
+    eq(refused, 'Command "SubscribeStudentToCourse" guards its emission of "StudentSubscribedToCourse" (when …) – '
+      + '11.0 has no guarded emissions.', 'named');
+  });
+
+  check('an optional read keeps its command out of the import, and says so – a 10.x entity\'s too', () => {
+    const envelope = grouped();
+    const subscribe = envelope.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse');
+    subscribe.boundary.find((b) => b.group === 'Course').isOptional = true;
+    const alias = subscribe.boundary.find((b) => b.group === 'Course').alias;
+    resetStore();
+    const { modelId, converted } = importModelFromEnvelope(envelope);
+    const model = sandbox.projectState()[modelId];
+    eq(converted.filter((c) => c.name === 'SubscribeStudentToCourse').map((c) => c.note),
+      [`SubscribeStudentToCourse's "${alias}" was an optional read (${alias}?), which nothing can say any more – the `
+        + 'command was not imported, since an unset identifier would now be an error where it used to read nothing.'],
+      'the note says what was refused, and why');
+    eq(model['command-definitions'].SubscribeStudentToCourse, undefined, 'the command stays out');
+    eq(!!model['group-definitions'].Course && !!model['command-definitions'].DefineCourse, true, 'the rest loads');
+
+    const legacy = legacyEnvelope();
+    legacy.commandDefinitions.find((c) => c.name === 'SubscribeStudentToCourse').boundary
+      .find((b) => b.entity === 'Course').isOptional = true;
+    resetStore();
+    const lifted = importModelFromEnvelope(legacy);
+    eq(sandbox.projectState()[lifted.modelId]['command-definitions'].SubscribeStudentToCourse, undefined, 'a 10.x one too');
+    eq(lifted.converted.some((c) => c.name === 'SubscribeStudentToCourse' && /optional read/.test(c.note)), true, 'and said');
+  });
+
+  check('the write path refuses an optional read', () => {
+    const { id, model } = open_(GROUPED);
+    const read = lists(model()['command-definitions'].SubscribeStudentToCourse);
+    read.boundary.find((b) => b.alias === 'course').isOptional = true;
+    let refused = null;
+    try { updateDefinition('command-definition', id, 'SubscribeStudentToCourse', read); } catch (error) { refused = error.message; }
+    eq(refused, 'Command "SubscribeStudentToCourse" reads "course" optionally (course?) – 11.0 has no optional reads.', 'named');
+  });
+
+  check('the write path refuses currentValue', () => {
+    const { id, model } = open_(SIMPLE);
+    const capacity = deepClone(model()['projection-definitions'].CourseCapacity);
+    let refused = null;
+    try {
+      updateDefinition('projection-definition', id, 'CourseCapacity',
+        { ...capacity, handlers: [{ event: 'CourseDefined', operation: 'set', value: { currentValue: true } }] });
+    } catch (error) { refused = error.message; }
+    eq(refused, 'Projection "CourseCapacity" sets a value from currentValue – 11.0 has no currentValue.', 'named');
+  });
+}
+
+
+// ---------------------------------------------------------------
+// Steps (11.0): one list, run top-down; the two lists before it are
+// lifted on import, and refused on the write path.
+// ---------------------------------------------------------------
+{
+  const earlier = () => {
+    const envelope = deepClone(buildShareEnvelope(build(SIMPLE), []));
+    for (const command of envelope.commandDefinitions) {
+      Object.assign(command, sandbox.commandLists(command));
+      delete command.steps;
+    }
+    return envelope;
+  };
+
+  check('a document with conditions and publishes imports as steps – the rules, then the emissions', () => {
+    const shipped = build(SIMPLE);
+    resetStore();
+    const { modelId, skipped } = importModelFromEnvelope(earlier());
+    eq(skipped, [], 'nothing skipped');
+    const model = sandbox.projectState()[modelId];
+    for (const [name, body] of Object.entries(shipped['command-definitions'])) {
+      eq(model['command-definitions'][name].steps, body.steps, `${name}, losslessly`);
+    }
+    const subscribe = model['command-definitions'].SubscribeStudentToCourse.steps;
+    eq(subscribe.map(sandbox.stepKind), ['rule', 'rule', 'rule', 'rule', 'rule', 'emit'], 'in the order they evaluated');
+    const tenFive = earlier();
+    tenFive.dcbModelVersion = '10.0';
+    tenFive.$schema = 'https://dcb.events/schemas/model/v10.json';
+    tenFive.entityDefinitions = [];
+    delete tenFive.groupDefinitions;
+    resetStore();
+    const tenFiveId = importModelFromEnvelope(tenFive).modelId;
+    const lifted = sandbox.projectState()[tenFiveId];
+    eq(lifted['command-definitions'].DefineCourse.steps, shipped['command-definitions'].DefineCourse.steps, 'a 10.x one too');
+  });
+
+  check('the write path refuses the two lists, and steps it cannot hold', () => {
+    const { id, model } = open_(SIMPLE);
+    const refused = (body) => {
+      try { sandbox.updateDefinition('command-definition', id, 'ArchiveCourse', body); } catch (error) { return error.message; }
+      return null;
+    };
+    const body = model()['command-definitions'].ArchiveCourse;
+    eq(refused({ ...body, conditions: [] }), 'A command\'s "conditions" is gone – 11.0 says its rules and emissions in order, as "steps".', 'conditions');
+    eq(refused({ ...body, steps: [1] }), 'A Command Definition\'s "steps" must hold objects – got 1.', 'a step that is no object');
+    eq(refused({ ...body, steps: [{ branches: [{ condition: {}, steps: 'x' }] }] }),
+      'A command\'s branch arm\'s "steps" must be a list.', 'an arm whose steps are no list');
+  });
+
+  check('the pages edit the top-level rules and emissions, and leave a branch where it is', () => {
+    const branch = { branches: [{ condition: { leftHandSide: true, predicate: 'isTrue' }, steps: [{ reject: 'No' }] }] };
+    const rule = (n) => ({ condition: { leftHandSide: n, predicate: 'equals', rightHandSide: n }, rejection: 'r' + n });
+    const emit = { name: 'E', parameters: {} };
+    const steps = [rule(1), branch, rule(2), emit];
+    const { conditions, publishes } = sandbox.commandLists({ steps });
+    eq(conditions.map((c) => c.rejection), ['r1', 'r2'], 'the rules, flat');
+    eq(sandbox.withCommandLists(steps, conditions, publishes), steps, 'unchanged lists, unchanged steps');
+    eq(sandbox.withCommandLists(steps, [conditions[1], conditions[0]], publishes).map((s) => s.rejection || s.branches || s.name),
+      ['r2', branch.branches, 'r1', 'E'], 'reordered into the same slots, the branch kept between');
+    eq(sandbox.withCommandLists(steps, [...conditions, { ...rule(3).condition, rejection: 'r3' }], publishes).map((s) => s.rejection || s.name || 'branch'),
+      ['r1', 'branch', 'r2', 'r3', 'E'], 'a new rule after the last');
+    eq(sandbox.withCommandLists(steps, [conditions[0]], []).map((s) => s.rejection || 'branch'), ['r1', 'branch'],
+      'removing gives up the last slots, never the branch');
+  });
+
+  check('a binding read with an unset tag is never made behind a rule that refuses', () => {
+    const { id, model } = open_(SIMPLE);
+    addDefinition('command-definition', id, 'Probe', {
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: true, isList: false }],
+      boundary: [{ alias: 'cap', projection: 'CourseCapacity', tags: { courseId: { parameterName: 'courseId' } } }],
+      conditions: [
+        { leftHandSide: { parameterName: 'courseId' }, predicate: 'isNotEmpty', rejection: 'No course' },
+        { leftHandSide: { alias: 'cap' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'No seats' },
+      ],
+      publishes: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Probe'), [], 'the require narrows the optional tag');
+    const run = evaluateCommand(model(), [], 'Probe', {});
+    eq([run.outcome, run.failedRule.rejection, run.failedRule.path], ['rejected', 'No course', [0]], 'refused by the first');
+    eq(run.reads, {}, 'and the alias was never read');
+    const ported = evaluateCommand(model(), () => [], 'Probe', {});
+    eq(ported.query, [], 'so its append condition covers nothing');
+  });
+}
+
+// ---------------------------------------------------------------
+// Conditional handlers (11.0): `on E { if … => op  else … }`. Separate
+// ifs all apply in order, an else chain its first match; a condition
+// reads the event and the projection's own tags, and filters the fold,
+// never the query.
+// ---------------------------------------------------------------
+{
+  const one = (name, propertyType) => ({ name, propertyType, isOptional: false, isList: false });
+  const eventField = (eventProperty, property) => (property === undefined ? { eventProperty } : { eventProperty, property });
+  const is = (left, right, negate) => ({ leftHandSide: left, predicate: 'equals', rightHandSide: right, ...(negate ? { negate: true } : {}) });
+  const tag = (name) => ({ parameterName: name });
+  const arm = (condition, operation, value) => ({ condition, operation, value });
+  const balanceHandler = {
+    event: 'MoneyTransferred',
+    steps: [
+      { branches: [arm(is(eventField('from'), tag('accountId')), 'decrement', eventField('amount'))] },
+      { branches: [arm(is(eventField('to'), tag('accountId')), 'increment', eventField('amount'))] },
+    ],
+  };
+  const openBank = () => {
+    const { id, model } = openBlank('Bank');
+    addDefinition('custom-type-definition', id, 'AccountId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'Address', { properties: [one('city', 'string')] });
+    addDefinition('custom-type-definition', id, 'State', { schema: { type: 'string', enum: ['released', 'booked'] } });
+    addTaggedEvent(id, 'MoneyTransferred', { properties: [one('from', 'AccountId'), one('to', 'AccountId'), one('amount', 'integer')] });
+    addTaggedEvent(id, 'AccountMoved', { properties: [one('accountId', 'AccountId'), one('address', 'Address')] });
+    addTaggedEvent(id, 'SeatsMarked', { properties: [one('accountId', 'AccountId'), one('seats', 'integer')] });
+    addDefinition('projection-definition', id, 'Balance', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [balanceHandler],
+    });
+    addDefinition('command-definition', id, 'Withdraw', {
+      properties: [one('accountId', 'AccountId'), one('amount', 'integer')],
+      boundary: [],
+      steps: [
+        { condition: is({ projection: 'Balance', tags: { accountId: tag('accountId') } }, 0, true), rejection: 'Empty' },
+        { name: 'MoneyTransferred', parameters: { from: tag('accountId'), to: tag('accountId'), amount: tag('amount') } },
+      ],
+    });
+    return { id, model };
+  };
+  const transfer = (from, to, amount) => ({ type: 'MoneyTransferred', data: { from, to, amount } });
+  const balance = (model, log, accountId) => foldProjection(model, log, 'Balance', { tags: { accountId } });
+
+  check('separate ifs all apply: a transfer moves both balances, a self-transfer nets 0', () => {
+    const { model } = openBank();
+    const log = [transfer('a1', 'a2', 30), transfer('a2', 'a1', 5)];
+    eq([balance(model(), log, 'a1'), balance(model(), log, 'a2')], [-25, 25], 'each side by its own branch');
+    eq(balance(model(), [transfer('a1', 'a1', 40)], 'a1'), 0, 'decremented, then incremented');
+    eq(advisedOtherwise(model()), [], 'the double tag is cleared by the conditions');
+  });
+
+  check('an else chain applies its first match only', () => {
+    const { id, model } = openBank();
+    addDefinition('projection-definition', id, 'Reservation', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'State', isList: false, initialValue: null,
+      handlers: [{ event: 'SeatsMarked', steps: [{
+        branches: [
+          arm(is(eventField('seats'), 0), 'set', { enumMember: 'released' }),
+          arm(is(eventField('seats'), 0), 'set', { enumMember: 'booked' }),
+        ],
+        otherwise: { operation: 'set', value: { enumMember: 'booked' } },
+      }] }],
+    });
+    const fold = (seats) => foldProjection(model(), [{ type: 'SeatsMarked', data: { accountId: 'a1', seats } }],
+      'Reservation', { tags: { accountId: 'a1' } });
+    eq([fold(0), fold(3)], ['released', 'booked'], 'the literal decides; the second arm never runs after the first');
+  });
+
+  check('a condition reads a nested field, and joins with or', () => {
+    const { id, model } = openBank();
+    addDefinition('projection-definition', id, 'Moves', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'AccountMoved', steps: [{ branches: [arm(
+        { any: [is(eventField('address', 'city'), 'Berlin'), is(eventField('address', 'city'), 'Hamburg')] },
+        'increment', 1)] }] }],
+    });
+    const moved = (city) => ({ type: 'AccountMoved', data: { accountId: 'a1', address: { city } } });
+    eq(foldProjection(model(), [moved('Berlin'), moved('Paris'), moved('Hamburg')], 'Moves', { tags: { accountId: 'a1' } }), 2,
+      'Berlin and Hamburg, not Paris');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+  });
+
+  check('a condition filters the fold, never the query', () => {
+    const { id, model } = openBank();
+    const conditional = sandbox.deriveDcb(model(), model()['command-definitions'].Withdraw).items;
+    updateDefinition('projection-definition', id, 'Balance', {
+      ...model()['projection-definitions'].Balance,
+      handlers: [{ event: 'MoneyTransferred', operation: 'increment', value: eventField('amount') }],
+    });
+    const plain = sandbox.deriveDcb(model(), model()['command-definitions'].Withdraw).items;
+    eq(conditional, plain, 'the same items, conditions or not');
+    eq(conditional.map((item) => [item.types, item.tags.length]), [[['MoneyTransferred'], 1]],
+      'one item: the event type, by the one tag – every transfer naming the account, either side');
+  });
+
+  check('the two-carriers refusal fires without conditions and names the condition first', () => {
+    const { id, model } = openBank();
+    updateDefinition('projection-definition', id, 'Balance', {
+      ...model()['projection-definitions'].Balance,
+      handlers: [{ event: 'MoneyTransferred', operation: 'increment', value: eventField('amount') }],
+    });
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/cannot tell them apart\. Give its handler a condition on one of them \(if event\.data\.from == accountId/.test(found), true, found);
+  });
+
+  check('a branch without a carrying field keeps the refusal', () => {
+    const { id, model } = openBank();
+    const unguarded = deepClone(balanceHandler);
+    unguarded.steps.push({ branches: [arm(is(eventField('amount'), 0), 'set', 0)] });
+    updateDefinition('projection-definition', id, 'Balance', { ...model()['projection-definitions'].Balance, handlers: [unguarded] });
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/cannot tell them apart/.test(found), true, 'one chain tests no carrying field: ' + found);
+  });
+
+  check('a condition reads only the event and the projection\'s own tags', () => {
+    const { id, model } = openBank();
+    const advised = (condition) => {
+      updateDefinition('projection-definition', id, 'Balance', {
+        ...model()['projection-definitions'].Balance,
+        handlers: [{ event: 'MoneyTransferred', steps: [{ branches: [arm({ all: [is(eventField('from'), tag('accountId')), condition] }, 'increment', 1)] }] }],
+      });
+      return sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    };
+    eq(/"nope", which is no tag of projection "Balance"/.test(advised(is(eventField('from'), tag('nope')))), true, 'an unknown name');
+    eq(/"MoneyTransferred" does not carry "wrong"/.test(advised(is(eventField('wrong'), tag('accountId')))), true, 'an unknown field');
+    eq(/compares with == or !=/.test(advised({ leftHandSide: eventField('amount'), predicate: 'greaterThan', rightHandSide: 1 })), true,
+      'an ordering');
+    eq(/reads the event and the projection's tags/.test(advised(is({ projection: 'Balance', tags: {} }, 1))), true, 'a read');
+  });
+
+  check('renaming an event field, a record field, a tag or a member rewrites the conditions', () => {
+    const { id, model } = openBank();
+    addDefinition('projection-definition', id, 'Moves', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'AccountMoved', steps: [{ branches: [arm(is(eventField('address', 'city'), 'Berlin'), 'increment', 1)] }] }],
+    });
+    renameMember('event-definition', id, 'MoneyTransferred', 'property', 'from', 'source');
+    renameMember('projection-definition', id, 'Balance', 'tag', 'accountId', 'account');
+    renameMember('custom-type-definition', id, 'Address', 'field', 'city', 'town');
+    const steps = model()['projection-definitions'].Balance.handlers[0].steps;
+    eq(steps[0].branches[0].condition, is(eventField('source'), tag('account')), 'the field and the tag');
+    eq(steps[1].branches[0].condition.rightHandSide, tag('account'), 'every chain');
+    eq(model()['projection-definitions'].Moves.handlers[0].steps[0].branches[0].condition.leftHandSide,
+      eventField('address', 'town'), 'the record field');
+    eq(advisedOtherwise(model()), [], 'still advisory-clean');
+    eq(foldProjection(model(), [{ type: 'MoneyTransferred', data: { source: 'a1', to: 'a2', amount: 7 } }], 'Balance',
+      { tags: { account: 'a1' } }), -7, 'and still folds');
+  });
+
+  check('renaming a group\'s tag moves its projections\' conditions, derived reads and every read of them', () => {
+    const { id, model } = openBank();
+    sandbox.createGroup(id, 'Account', { name: 'accountId', tagType: 'AccountId' });
+    sandbox.addGroupProjection(id, 'Account', 'net', { valueType: 'integer', isList: false, initialValue: 0, handlers: [balanceHandler] });
+    sandbox.addGroupProjection(id, 'Account', 'mirrors', { valueType: 'boolean', isList: false,
+      derived: { leftHandSide: { projection: 'Balance', tags: { accountId: tag('accountId') } }, predicate: 'equals',
+        rightHandSide: { projection: 'net' } } });
+    addDefinition('command-definition', id, 'Probe', {
+      properties: [one('accountId', 'AccountId')],
+      boundary: [{ alias: 'account', group: 'Account', tags: { accountId: tag('accountId') } }],
+      steps: [
+        { condition: is({ alias: 'account', property: 'net' }, 0, true), rejection: 'Empty' },
+        { condition: is({ projection: 'Account.mirrors', tags: { accountId: tag('accountId') } }, true), rejection: 'Odd' },
+        { name: 'MoneyTransferred', parameters: { from: tag('accountId'), to: tag('accountId'), amount: 0 } },
+      ],
+    });
+    addDefinition('projection-scenario-definition', id, 'net-1', { projection: 'Account.net',
+      tags: { accountId: 'a1' }, given: [], then: 0 });
+    renameMember('group-definition', id, 'Account', 'tag', 'accountId', 'account');
+    const group = model()['group-definitions'].Account;
+    eq(group.tag, { name: 'account', tagType: 'AccountId' }, 'declared');
+    const [net, mirrors] = group.projections;
+    eq(net.handlers[0].steps.map((s) => s.branches[0].condition.rightHandSide), [tag('account'), tag('account')],
+      'a branched handler\'s conditions');
+    eq(mirrors.derived.leftHandSide.tags, { accountId: tag('account') }, 'what a derived one passes on');
+    const probe = model()['command-definitions'].Probe;
+    eq(probe.boundary[0].tags, { account: tag('accountId') }, 'a group binding');
+    eq(probe.steps[1].condition.leftHandSide.tags, { account: tag('accountId') }, 'a read in place');
+    eq(model()['projection-scenario-definitions']['net-1'].tags, { account: 'a1' }, 'a projection scenario');
+    eq(advisedOtherwise(model()), [], 'nothing left dangling');
+    eq(foldProjection(model(), [transfer('a1', 'a2', 7)], 'Account.net', { tags: { account: 'a1' } }), -7, 'and it still folds');
+  });
+
+  check('renaming an enum member rewrites a condition comparing a field of that enum', () => {
+    const { id, model } = openBank();
+    addTaggedEvent(id, 'StateSet', { properties: [one('accountId', 'AccountId'), one('state', 'State')] });
+    addDefinition('projection-definition', id, 'Booked', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'StateSet', steps: [{ branches: [arm(is(eventField('state'), { enumMember: 'booked' }), 'increment', 1)] }] }],
+    });
+    renameMember('custom-type-definition', id, 'State', 'member', 'booked', 'taken');
+    eq(model()['projection-definitions'].Booked.handlers[0].steps[0].branches[0].condition.rightHandSide,
+      { enumMember: 'taken' }, 'the member follows');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    eq(foldProjection(model(), [{ type: 'StateSet', data: { accountId: 'a1', state: 'taken' } }], 'Booked',
+      { tags: { accountId: 'a1' } }), 1, 'and it still matches');
+  });
+
+  check('two independent ifs that both set may both match – advised', () => {
+    const { id, model } = openBank();
+    addDefinition('projection-definition', id, 'LastSide', {
+      tags: [{ name: 'accountId', tagType: 'AccountId' }], valueType: 'string', isList: false, initialValue: null,
+      handlers: [{ event: 'MoneyTransferred', steps: [
+        { branches: [arm(is(eventField('from'), tag('accountId')), 'set', 'from')] },
+        { branches: [arm(is(eventField('to'), tag('accountId')), 'set', 'to')] },
+      ] }],
+    });
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/may both match .*the last one wins/.test(found), true, found);
+    eq(foldProjection(model(), [transfer('a1', 'a1', 1)], 'LastSide', { tags: { accountId: 'a1' } }), 'to', 'and it does');
+  });
+}
+
+
+// ---------------------------------------------------------------
+// Open tags, collection functions and record values (11.0): `P(x, *)`
+// reads every present instance of P matching the bound tags, only
+// inside a collection function; a projection may hold a record its
+// handlers replace whole, and a read gives one of its fields.
+// ---------------------------------------------------------------
+{
+  const one = (name, propertyType, extra = {}) => ({ name, propertyType, isOptional: false, isList: false, ...extra });
+  const param = (name) => ({ parameterName: name });
+  const open = { open: true };
+  const seatsRead = (courseId = param('courseId')) => ({ projection: 'ReservationSeats', tags: { courseId, reservationId: open } });
+  const collect = (fn, read, where) => ({ collect: fn, read, ...(where ? { where } : {}) });
+  const openCourses = () => {
+    const { id, model } = openBlank('Seats');
+    addDefinition('custom-type-definition', id, 'CourseId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'ReservationId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'Seats', { schema: { type: 'integer' } });
+    addTaggedEvent(id, 'SeatsWereReserved', { properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId'),
+      one('numberOfSeatsReserved', 'Seats')] });
+    addTaggedEvent(id, 'SeatReservationWasCancelled', { properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId')] });
+    addDefinition('projection-definition', id, 'ReservationSeats', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }, { name: 'reservationId', tagType: 'ReservationId' }],
+      valueType: 'Seats', isList: false, initialValue: 0,
+      handlers: [
+        { event: 'SeatsWereReserved', operation: 'set', value: { eventProperty: 'numberOfSeatsReserved' } },
+        { event: 'SeatReservationWasCancelled', operation: 'set', value: 0 },
+      ],
+    });
+    addDefinition('projection-definition', id, 'CourseSeatsReserved', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: collect('sum', seatsRead()) },
+    });
+    addDefinition('command-definition', id, 'ReserveSeats', {
+      properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId'), one('seats', 'Seats')],
+      boundary: [],
+      steps: [
+        { condition: { leftHandSide: collect('sum', seatsRead()), predicate: 'lessThan', rightHandSide: 10 }, rejection: 'Course is full' },
+        { name: 'SeatsWereReserved', parameters: { courseId: param('courseId'), reservationId: param('reservationId'),
+          numberOfSeatsReserved: param('seats') } },
+      ],
+    });
+    return { id, model };
+  };
+  const reserve = (reservationId, seats, courseId = 'c1') =>
+    ({ type: 'SeatsWereReserved', data: { courseId, reservationId, numberOfSeatsReserved: seats } });
+  const cancel = (reservationId, courseId = 'c1') => ({ type: 'SeatReservationWasCancelled', data: { courseId, reservationId } });
+  const courseLog = [reserve('r1', 3), reserve('r2', 2), reserve('r9', 7, 'c2'), cancel('r1')];
+
+  check('an open read sums every present instance, and its boundary keeps only the bound tags', () => {
+    const { model } = openCourses();
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    eq(foldProjection(model(), courseLog, 'CourseSeatsReserved', { tags: { courseId: 'c1' } }), 2, 'r2 alone, r1 cancelled');
+    eq(foldProjection(model(), courseLog, 'CourseSeatsReserved', { tags: { courseId: 'c3' } }), 0, 'an empty sum is 0');
+    const items = sandbox.deriveDcb(model(), model()['command-definitions'].ReserveSeats).items;
+    eq(items.map((item) => [item.tags, item.types]),
+      [[['CourseId:{courseId}'], ['SeatReservationWasCancelled', 'SeatsWereReserved']]], 'one item, by CourseId alone');
+    const ported = evaluateCommand(model(), (query) => courseLog.filter((e) => query.some((item) =>
+      item.types.includes(e.type) && item.tags.every((t) => tagsOfEvent(model(), e.type, e.data).includes(t)))),
+    'ReserveSeats', { courseId: 'c1', reservationId: 'r3', seats: 1 });
+    eq(ported.outcome, 'published', 'decided');
+    eq(ported.query, [{ tags: ['CourseId:c1'], types: ['SeatReservationWasCancelled', 'SeatsWereReserved'] }],
+      'and its append condition covers the course, never a reservation');
+    const full = evaluateCommand(model(), [...courseLog, reserve('r4', 8)], 'ReserveSeats', { courseId: 'c1', reservationId: 'r5', seats: 1 });
+    eq([full.outcome, full.failedRule.rejection], ['rejected', 'Course is full'], 'a rule reads the sum');
+  });
+
+  check('an instance back at its initial value is absent – count counts what is present', () => {
+    const { id, model } = openBlank('Shares');
+    addDefinition('custom-type-definition', id, 'ContractId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'ShareId', { schema: { type: 'string' }, isTag: true });
+    addTaggedEvent(id, 'ShareStarted', { properties: [one('contractId', 'ContractId'), one('shareId', 'ShareId')] });
+    addTaggedEvent(id, 'ShareEnded', { properties: [one('contractId', 'ContractId'), one('shareId', 'ShareId')] });
+    addDefinition('projection-definition', id, 'ShareActive', {
+      tags: [{ name: 'contractId', tagType: 'ContractId' }, { name: 'shareId', tagType: 'ShareId' }],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'ShareStarted', operation: 'set', value: true }, { event: 'ShareEnded', operation: 'set', value: false }],
+    });
+    addDefinition('projection-definition', id, 'ActiveShares', {
+      tags: [{ name: 'contractId', tagType: 'ContractId' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: collect('count', { projection: 'ShareActive', tags: { contractId: param('contractId'), shareId: open } }) },
+    });
+    const ev = (type, shareId) => ({ type, data: { contractId: 'k1', shareId } });
+    const log = [ev('ShareStarted', 's1'), ev('ShareStarted', 's2'), ev('ShareEnded', 's1')];
+    eq(foldProjection(model(), log, 'ActiveShares', { tags: { contractId: 'k1' } }), 1, 'started twice, ended once');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+  });
+
+  check('an event without the open tag\'s value belongs to no instance', () => {
+    const { id, model } = openCourses();
+    addTaggedEvent(id, 'SeatsAdjusted', { properties: [one('courseId', 'CourseId'),
+      one('reservationId', 'ReservationId', { isOptional: true }), one('seats', 'Seats')] });
+    const body = deepClone(model()['projection-definitions'].ReservationSeats);
+    body.handlers.push({ event: 'SeatsAdjusted', operation: 'set', value: { eventProperty: 'seats' } });
+    updateDefinition('projection-definition', id, 'ReservationSeats', body);
+    const log = [reserve('r1', 3), { type: 'SeatsAdjusted', data: { courseId: 'c1', reservationId: null, seats: 5 } }];
+    eq(foldProjection(model(), log, 'CourseSeatsReserved', { tags: { courseId: 'c1' } }), 3, 'the null one counts nowhere');
+  });
+
+  check('each collection function, and what it gives over nothing', () => {
+    const { id, model } = openCourses();
+    const derive = (name, valueType, derived) => addDefinition('projection-definition', id, name, {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType, isList: false, derived });
+    const big = { leftHandSide: { instanceValue: true }, predicate: 'greaterThan', rightHandSide: 2 };
+    derive('Count', 'integer', { leftHandSide: collect('count', seatsRead()) });
+    derive('Min', 'integer', { leftHandSide: collect('min', seatsRead()) });
+    derive('Max', 'integer', { leftHandSide: collect('max', seatsRead()) });
+    addDefinition('custom-type-definition', id, 'Ratio', { schema: { type: 'number' } });
+    derive('Average', 'Ratio', { leftHandSide: collect('average', seatsRead()) });
+    derive('AnyBig', 'boolean', { leftHandSide: collect('any', seatsRead(), big) });
+    derive('AllBig', 'boolean', { leftHandSide: collect('all', seatsRead(), big) });
+    derive('AnyAtAll', 'boolean', { leftHandSide: collect('any', seatsRead()) });
+    derive('AllAtAll', 'boolean', { leftHandSide: collect('all', seatsRead()) });
+    derive('SumBig', 'integer', { leftHandSide: collect('sum', seatsRead(), big) });
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    const log = [reserve('r1', 3), reserve('r2', 2), reserve('r3', 5)];
+    const at = (name, courseId = 'c1', events = log) => foldProjection(model(), events, name, { tags: { courseId } });
+    eq(['Count', 'Min', 'Max', 'Average', 'AnyBig', 'AllBig', 'AnyAtAll', 'AllAtAll', 'SumBig'].map((n) => at(n)),
+      [3, 2, 5, 10 / 3, true, false, true, true, 8], 'over three reservations');
+    eq(['Count', 'Min', 'Max', 'Average', 'AnyBig', 'AllBig', 'AnyAtAll', 'AllAtAll', 'SumBig', 'CourseSeatsReserved'].map((n) => at(n, 'c9')),
+      [0, null, null, null, false, true, false, true, 0, 0], 'and over none');
+  });
+
+  check('a where reads value, a record value\'s field, and a parameter', () => {
+    const { id, model } = openCourses();
+    addDefinition('command-definition', id, 'Probe', {
+      properties: [one('courseId', 'CourseId'), one('least', 'Seats')],
+      boundary: [],
+      steps: [
+        { condition: { leftHandSide: collect('count', seatsRead(), { all: [
+          { leftHandSide: { instanceValue: true }, predicate: 'greaterThanOrEquals', rightHandSide: param('least') },
+          { leftHandSide: { instanceValue: true }, predicate: 'lessThan', rightHandSide: 100 },
+        ] }), predicate: 'lessThan', rightHandSide: 2 }, rejection: 'Too many big ones' },
+        { name: 'SeatReservationWasCancelled', parameters: { courseId: param('courseId'), reservationId: { tagType: 'ReservationId', tagValue: 'x' } } },
+      ],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Probe'), [], 'advisory-clean');
+    const log = [reserve('r1', 3), reserve('r2', 4), reserve('r3', 1)];
+    eq(evaluateCommand(model(), log, 'Probe', { courseId: 'c1', least: 3 }).outcome, 'rejected', 'two with 3 or more');
+    eq(evaluateCommand(model(), log, 'Probe', { courseId: 'c1', least: 4 }).outcome, 'published', 'one with 4 or more');
+  });
+
+  const openAddresses = () => {
+    const { id, model } = openBlank('Addresses');
+    addDefinition('custom-type-definition', id, 'CustomerId', { schema: { type: 'string' }, isTag: true });
+    addDefinition('custom-type-definition', id, 'Address', { properties: [one('street', 'string'), one('city', 'string')] });
+    addTaggedEvent(id, 'CustomerMoved', { properties: [one('customerId', 'CustomerId'), one('address', 'Address')] });
+    addTaggedEvent(id, 'CustomerRelocated', { properties: [one('customerId', 'CustomerId'), one('street', 'string'), one('city', 'string')] });
+    addTaggedEvent(id, 'ParcelSent', { properties: [one('customerId', 'CustomerId'), one('city', 'string')] });
+    addDefinition('projection-definition', id, 'CustomerAddress', {
+      tags: [{ name: 'customerId', tagType: 'CustomerId' }], valueType: 'Address', isList: false, initialValue: null,
+      handlers: [
+        { event: 'CustomerMoved', operation: 'set', value: { eventProperty: 'address' } },
+        { event: 'CustomerRelocated', operation: 'set', value: { record: { street: { eventProperty: 'street' }, city: { eventProperty: 'city' } } } },
+      ],
+    });
+    addDefinition('command-definition', id, 'SendParcel', {
+      properties: [one('customerId', 'CustomerId'), one('city', 'string')],
+      boundary: [{ alias: 'address', projection: 'CustomerAddress', tags: { customerId: param('customerId') } }],
+      steps: [
+        { condition: { leftHandSide: { alias: 'address', field: 'city' }, predicate: 'equals', rightHandSide: param('city') }, rejection: 'Wrong city' },
+        { condition: { leftHandSide: { projection: 'CustomerAddress', tags: { customerId: param('customerId') }, field: 'street' },
+          predicate: 'isNotEmpty' }, rejection: 'No street' },
+        { name: 'ParcelSent', parameters: { customerId: param('customerId'), city: { alias: 'address', field: 'city' } } },
+      ],
+    });
+    return { id, model };
+  };
+
+  check('a record value is set whole, and a rule and an emission read one of its fields', () => {
+    const { id, model } = openAddresses();
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    const log = [{ type: 'CustomerMoved', data: { customerId: 'u1', address: { street: 'Main 1', city: 'Berlin' } } }];
+    eq(foldProjection(model(), log, 'CustomerAddress', { tags: { customerId: 'u1' } }), { street: 'Main 1', city: 'Berlin' }, 'whole');
+    const relocated = [...log, { type: 'CustomerRelocated', data: { customerId: 'u1', street: 'Elm 2', city: 'Hamburg' } }];
+    eq(foldProjection(model(), relocated, 'CustomerAddress', { tags: { customerId: 'u1' } }), { street: 'Elm 2', city: 'Hamburg' },
+      'from a record of event fields');
+    const sent = evaluateCommand(model(), log, 'SendParcel', { customerId: 'u1', city: 'Berlin' });
+    eq([sent.outcome, sent.events[0].data.city], ['published', 'Berlin'], 'the field, in a rule and an emission');
+    eq(evaluateCommand(model(), log, 'SendParcel', { customerId: 'u1', city: 'Paris' }).outcome, 'rejected', 'and decides');
+    const items = sandbox.deriveDcb(model(), model()['command-definitions'].SendParcel).items;
+    eq(items.map((item) => [item.alias, item.tags]), [['address', ['CustomerId:{customerId}']], [null, ['CustomerId:{customerId}']]],
+      'a field is read by the read it is taken from');
+    addDefinition('projection-definition', id, 'CustomerCity', {
+      tags: [{ name: 'customerId', tagType: 'CustomerId' }], valueType: 'string', isList: false,
+      derived: { leftHandSide: { projection: 'CustomerAddress', tags: { customerId: param('customerId') }, field: 'city' } },
+    });
+    eq(foldProjection(model(), log, 'CustomerCity', { tags: { customerId: 'u1' } }), 'Berlin', 'and a derived projection');
+    eq(advisedOtherwise(model()), [], 'still advisory-clean');
+  });
+
+  check('a record value set by parts is refused, saying it is set whole', () => {
+    const { id, model } = openAddresses();
+    const body = deepClone(model()['projection-definitions'].CustomerAddress);
+    body.handlers[1] = { event: 'CustomerRelocated', operation: 'set', value: { eventProperty: 'city' } };
+    updateDefinition('projection-definition', id, 'CustomerAddress', body);
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/sets it to "city", a string – a record is replaced whole/.test(found), true, found);
+    body.handlers[1] = { event: 'CustomerRelocated', operation: 'set', value: { record: { city: { eventProperty: 'city' } } } };
+    updateDefinition('projection-definition', id, 'CustomerAddress', body);
+    const partial = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/leaves out "street" – a record is replaced whole/.test(partial), true, partial);
+  });
+
+  check('an open read outside a collection function, and one leaving every tag open, are advised', () => {
+    const { id, model } = openCourses();
+    const body = deepClone(model()['command-definitions'].ReserveSeats);
+    body.steps[0] = { condition: { leftHandSide: seatsRead(), predicate: 'lessThan', rightHandSide: 10 }, rejection: 'Course is full' };
+    updateDefinition('command-definition', id, 'ReserveSeats', body);
+    const found = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/ReservationSeats\(courseId, \*\) leaves a tag open – it is read inside count, sum, min, max, average, any or all/.test(found), true, found);
+    let error = '';
+    try { evaluateCommand(model(), courseLog, 'ReserveSeats', { courseId: 'c1', reservationId: 'r3', seats: 1 }); } catch (e) { error = e.message; }
+    eq(/leaves a tag open/.test(error), true, `and evaluation refuses it: ${error}`);
+    addDefinition('projection-definition', id, 'Everything', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: collect('sum', { projection: 'ReservationSeats', tags: { courseId: open, reservationId: open } }) },
+    });
+    const all = sandbox.modelAdvisories(model()).map((a) => a.message).join('; ');
+    eq(/ReservationSeats\(\*, \*\) leaves every tag open – at least one stays bound/.test(all), true, all);
+  });
+}
+
+
+// ---------------------------------------------------------------
+// Fan-out emits (11.0): `for each x in source` runs its steps once per
+// element of an open read, a list projection or a list parameter, in
+// source order, inside the command's one append.
+// ---------------------------------------------------------------
+{
+  const one = (name, propertyType, extra = {}) => ({ name, propertyType, isOptional: false, isList: false, ...extra });
+  const many = (name, propertyType) => one(name, propertyType, { isList: true });
+  const param = (name) => ({ parameterName: name });
+  const open = { open: true };
+  const tag = (name, tagType) => ({ name, tagType });
+  const activeShares = (customerId = param('customerId')) => ({ projection: 'ShareActiveAsOwner', tags: { ownerId: customerId, shareId: open } });
+  const shareContract = (shareId = param('shareId')) => ({ projection: 'ShareContract', tags: { shareId } });
+  const unread = () => ({ projection: 'UnreadNotificationIds', tags: { customerId: param('customerId') } });
+  const ended = (reason = 'ownerAccountDeleted') => ({ name: 'ContractShareEnded', parameters: {
+    ownerId: param('customerId'), shareId: param('shareId'), contractId: shareContract(), reason } });
+  const markRead = { name: 'NotificationWasMarkedAsRead', parameters: { notificationId: param('notificationId'), customerId: param('customerId') } };
+  const openPortal = () => {
+    const { id, model } = openBlank('Portal');
+    for (const type of ['CustomerId', 'ShareId', 'ContractId', 'NotificationId']) {
+      addDefinition('custom-type-definition', id, type, { schema: { type: 'string' }, isTag: true });
+    }
+    addDefinition('custom-type-definition', id, 'ShareInfo', { properties: [one('contractId', 'ContractId'), one('note', 'string')] });
+    addTaggedEvent(id, 'CustomerRegistered', { properties: [one('customerId', 'CustomerId')] });
+    addTaggedEvent(id, 'CustomerWasDeleted', { properties: [one('customerId', 'CustomerId')] });
+    addTaggedEvent(id, 'ContractShareStarted', { properties: [one('ownerId', 'CustomerId'), one('shareId', 'ShareId'),
+      one('contractId', 'ContractId'), one('note', 'string')] });
+    addTaggedEvent(id, 'ContractShareEnded', { properties: [one('ownerId', 'CustomerId'), one('shareId', 'ShareId'),
+      one('contractId', 'ContractId'), one('reason', 'string')] });
+    addTaggedEvent(id, 'NotificationSent', { properties: [one('customerId', 'CustomerId'), one('notificationId', 'NotificationId')] });
+    addTaggedEvent(id, 'NotificationWasMarkedAsRead', { properties: [one('notificationId', 'NotificationId'), one('customerId', 'CustomerId')] });
+    addDefinition('projection-definition', id, 'CustomerExists', {
+      tags: [tag('customerId', 'CustomerId')], valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'CustomerRegistered', operation: 'set', value: true }, { event: 'CustomerWasDeleted', operation: 'set', value: false }],
+    });
+    addDefinition('projection-definition', id, 'ShareActiveAsOwner', {
+      tags: [tag('ownerId', 'CustomerId'), tag('shareId', 'ShareId')], valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'ContractShareStarted', operation: 'set', value: true }, { event: 'ContractShareEnded', operation: 'set', value: false }],
+    });
+    addDefinition('projection-definition', id, 'ShareContract', {
+      tags: [tag('shareId', 'ShareId')], valueType: 'ContractId', isList: false, initialValue: null,
+      handlers: [{ event: 'ContractShareStarted', operation: 'set', value: { eventProperty: 'contractId' } }],
+    });
+    addDefinition('projection-definition', id, 'ShareDetails', {
+      tags: [tag('ownerId', 'CustomerId'), tag('shareId', 'ShareId')], valueType: 'ShareInfo', isList: false, initialValue: null,
+      handlers: [
+        { event: 'ContractShareStarted', operation: 'set', value: { record: { contractId: { eventProperty: 'contractId' }, note: { eventProperty: 'note' } } } },
+        { event: 'ContractShareEnded', operation: 'set', value: null },
+      ],
+    });
+    addDefinition('projection-definition', id, 'ShareContractOf', {
+      tags: [tag('ownerId', 'CustomerId'), tag('shareId', 'ShareId'), tag('contractId', 'ContractId')],
+      valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [{ event: 'ContractShareStarted', operation: 'set', value: true }, { event: 'ContractShareEnded', operation: 'set', value: false }],
+    });
+    addDefinition('projection-definition', id, 'UnreadNotificationIds', {
+      tags: [tag('customerId', 'CustomerId')], valueType: 'NotificationId', isList: true, initialValue: [],
+      handlers: [
+        { event: 'NotificationSent', operation: 'append', value: { eventProperty: 'notificationId' } },
+        { event: 'NotificationWasMarkedAsRead', operation: 'remove', value: { eventProperty: 'notificationId' } },
+      ],
+    });
+    addDefinition('command-definition', id, 'DeleteCustomer', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [
+        { condition: { leftHandSide: { projection: 'CustomerExists', tags: { customerId: param('customerId') } }, predicate: 'isTrue' },
+          rejection: 'Customer not found' },
+        { name: 'CustomerWasDeleted', parameters: { customerId: param('customerId') } },
+        { forEach: ['shareId'], in: activeShares(), steps: [ended()] },
+      ],
+    });
+    addDefinition('command-definition', id, 'MarkNotificationsAsRead', {
+      properties: [one('customerId', 'CustomerId'), many('notificationIds', 'NotificationId')], boundary: [],
+      steps: [
+        { forEach: ['notificationId'], in: param('notificationIds'), steps: [
+          { branches: [{ condition: { leftHandSide: unread(), predicate: 'contains', rightHandSide: param('notificationId') }, steps: [markRead] }] },
+        ] },
+      ],
+    });
+    addDefinition('command-definition', id, 'MarkAllAsRead', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [{ forEach: ['notificationId'], in: unread(), steps: [markRead] }],
+    });
+    return { id, model };
+  };
+  const started = (shareId, contractId, ownerId = 'u1', note = '') =>
+    ({ type: 'ContractShareStarted', data: { ownerId, shareId, contractId, note } });
+  const endedEvent = (shareId, contractId, ownerId = 'u1') =>
+    ({ type: 'ContractShareEnded', data: { ownerId, shareId, contractId, reason: 'ownerEnded' } });
+  const registered = { type: 'CustomerRegistered', data: { customerId: 'u1' } };
+  const sharesLog = [registered, started('s3', 'k3'), started('s1', 'k1'), started('s2', 'k2'), endedEvent('s1', 'k1')];
+  const sent = (notificationId) => ({ type: 'NotificationSent', data: { customerId: 'u1', notificationId } });
+  const sharesOf = (result) => result.events.map((e) => [e.type, e.data.shareId || e.data.customerId, e.data.contractId]);
+
+  check('a fan-out over an open read emits once per present instance, in first-event order', () => {
+    const { model } = openPortal();
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    const result = evaluateCommand(model(), sharesLog, 'DeleteCustomer', { customerId: 'u1' });
+    eq(result.outcome, 'published', 'published');
+    eq(sharesOf(result), [['CustomerWasDeleted', 'u1', undefined], ['ContractShareEnded', 's3', 'k3'], ['ContractShareEnded', 's2', 'k2']],
+      'the deletion, then s3 and s2 – s1 ended already');
+    eq(result.events[1].data.reason, 'ownerAccountDeleted', 'the literal');
+  });
+
+  check('a fan-out over no element emits nothing from it, without rejecting', () => {
+    const { model } = openPortal();
+    const result = evaluateCommand(model(), [registered], 'DeleteCustomer', { customerId: 'u1' });
+    eq([result.outcome, result.events.map((e) => e.type)], ['published', ['CustomerWasDeleted']], 'the deletion alone');
+    const none = evaluateCommand(model(), [], 'MarkAllAsRead', { customerId: 'u1' });
+    eq([none.outcome, none.events], ['published', []], 'a command emitting only from a loop publishes nothing');
+  });
+
+  check('a fan-out over a list parameter, filtered by an if reading a projection per element', () => {
+    const { model } = openPortal();
+    const log = [sent('n1'), sent('n2'), sent('n3'), { type: 'NotificationWasMarkedAsRead', data: { notificationId: 'n2', customerId: 'u1' } }];
+    const result = evaluateCommand(model(), log, 'MarkNotificationsAsRead', { customerId: 'u1', notificationIds: ['n3', 'n2', 'n9', 'n1'] });
+    eq(result.outcome, 'published', 'never refused');
+    eq(result.events.map((e) => e.data.notificationId), ['n3', 'n1'], 'the unread ones, in list order');
+    const empty = evaluateCommand(model(), log, 'MarkNotificationsAsRead', { customerId: 'u1', notificationIds: [] });
+    eq([empty.outcome, empty.events], ['published', []], 'an empty list: nothing');
+  });
+
+  check('a fan-out over a list projection', () => {
+    const { model } = openPortal();
+    const result = evaluateCommand(model(), [sent('n2'), sent('n1')], 'MarkAllAsRead', { customerId: 'u1' });
+    eq(result.events.map((e) => e.data.notificationId), ['n2', 'n1'], 'each unread one, in list order');
+  });
+
+  check('two open tags bind two names', () => {
+    const { id, model } = openPortal();
+    addDefinition('command-definition', id, 'EndAll', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [{ forEach: ['shareId', 'contractId'], in: { projection: 'ShareContractOf', tags: { ownerId: param('customerId'), shareId: open, contractId: open } },
+        steps: [{ name: 'ContractShareEnded', parameters: { ownerId: param('customerId'), shareId: param('shareId'), contractId: param('contractId'), reason: 'all' } }] }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'EndAll'), [], 'advisory-clean');
+    const result = evaluateCommand(model(), sharesLog, 'EndAll', { customerId: 'u1' });
+    eq(sharesOf(result), [['ContractShareEnded', 's3', 'k3'], ['ContractShareEnded', 's2', 'k2']], 'both names, per instance');
+  });
+
+  check('value and value.field are the instance\'s value inside the loop', () => {
+    const { id, model } = openPortal();
+    addDefinition('command-definition', id, 'EndByDetails', {
+      properties: [one('customerId', 'CustomerId'), one('note', 'string')], boundary: [],
+      steps: [{ forEach: ['shareId'], in: { projection: 'ShareDetails', tags: { ownerId: param('customerId'), shareId: open } }, steps: [
+        { branches: [{ condition: { leftHandSide: { instanceValue: true, field: 'note' }, predicate: 'equals', rightHandSide: param('note') },
+          steps: [{ name: 'ContractShareEnded', parameters: { ownerId: param('customerId'), shareId: param('shareId'),
+            contractId: { instanceValue: true, field: 'contractId' }, reason: 'byNote' } }] }] },
+      ] }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'EndByDetails'), [], 'advisory-clean');
+    const log = [started('s1', 'k1', 'u1', 'a'), started('s2', 'k2', 'u1', 'b'), started('s3', 'k3', 'u1', 'a')];
+    const result = evaluateCommand(model(), log, 'EndByDetails', { customerId: 'u1', note: 'a' });
+    eq(sharesOf(result), [['ContractShareEnded', 's1', 'k1'], ['ContractShareEnded', 's3', 'k3']], 'value.note filters, value.contractId emits');
+    addDefinition('command-definition', id, 'Echo', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [{ forEach: ['shareId'], in: activeShares(), steps: [
+        { branches: [{ condition: { leftHandSide: { instanceValue: true }, predicate: 'isTrue' },
+          steps: [{ name: 'CustomerRegistered', parameters: { customerId: param('customerId') } }] }] }] }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Echo'), [], 'advisory-clean too');
+    eq(evaluateCommand(model(), log, 'Echo', { customerId: 'u1' }).events.length, 3, 'value whole, on a boolean');
+    sandbox.renameMember('custom-type-definition', id, 'ShareInfo', 'field', 'note', 'remark');
+    eq(model()['command-definitions'].EndByDetails.steps[0].steps[0].branches[0].condition.leftHandSide,
+      { instanceValue: true, field: 'remark' }, 'a field rename follows value.field');
+  });
+
+  check('renaming an enum member follows value compared inside a loop', () => {
+    const { id, model } = openPortal();
+    addDefinition('custom-type-definition', id, 'Role', { schema: { type: 'string', enum: ['Owner', 'Viewer'] } });
+    addDefinition('projection-definition', id, 'ShareRole', {
+      tags: [tag('ownerId', 'CustomerId'), tag('shareId', 'ShareId')], valueType: 'Role', isList: false, initialValue: null,
+      handlers: [{ event: 'ContractShareStarted', operation: 'set', value: { enumMember: 'Owner' } }],
+    });
+    addDefinition('command-definition', id, 'EndOwned', {
+      properties: [one('customerId', 'CustomerId')], boundary: [],
+      steps: [{ forEach: ['shareId'], in: { projection: 'ShareRole', tags: { ownerId: param('customerId'), shareId: open } }, steps: [
+        { branches: [{ condition: { leftHandSide: { instanceValue: true }, predicate: 'equals', rightHandSide: { enumMember: 'Owner' } },
+          steps: [ended('owned')] }] }] }],
+    });
+    eq(evaluateCommand(model(), sharesLog, 'EndOwned', { customerId: 'u1' }).events.length, 3, 'value == Owner, for each share started');
+    sandbox.renameMember('custom-type-definition', id, 'Role', 'member', 'Owner', 'Holder');
+    eq(model()['command-definitions'].EndOwned.steps[0].steps[0].branches[0].condition.rightHandSide, { enumMember: 'Holder' }, 'the member follows');
+  });
+
+  check('a reject inside a loop aborts the whole command', () => {
+    const { id, model } = openPortal();
+    addDefinition('command-definition', id, 'EndUnlessLocked', {
+      properties: [one('customerId', 'CustomerId'), one('locked', 'ContractId')], boundary: [],
+      steps: [
+        { name: 'CustomerWasDeleted', parameters: { customerId: param('customerId') } },
+        { forEach: ['shareId'], in: activeShares(), steps: [
+          { branches: [{ condition: { leftHandSide: shareContract(), predicate: 'equals', rightHandSide: param('locked') },
+            steps: [{ reject: 'A share is locked' }] }], otherwise: [ended('locked')] },
+        ] },
+      ],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'EndUnlessLocked'), [], 'advisory-clean');
+    const refused = evaluateCommand(model(), sharesLog, 'EndUnlessLocked', { customerId: 'u1', locked: 'k2' });
+    eq([refused.outcome, refused.failedRule.rejection, refused.events], ['rejected', 'A share is locked', []], 'nothing published');
+    const fine = evaluateCommand(model(), sharesLog, 'EndUnlessLocked', { customerId: 'u1', locked: 'k9' });
+    eq(fine.events.length, 3, 'otherwise each share ends');
+    eq(fine.arms, ['1/each/0/otherwise'], 'the arm taken, once');
+  });
+
+  check('the append condition holds the reads each element made; the static boundary shows them per element', () => {
+    const { model } = openPortal();
+    const port = (query) => sharesLog.filter((e) => query.some((item) =>
+      item.types.includes(e.type) && item.tags.every((t) => tagsOfEvent(model(), e.type, e.data).includes(t))));
+    const result = evaluateCommand(model(), port, 'DeleteCustomer', { customerId: 'u1' });
+    eq(result.events.length, 3, 'decided through the port');
+    eq(result.query.map((item) => item.tags.join(' ')).sort(),
+      ['CustomerId:u1', 'ShareId:s2', 'ShareId:s3'], 'the customer, then each share the loop read');
+    const items = sandbox.deriveDcb(model(), model()['command-definitions'].DeleteCustomer).items;
+    eq(items.map((item) => [item.tags, item.fannedOut]),
+      [[['CustomerId:{customerId}'], false], [['CustomerId:{customerId}'], false], [['ShareId:{each shareId}'], true]],
+      'the existence read, the open read by its bound tag, and the contract per element');
+    const reads = evaluateCommand(model(), sharesLog, 'DeleteCustomer', { customerId: 'u1' }).reads;
+    eq(Object.keys(reads).filter((key) => /ShareContract/.test(key)).sort(),
+      ['ShareContract(ShareId("s2"))', 'ShareContract(ShareId("s3"))'], 'the sandbox shows each read made');
+  });
+
+  check('a fan-out inside a fan-out is refused when stored', () => {
+    const { id, model } = openPortal();
+    let error = '';
+    try {
+      addDefinition('command-definition', id, 'Nested', {
+        properties: [one('customerId', 'CustomerId')], boundary: [],
+        steps: [{ forEach: ['shareId'], in: activeShares(), steps: [{ forEach: ['other'], in: activeShares(), steps: [ended()] }] }],
+      });
+    } catch (e) { error = e.message; }
+    eq(/inside another/.test(error), true, error);
+    eq(model()['command-definitions'].Nested, undefined, 'not stored');
+  });
+
+  check('a loop\'s names and source are checked', () => {
+    const { id, model } = openPortal();
+    const advised = (steps, properties = [one('customerId', 'CustomerId')]) => {
+      updateDefinition('command-definition', id, 'MarkAllAsRead', { properties, boundary: [], steps });
+      return sandbox.modelAdvisories(model()).filter((a) => a.name === 'MarkAllAsRead').map((a) => a.message).join('; ');
+    };
+    eq(/is not a list/.test(advised([{ forEach: ['x'], in: param('customerId'), steps: [] }])), true, 'a single value is no source');
+    eq(/two names/.test(advised([{ forEach: ['a', 'b'], in: unread(), steps: [] }])), true, 'a list binds one name');
+    eq(/leaves 1 tag open but names 2/.test(advised([{ forEach: ['a', 'b'], in: activeShares(), steps: [] }])), true, 'one per open tag');
+    eq(/already names a payload property/.test(advised([{ forEach: ['customerId'], in: unread(), steps: [] }])), true, 'no shadowing');
+    eq(/is declared CustomerId, but takes its value from "notificationId", which is NotificationId/.test(
+      advised([{ forEach: ['notificationId'], in: unread(), steps: [{ name: 'CustomerWasDeleted', parameters: { customerId: param('notificationId') } }] }])),
+    true, 'an emission inside is typed by the element');
+    eq(/value.*only .*open read/.test(advised([{ forEach: ['n'], in: unread(), steps: [{ name: 'CustomerWasDeleted', parameters: { customerId: { instanceValue: true } } }] }])),
+      true, 'value only inside a loop over an open read');
+  });
+
+  check('a loop\'s emitting arms are owed scenarios, like a command\'s', () => {
+    const { model } = openPortal();
+    const owed = sandbox.commandSuccessesOwed(model()['command-definitions'].MarkNotificationsAsRead);
+    eq(owed.map((o) => [o.arm, o.events]), [['0/each/0/0', ['NotificationWasMarkedAsRead']]], 'the one emitting arm');
+    const plain = sandbox.commandSuccessesOwed(model()['command-definitions'].DeleteCustomer);
+    eq(plain.map((o) => o.events), [['CustomerWasDeleted', 'ContractShareEnded']], 'a loop\'s emission is part of the one success');
+    eq(sandbox.commandEmissions(model()['command-definitions'].DeleteCustomer).map((e) => e.name),
+      ['CustomerWasDeleted', 'ContractShareEnded'], 'and among the command\'s emissions');
+  });
+}
+
+// ---------------------------------------------------------------
+// Time (11.0): `datetime` and `duration` are built-in types, `now` an
+// ordinary parameter, and a datetime moves by a duration – in rules,
+// emissions and derived projections. Numbers add and subtract in a
+// rule too.
+// ---------------------------------------------------------------
+{
+  const one = (name, propertyType, extra = {}) => ({ name, propertyType, isOptional: false, isList: false, ...extra });
+  const param = (name) => ({ parameterName: name });
+  const tag = (name, tagType) => ({ name, tagType });
+  const minutes = (n) => ({ duration: `PT${n}M` });
+  const capacity = { projection: 'CourseCapacity', tags: { courseId: param('courseId') } };
+  const activeSeats = { collect: 'sum', read: { projection: 'Reservation', tags: { courseId: param('courseId'), reservationId: { open: true } }, field: 'seats' },
+    where: { leftHandSide: { instanceValue: true, field: 'expiresAt' }, predicate: 'greaterThan', rightHandSide: param('now') } };
+  const openTime = () => {
+    const { id, model } = openBlank('Time');
+    for (const type of ['CourseId', 'ReservationId', 'OptInToken']) {
+      addDefinition('custom-type-definition', id, type, { schema: { type: 'string' }, isTag: true });
+    }
+    addDefinition('custom-type-definition', id, 'ReservationInfo', { properties: [one('seats', 'integer'), one('expiresAt', 'datetime')] });
+    addTaggedEvent(id, 'CourseDefined', { properties: [one('courseId', 'CourseId'), one('capacity', 'integer')] });
+    addTaggedEvent(id, 'SeatsWereReserved', { properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId'),
+      one('seats', 'integer'), one('expiresAt', 'datetime')] });
+    addTaggedEvent(id, 'OptInIssued', { properties: [one('token', 'OptInToken'), one('issuedAt', 'datetime')] });
+    addTaggedEvent(id, 'SignUpConfirmed', { properties: [one('token', 'OptInToken')] });
+    addTaggedEvent(id, 'RetryWindowChanged', { properties: [one('courseId', 'CourseId'), one('window', 'duration')] });
+    addDefinition('projection-definition', id, 'CourseCapacity', {
+      tags: [tag('courseId', 'CourseId')], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'CourseDefined', operation: 'set', value: { eventProperty: 'capacity' } }],
+    });
+    addDefinition('projection-definition', id, 'Reservation', {
+      tags: [tag('courseId', 'CourseId'), tag('reservationId', 'ReservationId')], valueType: 'ReservationInfo', isList: false, initialValue: null,
+      handlers: [{ event: 'SeatsWereReserved', operation: 'set',
+        value: { record: { seats: { eventProperty: 'seats' }, expiresAt: { eventProperty: 'expiresAt' } } } }],
+    });
+    addDefinition('projection-definition', id, 'OptInIssuedAt', {
+      tags: [tag('token', 'OptInToken')], valueType: 'datetime', isList: false, initialValue: null,
+      handlers: [{ event: 'OptInIssued', operation: 'set', value: { eventProperty: 'issuedAt' } }],
+    });
+    addDefinition('projection-definition', id, 'OptInExpiresAt', {
+      tags: [tag('token', 'OptInToken')], valueType: 'datetime', isList: false,
+      derived: { leftHandSide: { projection: 'OptInIssuedAt', tags: { token: param('token') } }, operator: 'add', rightHandSide: { duration: 'PT24H' } },
+    });
+    addDefinition('command-definition', id, 'ReserveSeats', {
+      properties: [one('courseId', 'CourseId'), one('reservationId', 'ReservationId'), one('seats', 'integer'), one('now', 'datetime')],
+      boundary: [],
+      steps: [
+        { condition: { leftHandSide: { operator: 'subtract', leftHandSide: capacity, rightHandSide: activeSeats },
+          predicate: 'greaterThanOrEquals', rightHandSide: param('seats') }, rejection: 'Not enough seats' },
+        { name: 'SeatsWereReserved', parameters: { courseId: param('courseId'), reservationId: param('reservationId'), seats: param('seats'),
+          expiresAt: { operator: 'add', leftHandSide: param('now'), rightHandSide: minutes(15) } } },
+      ],
+    });
+    addDefinition('command-definition', id, 'ConfirmSignUp', {
+      properties: [one('token', 'OptInToken'), one('now', 'datetime')], boundary: [],
+      steps: [
+        { condition: { leftHandSide: { operator: 'add', leftHandSide: { projection: 'OptInIssuedAt', tags: { token: param('token') } }, rightHandSide: { duration: 'PT24H' } },
+          predicate: 'greaterThan', rightHandSide: param('now') }, rejection: 'Token expired' },
+        { name: 'SignUpConfirmed', parameters: { token: param('token') } },
+      ],
+    });
+    addDefinition('command-definition', id, 'ChangeRetryWindow', {
+      properties: [one('courseId', 'CourseId'), one('window', 'duration'), one('from', 'datetime'), one('until', 'datetime')], boundary: [],
+      steps: [
+        { condition: { leftHandSide: param('from'), predicate: 'lessThan', rightHandSide: param('until') }, rejection: 'From is not before until' },
+        { condition: { leftHandSide: param('window'), predicate: 'lessThanOrEquals', rightHandSide: { duration: 'PT168H' } }, rejection: 'Window too long' },
+        { name: 'RetryWindowChanged', parameters: { courseId: param('courseId'), window: param('window') } },
+      ],
+    });
+    addDefinition('command-definition', id, 'Allocate', {
+      properties: [one('courseId', 'CourseId'), one('total', 'integer'), one('used', 'integer'), one('wanted', 'integer')], boundary: [],
+      steps: [
+        { condition: { leftHandSide: { operator: 'subtract', leftHandSide: param('total'), rightHandSide: param('used') },
+          predicate: 'greaterThanOrEquals', rightHandSide: param('wanted') }, rejection: 'Too little left' },
+        { name: 'CourseDefined', parameters: { courseId: param('courseId'), capacity: { operator: 'add', leftHandSide: param('total'), rightHandSide: 1 } } },
+      ],
+    });
+    return { id, model };
+  };
+  const defined = (capacity) => ({ type: 'CourseDefined', data: { courseId: 'c1', capacity } });
+  const reserved = (reservationId, seats, expiresAt) => ({ type: 'SeatsWereReserved', data: { courseId: 'c1', reservationId, seats, expiresAt } });
+  const window = (args) => ({ courseId: 'c1', window: 'PT1H', from: '2026-01-01T10:00:00Z', until: '2026-01-01T11:00:00Z', ...args });
+  const evaluationError = (run) => {
+    try { run(); } catch (error) {
+      if (error.name !== 'EvaluationError') throw error;
+      return error.message;
+    }
+    return null;
+  };
+
+  check('a model using datetime, duration and arithmetic is advisory-clean', () => {
+    const { model } = openTime();
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+  });
+
+  check('datetimes compare as instants, whatever their offsets', () => {
+    const { model } = openTime();
+    const run = (from, until) => evaluateCommand(model(), [], 'ChangeRetryWindow', window({ from, until })).outcome;
+    eq(run('2026-01-01T11:30:00+02:00', '2026-01-01T10:00:00Z'), 'published', '11:30+02:00 is 09:30Z, before 10:00Z');
+    eq(run('2026-01-01T10:00:00Z', '2026-01-01T11:30:00+02:00'), 'rejected', 'and 10:00Z is not before 09:30Z');
+    eq(run('2026-01-01T12:00:00+02:00', '2026-01-01T10:00:00Z'), 'rejected', 'one instant is not before itself');
+  });
+
+  check('now + 15m is emitted in UTC', () => {
+    const { model } = openTime();
+    const result = evaluateCommand(model(), [defined(10)], 'ReserveSeats',
+      { courseId: 'c1', reservationId: 'r1', seats: 2, now: '2026-01-01T10:00:00+02:00' });
+    eq(result.outcome, 'published', 'published');
+    eq(result.events[0].data.expiresAt, '2026-01-01T08:15:00Z', 'fifteen minutes on, written in UTC');
+  });
+
+  check('a rule over a stored datetime plus 24h holds before it and refuses after', () => {
+    const { model } = openTime();
+    const log = [{ type: 'OptInIssued', data: { token: 't1', issuedAt: '2026-01-01T10:00:00+01:00' } }];
+    const confirm = (now) => evaluateCommand(model(), log, 'ConfirmSignUp', { token: 't1', now });
+    eq(confirm('2026-01-02T08:59:59Z').outcome, 'published', 'a second before the day is up');
+    const late = confirm('2026-01-02T09:00:00Z');
+    eq([late.outcome, late.failedRule.rejection], ['rejected', 'Token expired'], 'refused once 24h are up');
+    eq(foldProjection(model(), log, 'OptInExpiresAt', { tags: { token: 't1' } }), '2026-01-02T09:00:00Z',
+      'a derived projection moves a datetime by a duration');
+  });
+
+  check('a sum over an open read keeps the instances its where holds for, against now', () => {
+    const { model } = openTime();
+    const log = [defined(10), reserved('r1', 5, '2026-01-01T10:15:00Z'), reserved('r2', 3, '2026-01-01T12:30:00+02:00')];
+    const reserve = (seats, now) => evaluateCommand(model(), log, 'ReserveSeats', { courseId: 'c1', reservationId: 'r3', seats, now });
+    eq(reserve(2, '2026-01-01T10:00:00Z').outcome, 'published', 'both reservations hold: 2 seats free');
+    eq(reserve(3, '2026-01-01T10:00:00Z').failedRule.rejection, 'Not enough seats', 'not 3');
+    eq(reserve(7, '2026-01-01T10:20:00Z').outcome, 'published', 'r1 expired: 7 free');
+    eq(reserve(8, '2026-01-01T10:20:00Z').outcome, 'rejected', 'not 8');
+    eq(reserve(10, '2026-01-01T10:30:00Z').outcome, 'published', 'r2 expires at 10:30Z: all free');
+    const boundary = sandbox.deriveDcb(model(), model()['command-definitions'].ReserveSeats).items.map((item) => item.types.join()).sort();
+    eq(boundary, ['CourseDefined', 'SeatsWereReserved'], 'both sides of the subtraction are in the boundary');
+  });
+
+  check('7d is 168h, and a duration is a parameter and an event field', () => {
+    const { model } = openTime();
+    const change = (w) => evaluateCommand(model(), [], 'ChangeRetryWindow', window({ window: w }));
+    const week = change('P7D');
+    eq([week.outcome, week.events[0].data.window], ['published', 'P7D'], '7d is no longer than 168h, and emitted as given');
+    eq(change('P7DT1S').failedRule.rejection, 'Window too long', 'a second more is');
+    eq(change('PT90M').outcome, 'published', '90m');
+    eq(sandbox.durationFromLiteral('7d').value, 'P7D', 'the literal 7d');
+    eq(sandbox.durationSeconds('P7D'), sandbox.durationSeconds('PT168H'), 'a day is exactly 24 hours');
+    eq(sandbox.durationFromLiteral('1h30m').value, 'PT1H30M', 'combined units');
+    eq(sandbox.durationLiteralText('PT1H30M'), '1h30m', 'and back');
+  });
+
+  check('a datetime without an offset is an error where it is given, and an advisory where it is written', () => {
+    const { id, model } = openTime();
+    const message = evaluationError(() => evaluateCommand(model(), [], 'ChangeRetryWindow', window({ from: '2026-01-01T10:00:00' })));
+    eq(/from: .*has no offset/.test(message || ''), true, 'a command given one errors');
+    eq(/window: .*no duration/.test(evaluationError(() => evaluateCommand(model(), [], 'ChangeRetryWindow', window({ window: '15m' }))) || ''),
+      true, 'and a duration that is none');
+    const scenario = { command: 'ConfirmSignUp', given: [{ event: 'OptInIssued', data: { token: 't1', issuedAt: '2026-01-01T10:00:00' } }],
+      when: { arguments: { token: 't1', now: '2026-01-01T10:00:00Z' } }, then: null };
+    const run = runScenario(model(), scenario);
+    eq([run.status, /Given step 1 \("OptInIssued"\) carries issuedAt: .*has no offset/.test(run.reason)], ['broken', true], 'a scenario given one is broken');
+    const projection = runProjectionScenario(model(), { projection: 'OptInIssuedAt', tags: { token: { tagType: 'OptInToken', tagValue: 't1' } },
+      given: scenario.given, then: null });
+    eq(projection.status, 'broken', 'a projection scenario too');
+  });
+
+  check('number arithmetic in a rule and in an emission', () => {
+    const { model } = openTime();
+    const run = (total, used, wanted) => evaluateCommand(model(), [], 'Allocate', { courseId: 'c1', total, used, wanted });
+    eq(run(10, 3, 7).outcome, 'published', '10 - 3 >= 7');
+    eq(run(10, 3, 8).failedRule.rejection, 'Too little left', 'not >= 8');
+    eq(run(10, 3, 7).events[0].data.capacity, 11, 'a + 1 emitted');
+  });
+
+  check('time and arithmetic are type-checked', () => {
+    const { id, model } = openTime();
+    const advised = (steps, properties) => {
+      updateDefinition('command-definition', id, 'Allocate', { properties: properties || [one('courseId', 'CourseId'), one('total', 'integer'),
+        one('used', 'integer'), one('now', 'datetime'), one('wait', 'duration')], boundary: [], steps: [...steps,
+        { name: 'CourseDefined', parameters: { courseId: param('courseId'), capacity: 1 } }] });
+      return sandbox.modelAdvisories(model()).filter((a) => a.name === 'Allocate').map((a) => a.message).join('; ');
+    };
+    const rule = (leftHandSide, predicate, rightHandSide) => ({ condition: { leftHandSide, predicate, rightHandSide }, rejection: 'No' });
+    const sum = (operator, l, r) => ({ operator, leftHandSide: l, rightHandSide: r });
+    eq(advised([rule(sum('add', param('now'), param('wait')), 'greaterThan', param('now'))]), '', 'now + w > now');
+    eq(/datetime plus a datetime means nothing/.test(advised([rule(sum('add', param('now'), param('now')), 'greaterThan', param('now'))])), true, 'two datetimes');
+    eq(/integer minus a duration/.test(advised([rule(sum('subtract', param('total'), param('wait')), 'greaterThan', 1)])), true, 'a number and a duration');
+    eq(/compares a datetime with a duration/.test(advised([rule(param('now'), 'lessThan', param('wait'))])), true, 'a datetime against a duration');
+    eq(/has no offset/.test(advised([rule(param('now'), 'lessThan', '2026-01-01T10:00:00')])), true, 'a literal without an offset');
+    eq(advised([rule(param('now'), 'lessThan', '2026-01-01T10:00:00+02:00')]), '', 'one with an offset');
+    eq(/adds \(\+\) and subtracts/.test(advised([rule(sum('multiply', param('total'), param('used')), 'greaterThan', 1)])), true, 'no multiply in a command');
+    updateDefinition('command-definition', id, 'Allocate', { properties: [one('courseId', 'CourseId'), one('now', 'datetime')], boundary: [],
+      steps: [{ name: 'CourseDefined', parameters: { courseId: param('courseId'), capacity: sum('add', param('now'), minutes(1)) } }] });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Allocate').map((a) => a.message).join('; '),
+      '"CourseDefined.capacity" is declared integer, but takes its value from "now + 1m", which is datetime.', 'an emission is typed by what it computes');
+    updateDefinition('projection-definition', id, 'OptInExpiresAt', { tags: [tag('token', 'OptInToken')], valueType: 'integer', isList: false,
+      derived: { leftHandSide: { projection: 'OptInIssuedAt', tags: { token: param('token') } }, operator: 'add', rightHandSide: { duration: 'PT24H' } } });
+    eq(/computes a datetime, but holds an integer – declare it a datetime/.test(
+      sandbox.modelAdvisories(model()).filter((a) => a.name === 'OptInExpiresAt').map((a) => a.message).join()), true, 'a derived datetime is declared one');
+    updateDefinition('projection-definition', id, 'OptInIssuedAt', { tags: [tag('token', 'OptInToken')], valueType: 'datetime', isList: false,
+      initialValue: '2026-01-01T10:00:00', handlers: [] });
+    eq(/has no offset/.test(sandbox.modelAdvisories(model()).filter((a) => a.name === 'OptInIssuedAt').map((a) => a.message).join()), true,
+      'an initial datetime without an offset');
+  });
+
+  check('a time\'s value schema states its format', () => {
+    const { model } = openTime();
+    const schema = sandbox.eventPayloadSchema(model(), 'SeatsWereReserved');
+    eq([schema.properties.expiresAt.type, schema.properties.expiresAt.format], ['string', 'date-time'], 'a datetime');
+    const window = sandbox.eventPayloadSchema(model(), 'RetryWindowChanged').properties.window;
+    eq([window.type, window.format], ['string', 'duration'], 'a duration');
+    eq(new RegExp(window.pattern).test('PT15M') && !new RegExp(window.pattern).test('P1M'), true, 'no months');
+    eq(new RegExp(schema.properties.expiresAt.pattern).test('2026-01-01T10:00:00Z')
+      && !new RegExp(schema.properties.expiresAt.pattern).test('2026-01-01T10:00:00'), true, 'an offset required');
+  });
+
+  check('durations add up, never below zero, and a where or a handler compares a time with its kind', () => {
+    const { id, model } = openTime();
+    eq(sandbox.evArithmetic('add', 'PT23H', 'PT1H', 'x'), 'P1D', 'in the largest units');
+    eq(sandbox.evArithmetic('subtract', '2026-03-01T00:00:00Z', 'P1D', 'x'), '2026-02-28T00:00:00Z', 'a datetime back a day');
+    eq(sandbox.evArithmetic('max', '2026-01-01T11:30:00+02:00', '2026-01-01T10:00:00Z', 'x'), '2026-01-01T10:00:00Z', 'max by instant');
+    let message = null;
+    try { sandbox.evArithmetic('subtract', 'PT15M', 'PT1H', '"a - b"'); } catch (error) { message = error.message; }
+    eq(/never below zero/.test(message || ''), true, 'a negative duration is an error');
+    const where = { ...activeSeats, where: { leftHandSide: { instanceValue: true, field: 'expiresAt' }, predicate: 'greaterThan', rightHandSide: '2026-01-01T10:00:00' } };
+    updateDefinition('projection-definition', id, 'OptInExpiresAt', { tags: [tag('courseId', 'CourseId')], valueType: 'integer', isList: false, derived: { leftHandSide: where } });
+    eq(/has no offset/.test(sandbox.modelAdvisories(model()).filter((a) => a.name === 'OptInExpiresAt').map((a) => a.message).join()), true, 'a where\'s literal');
+    addDefinition('projection-definition', id, 'LongWindows', {
+      tags: [tag('courseId', 'CourseId')], valueType: 'integer', isList: false, initialValue: 0,
+      handlers: [{ event: 'RetryWindowChanged', steps: [{ branches: [{ condition: { leftHandSide: { eventProperty: 'window' }, predicate: 'equals', rightHandSide: { duration: 'P7D' } },
+        operation: 'increment', value: 1 }] }] }],
+    });
+    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'LongWindows'), [], 'a handler compares a duration with one');
+    const log = [{ type: 'RetryWindowChanged', data: { courseId: 'c1', window: 'PT168H' } }, { type: 'RetryWindowChanged', data: { courseId: 'c1', window: 'PT1H' } }];
+    eq(foldProjection(model(), log, 'LongWindows', { tags: { courseId: 'c1' } }), 1, '168h is 7d');
+  });
+
+  check('renaming now follows it into arithmetic', () => {
+    const { id, model } = openTime();
+    sandbox.renameMember('command-definition', id, 'ConfirmSignUp', 'property', 'now', 'at');
+    const rule = sandbox.commandRules(model()['command-definitions'].ConfirmSignUp)[0];
+    eq(rule.condition.rightHandSide, param('at'), 'the compared side');
+    sandbox.renameMember('command-definition', id, 'ReserveSeats', 'property', 'now', 'at');
+    const emission = sandbox.commandEmissions(model()['command-definitions'].ReserveSeats)[0];
+    eq(emission.parameters.expiresAt.leftHandSide, param('at'), 'inside the arithmetic');
+    eq(advisedOtherwise(model()), [], 'still advisory-clean');
   });
 }
 

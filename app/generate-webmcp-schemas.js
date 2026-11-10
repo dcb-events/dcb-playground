@@ -17,14 +17,18 @@
 //   - a projection read in place is written compactly, its shape said
 //     in words rather than inlined: any operand of a command may be
 //     one, its tags are operands in turn, and inlining that at every
-//     operand more than doubled a command's schema.
+//     operand more than doubled a command's schema. A collection
+//     function (11.0) is written the same way, for the same reason –
+//     inlined, its read and its where tripled the file – and so are a
+//     loop, whose steps nest every step shape again, and arithmetic
+//     (11.0), whose sides are operands in turn.
 //
-// The experimental members are cut before anything is inlined, since
-// WebMCP does not offer them (see webmcp.js): no entity kind, and no
-// schema so much as mentions an entity binding, a guard, a script –
-// its code handlers and the arguments its readers pass included – or
-// `currentValue`. The canonical schema keeps them – a model using them
-// still imports.
+// The members WebMCP does not offer are cut before anything is
+// inlined (see webmcp.js): the arguments a read passes, a group
+// member's among them. They were cut when only a script took
+// arguments, and no tool schema has offered them since. Groups are not
+// experimental and stay. The canonical schema keeps everything – a
+// model using them still imports.
 //
 // Run with `node app/generate-webmcp-schemas.js` after changing
 // dcb-model.schema.json. Nothing here runs in the browser; it is a
@@ -37,21 +41,17 @@ const APP = __dirname;
 const schema = JSON.parse(fs.readFileSync(path.join(APP, '..', 'dcb-model.schema.json'), 'utf8'));
 const defs = schema.$defs;
 
-// What the experimental flag keeps off the pages, as schema members:
-// properties of a $def, and branches of a $def's choice. A name that
-// is not there stops the build – the schema moved, and so must this.
+// What the tool schemas leave out, as schema members: properties of a
+// $def, and branches of a $def's choice – what the experimental flag
+// keeps off the pages goes here too. A name that is not there stops
+// the build – the schema moved, and so must this.
 const EXPERIMENTAL_PROPERTIES = {
-  ProjectionDefinition: ['script'],
-  PropertyHandler: ['code'],
   ProjectionBinding: ['arguments'],
   ProjectionReadValue: ['arguments'],
   ProjectionScenarioDefinition: ['arguments'],
-  EventEmission: ['when'],
+  AliasPropertyValue: ['arguments'],
 };
-const EXPERIMENTAL_BRANCHES = {
-  Binding: ['EntityBinding'],
-  HandlerOperand: ['CurrentValue'],
-};
+const EXPERIMENTAL_BRANCHES = {};
 for (const [name, properties] of Object.entries(EXPERIMENTAL_PROPERTIES)) {
   for (const property of properties) {
     if (!defs[name] || !defs[name].properties || !(property in defs[name].properties)) {
@@ -73,8 +73,39 @@ for (const [name, branches] of Object.entries(EXPERIMENTAL_BRANCHES)) {
   defs[name] = kept.length === 1 ? kept[0] : { ...defs[name], [choice]: kept };
 }
 
-// The six kinds an agent may author, each rooted at its $def.
+// A grouped projection is edited through the projection tools by the
+// name it is read by, `Course.capacity` (model.js routes it to its
+// group), so the projection kinds' name admits that too, and `tags`
+// is required only of a top-level one – a grouped projection has the
+// group's. The canonical schema keeps them apart: there a group stores
+// its projections under local names, and only a top-level one is a
+// `ProjectionDefinition`.
+{
+  const def = defs.ProjectionDefinition;
+  const local = defs.LocalProjectionName && defs.LocalProjectionName.pattern;
+  if (!def || !def.properties.name || !def.properties.tags || !def.required.includes('tags')
+      || !defs.ProjectionName || !local) {
+    throw new Error('dcb-model.schema.json moved: ProjectionDefinition.name/tags or the name patterns');
+  }
+  def.properties.name = {
+    ...defs.ProjectionName,
+    description: (def.properties.name.description || '').trim()
+      + ' A grouped projection is named qualified, `<Group>.<localName>` (`Course.capacity`):'
+      + ' that adds it to, or edits it in, its group.',
+    pattern: defs.ProjectionName.pattern.replace(/\$$/, '') + '(\\.' + local.slice(1, -1) + ')?$',
+  };
+  def.properties.tags = {
+    ...def.properties.tags,
+    description: (def.properties.tags.description || '').trim()
+      + ' Required for a top-level projection; a grouped one has none of its own – it is read by'
+      + ' its group\'s tag, and whatever is given here is dropped.',
+  };
+  def.required = def.required.filter((r) => r !== 'tags');
+}
+
+// The seven kinds an agent may author, each rooted at its $def.
 const ROOTS = {
+  'group-definition': 'GroupDefinition',
   'event-definition': 'EventDefinition',
   'projection-definition': 'ProjectionDefinition',
   'command-definition': 'CommandDefinition',
@@ -123,6 +154,73 @@ function inline(value, stack) {
         tags: { type: 'object' },
       },
       required: ['projection'],
+    };
+  }
+  if (name === 'CollectionValue') {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' ' + defs[name].description.trim()
+        + ' `read`: a projection read whose open tags are {open: true} – `tags` keyed by name, as any'
+        + ' read\'s. `where`: a condition, as a rule\'s, whose sides are {instanceValue: true} (value),'
+        + ' {instanceValue: true, field} (value.field), a parameter, an alias already bound ({alias}, or'
+        + ' {alias, field} of a record it holds) in a command, an enum member or a literal. `collect: "list"`'
+        + ' takes a read with exactly one tag open and gives that tag\'s values as a list.').trim(),
+      properties: {
+        collect: inline(defs[name].properties.collect, stack),
+        read: { type: 'object' },
+        where: { type: 'object' },
+      },
+      required: ['collect', 'read'],
+    };
+  }
+  // A count (G3) nests one operand – inlined, every operand would hold
+  // every operand again – so it is written compactly too.
+  if (name === 'CountValue') {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' ' + defs[name].description.trim()
+        + ' `count`: the list counted – a parameter, a read or alias of a list projection, or a'
+        + ' {collect: "list", read} collection.').trim(),
+      properties: { count: {} },
+      required: ['count'],
+    };
+  }
+  // Arithmetic (11.0) nests a command operand on each side – inlined,
+  // every operand would hold every operand twice over – so it is
+  // written compactly too.
+  if (name === 'ArithmeticValue') {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' ' + defs[name].description.trim()
+        + ' `leftHandSide` and `rightHandSide`: command operands, as a rule\'s sides – a parameter, a read,'
+        + ' a literal, {duration}, or another {operator, leftHandSide, rightHandSide} on the left.').trim(),
+      properties: {
+        operator: inline(defs[name].properties.operator, stack),
+        leftHandSide: {},
+        rightHandSide: {},
+      },
+      required: ['operator', 'leftHandSide', 'rightHandSide'],
+    };
+  }
+  // A loop (11.0) holds steps of its own – an emission and a branch
+  // each inlined again under every step – so it is written compactly
+  // too, its source and steps said in words.
+  if (name === 'LoopStep') {
+    return {
+      type: 'object',
+      description: ((siblings.description || '') + ' ' + defs[name].description.trim()
+        + ' `forEach`: the names, one per open tag of an open read, one for a list. `in`: a projection'
+        + ' read whose open tags are {open: true}, a read of a list projection, or {parameterName} of a'
+        + ' list parameter. `steps`: emissions {name, parameters} and branches {branches: [{condition,'
+        + ' steps}], otherwise} whose arms hold one emission or one {reject}, as a command\'s. Inside,'
+        + ' {parameterName: <name>} reads the element and {instanceValue: true} (with `field`, a record\'s'
+        + ' field) an open read\'s instance value.').trim(),
+      properties: {
+        forEach: inline(defs[name].properties.forEach, stack),
+        in: { type: 'object' },
+        steps: { type: 'array', items: { type: 'object' } },
+      },
+      required: ['forEach', 'in', 'steps'],
     };
   }
   if (stack.includes(name)) {
@@ -199,6 +297,11 @@ for (const [kind, rootName] of Object.entries(ROOTS)) {
   if (!root) throw new Error(`dcb-model.schema.json has no $def "${rootName}"`);
   out[kind] = typeTopLevelProperties(flattenTopLevelChoice(inline(root, [rootName]), kind));
 }
+// A group's projection is a tool's whole input too – add_group_projection
+// serves it, beside the group's name – so its properties are typed the
+// same way.
+out['group-definition'].properties.projections.items =
+  typeTopLevelProperties(out['group-definition'].properties.projections.items);
 
 // What this exists to guarantee: nothing referencing anything.
 const flat = JSON.stringify(out);

@@ -40,14 +40,39 @@ loadApp(sandbox, ['model.js', 'evaluate.js', 'dsl.js', 'shared.js'], {
 });
 const { check, eq, finish } = makeChecker();
 
+// Many fixtures here record events by hand that no command of theirs
+// emits, so the advisory saying so (11.0) is left out where a check is
+// about something else; the shipped models are held to it whole.
+const UNEMITTED = /^No command emits it\./;
+const advisedOtherwise = (model) => sandbox.modelAdvisories(model).filter((a) => !UNEMITTED.test(a.message));
+
 const {
-  loadPredefinedModel, projectState, addDefinition, updateDefinition,
-  projectionDraftFrom, cleanProjectionBody, blankProjectionDraft, projectionNameFor,
+  loadPredefinedModel, projectState,
+  projectionDraftFrom, cleanProjectionBody, blankProjectionDraft,
   initialValueWords, defaultInitialValue, operationsFor,
-  projectionTypeOptions, handlerValueChoices, boundAs, entityPropertyTarget,
-  propertyUsage, projectionReaders, effectsOf, typeLabel, literalOfType, blankSlotValue,
+  projectionTypeOptions, handlerValueChoices,
+  projectionReaders, effectsOf, typeLabel, literalOfType, blankSlotValue,
   createDcbModel, partitionCells, projectionScenariosFor,
 } = sandbox;
+
+// Many fixtures here state a command the way it reads without branches
+// – its rules, then what it emits – and read it back so. `lists` gives a
+// stored command that way (a copy, its `steps` kept, the lists as the
+// pages edit them – `commandLists`), and the writers below put the two
+// lists back into the steps they came from (`withCommandLists`).
+function lists(body) {
+  if (!body) return body;
+  const copy = JSON.parse(JSON.stringify(body));
+  return Object.assign(copy, sandbox.commandLists(copy));
+}
+function unlists(kind, body) {
+  if (kind !== 'command-definition' || !body || (body.conditions === undefined && body.publishes === undefined)) return body;
+  const { conditions, publishes, ...rest } = body;
+  const kept = sandbox.commandLists(rest);
+  return { ...rest, steps: sandbox.withCommandLists(rest.steps, conditions || kept.conditions, publishes || kept.publishes) };
+}
+const addDefinition = (kind, id, name, body) => sandbox.addDefinition(kind, id, name, unlists(kind, body));
+const updateDefinition = (kind, id, name, body) => sandbox.updateDefinition(kind, id, name, unlists(kind, body));
 
 // An event a fixture adds, tagged by every tag-typed value it holds –
 // what an author listing them all would write. Events are tagged only
@@ -58,17 +83,316 @@ function addTaggedEvent(id, name, body) {
   return sandbox.addDefinition('event-definition', id, name, { ...body, tags });
 }
 
-// The course example with entities – what `course-simple` was before the
-// shipped models were stated without them. Tests about entities,
-// lifecycles and entity reads build this one.
-const ENTITIES = sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-entities');
-// Entities and a numbering both: the one shipped model that still has
-// the two together.
-const SCHEDULES = sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-schedules');
+// Two fixtures as the code view writes them: the course example with
+// its course and student projections in groups and its commands
+// reading them through group aliases (`course.capacity`), and the same
+// with schedules – hourly slots, and a rescheduling whose boundary is
+// a chain of three calls. They are what the retired `course-entities`
+// and `course-schedules` became on import (`groupsFromEntities`).
+const FIXTURE_TEXTS = {
+  'course-groups': `model "Course Example (with groups)"
 
-// A model built from seed layers alone – the entity form a shipped
-// model is stated without (`seedWithoutEntities`), for the tests about
-// entities and lifecycles that the shipped forms no longer have.
+// Types
+enum CourseStatus { NonExistent, Existent, Archived }
+tag type StudentId = string
+tag type CourseId = string
+
+// Events
+event CourseDefined { tag courseId: CourseId, capacity: integer }
+event CourseCapacityChanged { tag courseId: CourseId, newCapacity: integer }
+event CourseArchived { tag courseId: CourseId }
+event StudentRegistered { tag studentId: StudentId }
+event StudentSubscribedToCourse { tag courseId: CourseId, tag studentId: StudentId }
+event StudentUnsubscribedFromCourse { tag courseId: CourseId, tag studentId: StudentId }
+
+// Groups
+@icon("🧑‍🎓")
+group Student (tag studentId: StudentId) {
+  projection exists: boolean = false {
+    on StudentRegistered => set true
+  }
+
+  projection subscriptionCount: integer = 0 {
+    on StudentSubscribedToCourse => increment 1
+    on StudentUnsubscribedFromCourse => decrement 1
+  }
+}
+
+@icon("📚")
+group Course (tag courseId: CourseId) {
+  projection status: CourseStatus = NonExistent {
+    on CourseDefined => set Existent
+    on CourseArchived => set Archived
+  }
+
+  projection capacity: integer = 0 {
+    on CourseDefined => set event.data.capacity
+    on CourseCapacityChanged => set event.data.newCapacity
+  }
+
+  projection subscriptionCount: integer = 0 {
+    on StudentSubscribedToCourse => increment 1
+    on StudentUnsubscribedFromCourse => decrement 1
+  }
+
+  projection subscribedStudentIds: StudentId[] = [] {
+    on StudentSubscribedToCourse => append event.data.studentId
+    on StudentUnsubscribedFromCourse => remove event.data.studentId
+  }
+}
+
+// Commands
+@feature("Course management")
+command DefineCourse(courseId: CourseId, capacity: integer) {
+  alias course = Course(courseId)
+
+  require course.status == NonExistent
+    else reject "Course already exists"
+
+  emit CourseDefined { courseId, capacity }
+}
+
+@feature("Course management")
+command ChangeCourseCapacity(courseId: CourseId, newCapacity: integer) {
+  alias course = Course(courseId)
+
+  require course.status == Existent
+    else reject "Course is not active"
+  require course.subscriptionCount <= newCapacity
+    else reject "Course has more subscriptions than that"
+
+  emit CourseCapacityChanged { courseId, newCapacity }
+}
+
+@feature("Course management")
+command ArchiveCourse(courseId: CourseId) {
+  alias course = Course(courseId)
+
+  require course.status == Existent
+    else reject "Course is not active"
+
+  emit CourseArchived { courseId }
+}
+
+@feature("Student registration")
+command RegisterStudent(studentId: StudentId) {
+  alias student = Student(studentId)
+
+  require student.exists is false
+    else reject "Student is already registered"
+
+  emit StudentRegistered { studentId }
+}
+
+@feature("Enrolment")
+command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {
+  alias course = Course(courseId)
+  alias student = Student(studentId)
+
+  require course.status == Existent
+    else reject "Course is not active"
+  require student.exists is true
+    else reject "Student is not registered"
+  require course.subscriptionCount < course.capacity
+    else reject "Course is full"
+  require course.subscribedStudentIds not contains studentId
+    else reject "Student is already subscribed"
+  require student.subscriptionCount < 10
+    else reject "Student is subscribed to too many courses"
+
+  emit StudentSubscribedToCourse { courseId, studentId }
+}
+
+@feature("Enrolment")
+command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
+  alias course = Course(courseId)
+
+  require course.status == Existent
+    else reject "Course is not active"
+  require course.subscribedStudentIds contains studentId
+    else reject "Student is not subscribed"
+
+  emit StudentUnsubscribedFromCourse { courseId, studentId }
+}
+
+`,
+  'course-schedules': `model "Course Example (with schedules)"
+
+// Types
+enum CourseStatus { NonExistent, Existent, Archived }
+tag type StudentId = string
+tag type CourseId = string { pattern: "^c[0-9]+$" }
+type TimeSlot = string { pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$" }
+
+// Events
+event CourseDefined { tag courseId: CourseId, capacity: integer, slots: TimeSlot[] }
+event CourseCapacityChanged { tag courseId: CourseId, newCapacity: integer }
+event CourseArchived { tag courseId: CourseId }
+event StudentRegistered { tag studentId: StudentId }
+event StudentSubscribedToCourse { tag courseId: CourseId, tag studentId: StudentId }
+event StudentUnsubscribedFromCourse { tag courseId: CourseId, tag studentId: StudentId }
+event CourseRescheduled { tag courseId: CourseId, slots: TimeSlot[] }
+
+// Groups
+@icon("🧑‍🎓")
+group Student (tag studentId: StudentId) {
+  projection exists: boolean = false {
+    on StudentRegistered => set true
+  }
+
+  projection subscriptionCount: integer = 0 {
+    on StudentSubscribedToCourse => increment 1
+    on StudentUnsubscribedFromCourse => decrement 1
+  }
+
+  projection subscribedCourseIds: CourseId[] = [] {
+    on StudentSubscribedToCourse => append event.data.courseId
+    on StudentUnsubscribedFromCourse => remove event.data.courseId
+  }
+}
+
+@icon("📚")
+group Course (tag courseId: CourseId) {
+  projection status: CourseStatus = NonExistent {
+    on CourseDefined => set Existent
+    on CourseArchived => set Archived
+  }
+
+  projection capacity: integer = 0 {
+    on CourseDefined => set event.data.capacity
+    on CourseCapacityChanged => set event.data.newCapacity
+  }
+
+  projection subscriptionCount: integer = 0 {
+    on StudentSubscribedToCourse => increment 1
+    on StudentUnsubscribedFromCourse => decrement 1
+  }
+
+  projection subscribedStudentIds: StudentId[] = [] {
+    on StudentSubscribedToCourse => append event.data.studentId
+    on StudentUnsubscribedFromCourse => remove event.data.studentId
+  }
+
+  projection slots: TimeSlot[] = [] {
+    on CourseDefined => set event.data.slots
+    on CourseRescheduled => set event.data.slots
+  }
+}
+
+// Projections
+untagged projection CourseNumbering: CourseId = "c1" {
+  on CourseDefined => set successor(event.data.courseId)
+}
+
+// Commands
+@feature("Course management")
+command DefineCourse(capacity: integer, slots: TimeSlot[]) {
+  alias courseNumbering = CourseNumbering()
+
+  emit CourseDefined { courseId: courseNumbering, capacity, slots }
+}
+
+@feature("Course management")
+command ChangeCourseCapacity(courseId: CourseId, newCapacity: integer) {
+  alias course = Course(courseId)
+
+  require course.status == Existent
+    else reject "Course is not active"
+  require course.subscriptionCount <= newCapacity
+    else reject "Course has more subscriptions than that"
+
+  emit CourseCapacityChanged { courseId, newCapacity }
+}
+
+@feature("Course management")
+command ArchiveCourse(courseId: CourseId) {
+  alias course = Course(courseId)
+
+  require course.status == Existent
+    else reject "Course is not active"
+
+  emit CourseArchived { courseId }
+}
+
+@feature("Student registration")
+command RegisterStudent(studentId: StudentId) {
+  alias student = Student(studentId)
+
+  require student.exists is false
+    else reject "Student is already registered"
+
+  emit StudentRegistered { studentId }
+}
+
+@feature("Enrolment")
+command SubscribeStudentToCourse(courseId: CourseId, studentId: StudentId) {
+  alias course = Course(courseId)
+  alias student = Student(studentId)
+  alias others = Course(each student.subscribedCourseIds)
+
+  require course.status == Existent
+    else reject "Course is not active"
+  require student.exists is true
+    else reject "Student is not registered"
+  require course.subscriptionCount < course.capacity
+    else reject "Course is full"
+  require course.subscribedStudentIds not contains studentId
+    else reject "Student is already subscribed"
+  require student.subscriptionCount < 10
+    else reject "Student is subscribed to too many courses"
+  require others.slots not containsAny course.slots
+    else reject "Course clashes with the student's schedule"
+
+  emit StudentSubscribedToCourse { courseId, studentId }
+}
+
+@feature("Enrolment")
+command UnsubscribeStudentFromCourse(courseId: CourseId, studentId: StudentId) {
+  alias course = Course(courseId)
+
+  require course.status == Existent
+    else reject "Course is not active"
+  require course.subscribedStudentIds contains studentId
+    else reject "Student is not subscribed"
+
+  emit StudentUnsubscribedFromCourse { courseId, studentId }
+}
+
+@feature("Course management")
+command RescheduleCourse(courseId: CourseId, slots: TimeSlot[]) {
+  alias course = Course(courseId)
+  alias students = Student(each course.subscribedStudentIds)
+  alias theirs = Course(each students.subscribedCourseIds)
+
+  require course.status == Existent
+    else reject "Course is not active"
+  require theirs.slots not containsAny slots
+    else reject "Slots clash with a subscriber's other course"
+
+  emit CourseRescheduled { courseId, slots }
+}
+
+`,
+};
+// The model most tests here build: the course example, read through
+// groups.
+const GROUPED = 'course-groups';
+
+// The course example with its course projections in a group – `Course
+// (tag courseId: CourseId)` owning status, capacity, subscriptionCount
+// and subscribedStudentIds – as a model that uses groups reads. Built
+// through the moves, so every read of them was rewritten on the way in
+// (`Course(courseId).status`).
+const COURSE_PROJECTIONS = ['CourseStatus', 'CourseCapacity', 'CourseSubscriptionCount', 'CourseSubscribedStudentIds'];
+function grouped(slug = 'course-simple') {
+  const built = build(slug);
+  sandbox.createGroup(built.id, 'Course', { name: 'courseId', tagType: 'CourseId' }, { icon: '📚' });
+  for (const name of COURSE_PROJECTIONS) sandbox.moveProjectionIntoGroup(built.id, name, 'Course');
+  return built;
+}
+
+// A model built from seed layers alone, for the tests that want a
+// layer the shipped forms leave out.
 function seeded(name, ...seeds) {
   store.clear();
   sandbox.bumpLogRevision();
@@ -78,14 +402,21 @@ function seeded(name, ...seeds) {
   return { id, model: () => projectState()[id] };
 }
 
-function build(index) {
+// A predefined model, by its slug or its index in `PREDEFINED_MODELS`.
+function build(which) {
   // Clearing the store is a write `appendEvents` never sees, so the
   // projection cache is told the world moved underneath it.
   store.clear();
   sandbox.bumpLogRevision();
-  // Most of what is exercised here is entity authoring, which is
-  // experimental; the flag-off pages have their own block.
+  // Some of what is exercised here is experimental; the flag-off pages
+  // have their own block.
   store.set('dcb-playground:experimental', 'on');
+  if (FIXTURE_TEXTS[which]) {
+    const id = sandbox.createDcbModel(which);
+    sandbox.applyModelSource(id, FIXTURE_TEXTS[which]);
+    return { id, model: () => projectState()[id] };
+  }
+  const index = typeof which === 'string' ? sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === which) : which;
   const id = loadPredefinedModel(index);
   return { id, model: () => projectState()[id] };
 }
@@ -94,7 +425,7 @@ function build(index) {
 // The draft a projection is edited as, and the body it becomes.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build('course-simple');
 
   check('a draft round-trips a declared projection unchanged', () => {
     const stored = model()['projection-definitions'].CourseCapacity;
@@ -181,7 +512,7 @@ function build(index) {
   });
 
   check('an id field is offered to a string projection, and painting the editor keeps a stored field', () => {
-    const { id, model } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple'));
+    const { id, model } = build('course-simple');
     sandbox.setActiveModelId(id);
     sandbox.applyModelSource(id, sandbox.modelToSource(model())
       + '\nprojection CourseId (tag courseId: CourseId): string = null {\n  on CourseDefined => set event.data.courseId\n}\n'
@@ -221,7 +552,7 @@ function build(index) {
 // The same seam, for a derived projection.
 // ---------------------------------------------------------------
 {
-  const { model } = build(9);
+  const { model } = build('content-decisions-derived');
 
   check('a draft round-trips a derived projection unchanged', () => {
     const stored = model()['projection-definitions'].DocumentHasPendingChanges;
@@ -238,46 +569,22 @@ function build(index) {
   });
 
   check('the ledger says what kind of value it is', () => {
-    eq(sandbox.scriptLabel(model()['projection-definitions'].DocumentHasPendingChanges),
-      'derived', 'beside the type, like "scripted"');
+    eq(sandbox.kindLabel(model()['projection-definitions'].DocumentHasPendingChanges),
+      'derived', 'beside the type');
   });
 }
 
 // ---------------------------------------------------------------
-// The new editors, exercised as far as "it ran": the guard rows and
-// their open rule editor on the guarded variant, the derived detail
-// and its open editor on the derived one. A stub cannot say what they
+// The new editors, exercised as far as "it ran": the derived detail
+// and its open editor on the derived variant. A stub cannot say what they
 // looked like; it can say every branch painted.
 // ---------------------------------------------------------------
 {
-  check('the guard rows and their editor render without throwing', () => {
-    const { id, model } = build(8);
-    sandbox.setActiveModelId(id);
-    store.set('dcb-playground:experimental', 'on');
-    sandbox.state.view = 'slice';
-    sandbox.state.slice = 'UpdateText';
-    sandbox.render();
-
-    // A guard being edited, seeded the way the Edit button seeds it.
-    const guarded = model()['command-definitions'].UpdateText.publishes[0].when[0];
-    sandbox.state.editGuard = { at: 0, index: 0 };
-    sandbox.state.ruleDraft = null;
-    sandbox.render();
-    eq(!!guarded, true, 'and the guard is still there afterwards');
-
-    // A fresh guard row on the second emission.
-    sandbox.closeForms();
-    sandbox.state.editGuard = { at: 1, index: null };
-    sandbox.render();
-    sandbox.closeForms();
-  });
-
   check('the derived detail and its editor render without throwing', () => {
-    const { id, model } = build(9);
+    const { id, model } = build('content-decisions-derived');
     sandbox.setActiveModelId(id);
     store.set('dcb-playground:experimental', 'on');
-    sandbox.state.view = 'entity';
-    sandbox.state.entity = 'Document';
+    sandbox.state.view = 'projections';
     sandbox.state.projDraft = {
       name: 'DocumentHasPendingChanges',
       body: sandbox.projectionDraftFrom(model()['projection-definitions'].DocumentHasPendingChanges),
@@ -292,10 +599,10 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// A new projection's draft, and the name a new property gives one.
+// A new projection's draft.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
 
   check('a blank draft is valid the moment it is created', () => {
     const draft = blankProjectionDraft(model());
@@ -303,8 +610,8 @@ function build(index) {
     eq(model()['projection-definitions'].Untouched.handlers, [], 'nothing moves it yet');
   });
 
-  check("a blank entity property's draft is tagged by the entity's identifier", () => {
-    eq(blankProjectionDraft(model(), 'Course').tags, [{ name: 'courseId', tagType: 'CourseId' }], 'the one tag it binds by');
+  check("a blank grouped projection's draft is tagged by its group's tag", () => {
+    eq(blankProjectionDraft(model(), 'Course').tags, [{ name: 'courseId', tagType: 'CourseId' }], 'the one tag it is read by');
     eq(blankProjectionDraft(model()).tags, null, 'one read on its own has not said yet');
   });
 
@@ -318,18 +625,13 @@ function build(index) {
     eq(defaultInitialValue(model(), draft), [], 'a list');
   });
 
-  check('a new property names its projection after the two of them', () => {
-    eq(projectionNameFor(model(), 'Course', 'seatCount'), 'CourseSeatCount', 'entity and property');
-    // `CourseCapacity` is taken by the property already called capacity.
-    eq(projectionNameFor(model(), 'Course', 'capacity'), 'CourseCapacity2', 'uniquified, never silently shared');
-  });
 }
 
 // ---------------------------------------------------------------
 // What a card says.
 // ---------------------------------------------------------------
 {
-  const { model } = build(4);
+  const { model } = build('pricing-simple');
 
   check('null, "" and [] each keep their own spelling', () => {
     eq(initialValueWords(null), 'null', 'null');
@@ -338,7 +640,7 @@ function build(index) {
     eq(initialValueWords(['a', 'b']), '"a", "b"', 'a list with things in it');
     eq(initialValueWords({ enumMember: 'Existent' }), 'Existent', 'an enum member');
     eq(initialValueWords({ count: 2, odd: false }), '{"count":2,"odd":false}',
-      'a record a scripted projection folded to, as the JSON it is');
+      'a record, as the JSON it is');
   });
 
   check('a row says what a projection is read by, as the tag it is', () => {
@@ -349,7 +651,7 @@ function build(index) {
   });
 
   check('an untagged projection says so as an absence, not as a tag', () => {
-    const numbering = build(1).model();
+    const numbering = build('course-sequence').model();
     const cells = partitionCells(numbering, 'CourseNumbering');
     eq(cells.length, 1, 'one cell');
     eq(cells[0].className, 'chip unset', 'dashed and unfilled, like every other nothing here');
@@ -367,7 +669,7 @@ function build(index) {
 // What the editor offers.
 // ---------------------------------------------------------------
 {
-  const { model } = build(3);
+  const { id, model } = build('course-simple');
 
   check('an integer projection is offered increment and decrement', () => {
     eq(operationsFor(model(), { valueType: 'integer', isList: false }),
@@ -386,10 +688,14 @@ function build(index) {
   });
 
   check('a list-typed event property is offerable to a list projection', () => {
-    const draft = { valueType: 'TimeSlot', isList: true };
-    const choices = handlerValueChoices(model(), draft, model()['event-definitions'].CourseRescheduled, 'set')
+    addTaggedEvent(id, 'StudentsEnrolled', { properties: [
+      { name: 'courseId', propertyType: 'CourseId' },
+      { name: 'studentIds', propertyType: 'StudentId', isList: true },
+    ] });
+    const draft = { valueType: 'StudentId', isList: true };
+    const choices = handlerValueChoices(model(), draft, model()['event-definitions'].StudentsEnrolled, 'set')
       .map(([v]) => v);
-    eq(choices.includes(JSON.stringify({ eventProperty: 'slots' })), true, `got: ${choices.join(' | ')}`);
+    eq(choices.includes(JSON.stringify({ eventProperty: 'studentIds' })), true, `got: ${choices.join(' | ')}`);
   });
 
   check('a literal is read as the type it is typed into', () => {
@@ -407,85 +713,48 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// A record is a value only code can advance: held by a declared
-// projection it is the advisory that used to be a refusal, held by a
-// scripted one it is legal.
+// A record is a value no operation can advance: held by a projection
+// it is the advisory that used to be a refusal, and never offered.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(4);
+  const { id, model } = build('pricing-simple');
 
-  check('a scripted projection may hold a record', () => {
-    const declared = projectionTypeOptions(model()).map(([t]) => t);
-    eq(declared.includes('Item'), false, 'declared, the composite stays off the list');
-    const scripted = projectionTypeOptions(model(), { scripted: true }).map(([t]) => t);
-    eq(scripted.includes('Item'), true, 'scripted, it joins it');
+  check('a projection is never offered a record to hold', () => {
+    const offered = projectionTypeOptions(model()).map(([t]) => t);
+    eq(offered.includes('Item'), false, 'the composite stays off the list');
   });
 
-  check('a declared projection holding a composite is advisory-flagged', () => {
+  check('a declared projection may hold a record (11.0), but not a list of them', () => {
     addDefinition('projection-definition', id, 'ItemSnapshot', {
       valueType: 'Item', isList: false, initialValue: null, tags: [], handlers: [],
     });
-    eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'ItemSnapshot' && /composite/.test(a.message)
-    ), true, 'stored, and reported');
-  });
-
-  check('the same composite held by a scripted projection is legal', () => {
-    updateDefinition('projection-definition', id, 'ItemSnapshot', {
-      valueType: 'Item', isList: false,
-      script: { initialState: null, tagFilter: [], arguments: [] },
-      handlers: [],
+    eq(sandbox.modelAdvisories(model()).some((a) => a.name === 'ItemSnapshot'), false, 'one record, replaced whole');
+    addDefinition('projection-definition', id, 'ItemSnapshots', {
+      valueType: 'Item', isList: true, initialValue: [], tags: [], handlers: [],
     });
     eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'ItemSnapshot' && /composite/.test(a.message)
-    ), false, 'nothing left to report');
+      (a) => a.name === 'ItemSnapshots' && /a list holds single values/.test(a.message)
+    ), true, 'a list of records is stored, and reported');
   });
+
 }
 
 // ---------------------------------------------------------------
 // Properties and projections, seen from either side.
 // ---------------------------------------------------------------
 {
-  const { model } = build(ENTITIES);
+  const { model } = build(GROUPED);
 
-  check('a property resolves to the projection it binds', () => {
-    const { binding, projection } = entityPropertyTarget(model(), 'Course', 'capacity');
-    eq(binding.projection, 'CourseCapacity', 'the binding');
-    eq(projection.valueType, 'integer', 'and what it holds');
-  });
-
-  check('a projection knows which properties bind it', () => {
-    eq(boundAs(model(), 'CourseCapacity'), [{ entity: 'Course', property: 'capacity' }], 'one binding');
-    eq(boundAs(model(), 'CourseStatus'), [{ entity: 'Course', property: 'status' }], 'and another');
-  });
-
-  check('a property still reports who moves it and who reads it', () => {
-    const usage = propertyUsage(model(), 'Course', 'subscriptionCount');
-    eq(usage.property.valueType, 'integer', 'the shape comes from the projection');
-    eq(usage.property.name, 'subscriptionCount', 'the name comes from the binding');
-    eq(usage.changedBy.map((u) => u.event).sort(),
-      ['StudentSubscribedToCourse', 'StudentUnsubscribedFromCourse'], 'what moves it');
-    eq(usage.readBy.includes('SubscribeStudentToCourse'), true, 'and what reads it');
-  });
-
-  check('an event still knows every property it changes', () => {
+  check('an event knows every grouped projection it changes', () => {
     const effects = effectsOf(model(), 'StudentSubscribedToCourse');
-    eq(effects.map((e) => `${e.entity}.${e.property.name}`).sort(),
+    eq(effects.map((e) => `${e.group}.${e.property.name}`).sort(),
       ['Course.subscribedStudentIds', 'Course.subscriptionCount', 'Student.subscriptionCount'],
-      'across both entities');
+      'across both groups, by local name');
     eq(effects.map((e) => e.projectionName).sort(),
-      ['CourseSubscribedStudentIds', 'CourseSubscriptionCount', 'StudentSubscriptionCount'],
-      'and names the projection behind each');
-  });
-}
-
-// `build` clears the store, so a model built mid-block would pull the
-// ground out from under the one the block is already holding.
-{
-  const { model } = build(1);
-
-  check('a global projection is bound by nothing, which is not a lesser state', () => {
-    eq(boundAs(model(), 'CourseNumbering'), [], 'no entity claims a name for it');
+      ['Course.subscribedStudentIds', 'Course.subscriptionCount', 'Student.subscriptionCount'],
+      'and names the projection behind each as it is read');
+    eq(sandbox.projectionsHandling(model(), 'StudentSubscribedToCourse'), [],
+      'the top-level ones are listed apart – here there are none');
   });
 }
 
@@ -542,17 +811,14 @@ function build(index) {
         report(`$schema "${envelope.$schema}" is not this schema's $id`);
       }
 
-      for (const entity of envelope.entityDefinitions) {
-        conforms(entity, 'EntityDefinition', `entity ${entity.name}`, report);
-        for (const binding of entity.properties || []) {
-          conforms(binding, 'EntityPropertyBinding', `${entity.name}.${binding.name}`, report);
+      for (const group of envelope.groupDefinitions) {
+        conforms(group, 'GroupDefinition', `group ${group.name}`, report);
+        for (const inner of group.projections || []) {
+          conforms(inner, 'GroupProjectionDefinition', `${group.name}.${inner.name}`, report);
         }
       }
       for (const projection of envelope.projectionDefinitions) {
         conforms(projection, 'ProjectionDefinition', `projection ${projection.name}`, report);
-        if (projection.script) {
-          conforms(projection.script, 'ProjectionScript', `${projection.name}'s script`, report);
-        }
         for (const handler of projection.handlers || []) {
           conforms(handler, 'PropertyHandler', `${projection.name} on ${handler.event}`, report);
         }
@@ -635,28 +901,20 @@ function build(index) {
       if (problems.length) throw new Error(problems.join('; '));
     });
 
-    // An instance reads its properties tagged by its identifier, so a
-    // property fits when every event its projection handles is tagged
-    // by one.
-    check(`${slug} binds every property to a projection that exists and fits`, () => {
-      const projections = new Map(envelope.projectionDefinitions.map((p) => [p.name, p]));
+    // A group's projections are read by its one tag, so one fits when
+    // every event it handles is tagged by a value of that tag's type.
+    check(`${slug} groups only projections every event they handle can reach`, () => {
       const events = new Map(envelope.eventDefinitions.map((e) => [e.name, e]));
       const problems = [];
-      for (const entity of envelope.entityDefinitions) {
-        const idType = entity.identifierType || (entity.name + 'Id');
-        for (const binding of entity.properties || []) {
-          const projection = projections.get(binding.projection);
-          if (!projection) {
-            problems.push(`${entity.name}.${binding.name} binds the unknown ${binding.projection}`);
-            continue;
-          }
-          for (const handler of projection.handlers || []) {
+      for (const group of envelope.groupDefinitions) {
+        for (const inner of group.projections || []) {
+          for (const handler of inner.handlers || []) {
             const event = events.get(handler.event) || { properties: [], tags: [] };
             const tagged = (event.tags || []).some((path) => {
               const property = (event.properties || []).find((p) => p.name === path);
-              return property && property.propertyType === idType;
+              return property && property.propertyType === group.tag.tagType;
             });
-            if (!tagged) problems.push(`${entity.name}.${binding.name}: ${handler.event} is tagged by no ${idType}`);
+            if (!tagged) problems.push(`${group.name}.${inner.name}: ${handler.event} is tagged by no ${group.tag.tagType}`);
           }
         }
       }
@@ -677,7 +935,7 @@ function build(index) {
 // be the worst kind of passing test.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   // `run` repaints on success, and a repaint reads whichever model is
   // open – which is stored, not held – so a gesture cannot be driven
   // until one has been opened.
@@ -685,180 +943,49 @@ function build(index) {
   const active = () => sandbox.activeModel();
 
   check('the page renders every view without throwing', () => {
-    // With the flag both ways: the overview pages and the entity
-    // affordances render only with it on, everything else either way.
+    // With the flag both ways: the overview pages render only with it
+    // on, everything else either way – a group's section open or not.
     for (const flag of ['off', 'on']) {
       store.set('dcb-playground:experimental', flag);
-      for (const view of ['overview', 'slice', 'entity', 'types', 'projections', 'events', 'eventmodel', 'metro', 'map']) {
-        sandbox.state.view = view;
-        sandbox.state.entity = 'Course';
-        sandbox.state.slice = 'SubscribeStudentToCourse';
-        sandbox.render();
+      for (const open of [{}, { Course: true, Student: true }]) {
+        sandbox.state.groupOpen = open;
+        for (const view of ['overview', 'slice', 'types', 'projections', 'events', 'eventmodel', 'coupling', 'rulemap', 'metro', 'sandbox']) {
+          sandbox.state.view = view;
+          sandbox.state.slice = 'SubscribeStudentToCourse';
+          sandbox.render();
+        }
       }
     }
-    sandbox.state.view = 'entity';
+    sandbox.state.groupOpen = {};
+    sandbox.state.view = 'projections';
   });
 
-  check('adding a property writes the projection and the binding together', () => {
-    sandbox.addEntityProperty(active(), 'Course', { name: 'seat count', valueType: 'integer', isList: false });
-    const after = model();
-    eq(after['entity-definitions'].Course.properties.slice(-1),
-      [{ name: 'seatCount', projection: 'CourseSeatCount' }], 'the binding');
-    const projection = after['projection-definitions'].CourseSeatCount;
-    eq(projection.tags, [{ name: 'courseId', tagType: 'CourseId' }], 'tagged by the entity\'s identifier');
-    eq(projection.initialValue, 0, 'starting where an integer starts');
-    eq(projection.handlers, [], 'nothing moves it yet');
-  });
-
-  check('a property added that way folds immediately', () => {
-    eq(sandbox.foldEntityProperty(model(), [], 'Course', 'seatCount', 'c1'), 0, 'its initial value');
-  });
-
-  check('wiring an event reaches the projection, not the binding', () => {
-    sandbox.patch('projection-definition', 'CourseSeatCount', (b) => {
-      b.handlers = [{ event: 'CourseDefined', operation: 'set', value: { eventProperty: 'capacity' } }];
-    });
-    const log = [{ type: 'CourseDefined', data: { courseId: 'c1', capacity: 12 } }];
-    eq(sandbox.foldEntityProperty(model(), log, 'Course', 'seatCount', 'c1'), 12, 'folded through the binding');
-    eq(sandbox.foldProjection(model(), log, 'CourseSeatCount', { tags: { courseId: 'c1' } }), 12, 'and read directly');
-  });
-
-  check('renaming a property moves what reads it, not the projection', () => {
-    sandbox.renameMember('entity-definition', id, 'Course', 'property', 'seatCount', 'seats');
-    const course = model()['entity-definitions'].Course;
-    eq(course.properties.slice(-1), [{ name: 'seats', projection: 'CourseSeatCount' }], 'the binding renamed');
-    eq('CourseSeatCount' in model()['projection-definitions'], true, 'the projection kept its own name');
-  });
-
-  check('removing a property takes its projection with it', () => {
-    const property = model()['entity-definitions'].Course.properties.slice(-1)[0];
-    sandbox.removeEntityProperty(active(), 'Course', property);
-    eq(model()['entity-definitions'].Course.properties.some((p) => p.name === 'seats'), false, 'unbound');
-    eq('CourseSeatCount' in model()['projection-definitions'], false, 'and gone');
-  });
-
-  check('removing a property leaves a projection something else still reads', () => {
-    // Bound twice, so unbinding one name is not the end of it.
-    sandbox.patch('entity-definition', 'Course', (b) => {
-      b.properties.push({ name: 'howFull', projection: 'CourseSubscriptionCount' });
-    });
-    const property = model()['entity-definitions'].Course.properties.slice(-1)[0];
-    sandbox.removeEntityProperty(active(), 'Course', property);
-    eq(model()['entity-definitions'].Course.properties.some((p) => p.name === 'howFull'), false, 'unbound');
-    eq('CourseSubscriptionCount' in model()['projection-definitions'], true,
-      'kept – the property that shares it still reads it');
-  });
-
-  check('creating an entity makes it bare – no lifecycle unasked', () => {
-    sandbox.createEntity(active(), 'venue');
-    const after = model();
-    eq(after['entity-definitions'].Venue.properties, [], 'no properties');
-    eq(after['entity-definitions'].Venue.lifecycle, undefined, 'nothing designated');
-    eq('VenueExists' in after['projection-definitions'], false, 'and no fold made for one');
-    eq(sandbox.lifecycleOf(after, 'Venue'), null, 'so no existence wording can resolve');
-    eq(sandbox.existenceLifecycleOffer(after, 'Venue'), 'create', 'the one-click lifecycle is on offer');
-  });
-
-  check('adding the existence lifecycle gives it a boolean and designates it', () => {
-    eq(sandbox.addExistenceLifecycle(active(), 'Venue'), 'exists', 'added');
-    const after = model();
-    eq(after['entity-definitions'].Venue.properties, [{ name: 'exists', projection: 'VenueExists' }], 'bound');
-    eq(after['entity-definitions'].Venue.lifecycle, 'exists', 'and designated');
-    const projection = after['projection-definitions'].VenueExists;
-    eq(projection.valueType, 'boolean', 'a boolean – no enum, no custom type');
-    eq(after['custom-type-definitions'].VenueStatus, undefined, 'nothing named VenueStatus exists');
-    eq('parameters' in projection, false, 'read per venue by the venue, not declared per venue');
-    eq(sandbox.foldEntityProperty(after, [], 'Venue', 'exists', 'v1'), false, 'and folds');
-  });
-
-  check('the designated lifecycle resolves, whatever it is called', () => {
-    const lifecycle = sandbox.lifecycleOf(model(), 'Venue');
-    eq(lifecycle.property, 'exists', 'the designation names the property');
-    eq(lifecycle.isBoolean, true, 'spelled as a boolean');
-    eq(lifecycle.states, ['false', 'true'], 'two states, as strings like an enum\'s');
-    // The whole point of the designation: the name is free.
-    sandbox.renameMember('entity-definition', active().id, 'Venue', 'property', 'exists', 'isThere');
-    const moved = sandbox.lifecycleOf(model(), 'Venue');
-    eq(moved.property, 'isThere', 'renaming the property moves the designation with it');
-    eq(model()['entity-definitions'].Venue.lifecycle, 'isThere', 'stored, not guessed');
-    sandbox.renameMember('entity-definition', active().id, 'Venue', 'property', 'isThere', 'exists');
-  });
-
-  check('an entity designating a property it does not have is an advisory, not a refusal', () => {
-    const id = active().id;
-    sandbox.updateDefinition('entity-definition', id, 'Venue', {
-      properties: [{ name: 'exists', projection: 'VenueExists' }],
-      lifecycle: 'phase',
-    });
-    eq(model()['entity-definitions'].Venue.lifecycle, 'phase', 'it stored');
-    const said = sandbox.modelAdvisories(model())
-      .filter((a) => a.kind === 'entity-definition' && a.name === 'Venue');
-    eq(said.length, 1, 'and is reported once');
-    eq(/designates "phase"/.test(said[0].message), true, 'naming what is missing');
-    eq(sandbox.lifecycleOf(model(), 'Venue'), null, 'no lifecycle resolves');
-    eq(sandbox.lifecycleRefusal(model(), 'Venue'), 'dangling', 'and the page can say why');
-    sandbox.updateDefinition('entity-definition', id, 'Venue', {
-      properties: [{ name: 'exists', projection: 'VenueExists' }],
-      lifecycle: 'exists',
-    });
-  });
-
-  check('removing a lifecycle drops the designation and keeps the property', () => {
-    sandbox.removeLifecycle(active(), 'Venue');
-    const after = model();
-    eq(after['entity-definitions'].Venue.lifecycle, undefined, 'undesignated');
-    eq(after['entity-definitions'].Venue.properties, [{ name: 'exists', projection: 'VenueExists' }],
-      'the property stays – a rule may still read it');
-    eq('VenueExists' in after['projection-definitions'], true, 'and so does its fold');
-    eq(sandbox.existenceLifecycleOffer(after, 'Venue'), 'designate',
-      'adding it again would designate the one that is there');
-    sandbox.addExistenceLifecycle(active(), 'Venue');
-    eq(model()['entity-definitions'].Venue.properties.length, 1, 'not a second `exists`');
-    eq(model()['entity-definitions'].Venue.lifecycle, 'exists', 'designated again');
-    eq(Object.keys(model()['projection-definitions']).filter((n) => /^VenueExists/.test(n)),
-      ['VenueExists'], 'and no second fold');
-  });
-
-  check('an `exists` that cannot be a lifecycle withdraws the one-click offer', () => {
-    const id = active().id;
-    sandbox.createEntity(active(), 'stage');
-    sandbox.addDefinition('projection-definition', id, 'StageExistsCount', {
-      tags: [{ name: 'stageId', tagType: 'StageId' }],
+  check('wiring an event reaches a grouped projection, read by its group\'s tag', () => {
+    sandbox.addGroupProjection(id, 'Course', 'seatCount', {
       valueType: 'integer', isList: false, initialValue: 0, handlers: [],
     });
-    sandbox.updateDefinition('entity-definition', id, 'Stage', {
-      properties: [{ name: 'exists', projection: 'StageExistsCount' }],
+    sandbox.patch('projection-definition', 'Course.seatCount', (b) => {
+      b.handlers = [{ event: 'CourseDefined', operation: 'set', value: { eventProperty: 'capacity' } }];
     });
-    eq(sandbox.existenceLifecycleOffer(model(), 'Stage'), null, 'not offered');
-    sandbox.addExistenceLifecycle(active(), 'Stage');
-    eq(model()['entity-definitions'].Stage.lifecycle, undefined, 'and refused if asked anyway');
-    sandbox.removeDefinition('entity-definition', id, 'Stage');
-    sandbox.removeDefinition('projection-definition', id, 'StageExistsCount');
+    const inner = model()['group-definitions'].Course.projections.find((p) => p.name === 'seatCount');
+    eq(inner.handlers.length, 1, 'stored in the group');
+    eq('tags' in inner, false, 'with no tag of its own');
+    const log = [{ type: 'CourseDefined', data: { courseId: 'c1', capacity: 12 } }];
+    eq(sandbox.foldProjection(model(), log, 'Course.seatCount', { tags: { courseId: 'c1' } }), 12,
+      'and folded by its qualified name');
   });
 
-  check('the shared editor renders on an entity page and on the projections page', () => {
+  check('the shared editor renders for a grouped projection and a top-level one alike', () => {
     store.set('dcb-playground:experimental', 'on');
-    // The same editor mounted from both sides – the whole claim this
-    // change makes. Which projection each side shows is now decided by
-    // the binding: an entity's page holds the ones it calls something,
-    // Projections holds the rest.
-    const open = (name) => {
-      sandbox.state.projDraft = {
-        name, body: projectionDraftFrom(model()['projection-definitions'][name]),
-      };
-      sandbox.state.projTab = 'definition';
-    };
-    const painted = (view, name) => {
+    const painted = (name) => {
       const main = sandbox.document.createElement('div');
-      sandbox.state.view = view;
-      sandbox.state.entity = 'Course';
-      open(name);
-      if (view === 'entity') sandbox.renderEntity(model(), main);
-      else sandbox.renderProjections(model(), main);
+      sandbox.state.view = 'projections';
+      sandbox.state.groupOpen = { Course: true };
+      sandbox.state.projDraft = { name, body: projectionDraftFrom(sandbox.projectionsOf(model())[name]) };
+      sandbox.state.projTab = 'definition';
+      sandbox.renderProjections(model(), main);
       return textOf(main);
     };
-    // This model binds every projection it has, so the page for the
-    // unbound ones needs one to show.
     sandbox.addDefinition('projection-definition', id, 'CourseNumbering', {
       tags: [], valueType: 'CourseId', isList: false, initialValue: 'c1',
       handlers: [{
@@ -866,44 +993,38 @@ function build(index) {
         value: { successor: { eventProperty: 'courseId' } },
       }],
     });
-    const property = model()['entity-definitions'].Course.properties[1];
-    eq(painted('entity', property.projection).includes('cardinality'), true,
-      'the editor, on the entity that binds it');
-    eq(painted('projections', 'CourseNumbering').includes('cardinality'), true,
-      'and the same editor, on the page for the ones nothing binds');
+    eq(painted('Course.capacity').includes('cardinality'), true, 'the editor, in its group');
+    eq(painted('CourseNumbering').includes('cardinality'), true, 'and the same editor, at the top level');
     // And a brand-new one, which is the form with no stored definition
     // behind it.
     sandbox.state.projDraft = null;
-    sandbox.state.newProjection = { name: '', body: sandbox.blankProjectionDraft(model()) };
+    sandbox.state.newProjection = true;
     sandbox.render();
     sandbox.state.newProjection = null;
+    sandbox.state.groupOpen = {};
   });
 
-  check('the editor renders a scripted projection from either side', () => {
-    sandbox.addDefinition('projection-definition', id, 'CourseTouches', {
-      tags: [{ name: 'courseId', tagType: 'CourseId' }],
-      arguments: [{ name: 'since', propertyType: 'integer' }],
+  check('the editor renders a grouped projection, and round-trips it', () => {
+    sandbox.addDefinition('projection-definition', id, 'Course.touches', {
       valueType: 'integer',
       isList: false,
-      // Written in the order the schema declares, which is the order
-      // the editor writes it back in.
-      script: { initialState: 0 },
-      handlers: [{ event: 'CourseDefined', code: '(state || 0) + 1' }],
-    });
-    sandbox.patch('entity-definition', 'Course', (b) => {
-      b.properties.push({ name: 'touches', projection: 'CourseTouches' });
+      initialValue: 0,
+      handlers: [{ event: 'CourseDefined', operation: 'increment', value: 1 }],
     });
     sandbox.state.projDraft = {
-      name: 'CourseTouches',
-      body: projectionDraftFrom(model()['projection-definitions'].CourseTouches),
+      name: 'Course.touches',
+      body: projectionDraftFrom(sandbox.projectionsOf(model())['Course.touches']),
     };
-    sandbox.state.view = 'entity';
-    sandbox.state.entity = 'Course';
+    sandbox.state.view = 'projections';
+    sandbox.state.groupOpen = { Course: true };
     sandbox.render();
     // And it survives the round trip a save puts it through.
-    eq(cleanProjectionBody(sandbox.state.projDraft.body),
-      model()['projection-definitions'].CourseTouches, 'unchanged through the editor');
+    const sorted = (value) => JSON.parse(JSON.stringify(value, (key, v) => (v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]])) : v)));
+    eq(sorted(cleanProjectionBody(sandbox.state.projDraft.body)),
+      sorted(sandbox.projectionsOf(model())['Course.touches']), 'unchanged through the editor');
     sandbox.state.projDraft = null;
+    sandbox.state.groupOpen = {};
   });
 }
 
@@ -917,7 +1038,7 @@ function build(index) {
 // where some command happened to read it.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(1);
+  const { id, model } = build('course-sequence');
   sandbox.setActiveModelId(id);
   const active = () => sandbox.activeModel();
   const session = sandbox.session;
@@ -1048,10 +1169,10 @@ function build(index) {
     eq(session.isWatched(global_), false, 'unwatched');
   });
 
-  check('an entity instance and a projection are both watchable, side by side', () => {
-    session.toggleWatch(sandbox.entityWatch('CourseId:c1'));
+  check('a group instance and a projection are both watchable, side by side', () => {
+    session.toggleWatch(sandbox.groupWatch('Course:c1'));
     session.toggleWatch(sandbox.projectionWatch('CourseNumbering', []));
-    eq(session.pinned.map((w) => w.kind), ['entity', 'projection'], 'one of each');
+    eq(session.pinned.map((w) => w.kind), ['group', 'projection'], 'one of each');
     sandbox.render();
   });
 
@@ -1117,8 +1238,8 @@ function build(index) {
 
 // ---------------------------------------------------------------
 // Identifiers already used are offered by tag type, in a model with no
-// entities at all – they used to be keyed by entity, so a plain tag
-// type such as CourseId was offered nothing.
+// groups at all – a plain tag type such as CourseId is offered what
+// was used.
 // ---------------------------------------------------------------
 {
   const { id, model } = build(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-simple'));
@@ -1156,7 +1277,7 @@ function build(index) {
 // Where a projection scenario is listed.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(1);
+  const { id, model } = build('course-sequence');
   sandbox.setActiveModelId(id);
 
   const add = (body) => {
@@ -1204,7 +1325,7 @@ function build(index) {
       given: [{ event: 'CourseDefined', data: { courseId: 'c1', capacity: 4 } }],
     });
     sandbox.goToProjectionScenario(model(), key);
-    eq(sandbox.state.view, 'projections', 'no entity binds it, so the Projections page');
+    eq(sandbox.state.view, 'projections', 'a projection of its own, so the Projections page');
     eq(sandbox.state.projTab, 'checks', 'with the row open on its checks');
     sandbox.render();
   });
@@ -1277,7 +1398,7 @@ function build(index) {
     eq(sandbox.state.view, 'projections', 'started where the projection lives');
     sandbox.render();
     sandbox.startProjectionScenario(model(), { projection: 'CourseCapacity' });
-    eq(sandbox.state.view, 'projections', 'and this one too – no entity binds it');
+    eq(sandbox.state.view, 'projections', 'and this one too');
     sandbox.render();
     sandbox.state.projectionScenarioDraft = null;
     sandbox.state.projDraft = null;
@@ -1286,164 +1407,402 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// The ledger: one component, two pages.
+// The ledger, and the groups on Projections: one component for every
+// projection, a section per group, folded by default.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(SCHEDULES);
-  // Its numbering's scenarios, which the sequence model ships with.
-  sandbox.seedSequenceScenarios(id);
+  const { id, model } = grouped('course-sequence');
   sandbox.setActiveModelId(id);
-  const page = () => {
-    const main = sandbox.document.createElement('div');
-    return main;
-  };
+  const page = () => sandbox.document.createElement('div');
+  const button = (root, label) => findAll(root, (n) => n.tag === 'button' && textOf(n) === label)[0];
 
-  check('Projections lists only what no entity binds', () => {
-    const main = page();
+  check('Projections lists the top-level projections, and each group folded under its heading', () => {
     sandbox.state.projDraft = null;
-    sandbox.renderProjections(model(), main);
-    const text = textOf(main);
-    eq(text.includes('Course numbering'), true, 'the one nothing binds is listed');
-    eq(text.includes('Course capacity'), false,
-      'and the ones an entity calls something are not – they are edited on its page');
-  });
-
-  check('what the entity pages own is still findable, as an index', () => {
+    sandbox.state.groupOpen = {};
     const main = page();
     sandbox.renderProjections(model(), main);
     const text = textOf(main);
-    eq(text.includes('Also defined, on their entities'), true, 'the index is there');
-    eq(text.includes('subscribed student ids'), true,
-      'under the name its entity calls it, not the projection name');
+    eq(text.includes('Course numbering'), true, 'a top-level one is listed');
+    const head = findAll(main, (n) => n.attributes['data-key'] === 'group:Course')[0];
+    eq(!!head, true, 'the group has a heading');
+    eq(textOf(head).includes('📚') && textOf(head).includes('Course id') && textOf(head).includes('4 projections'), true,
+      `its mark, its one tag and its size: ${textOf(head)}`);
+    eq(head.attributes['aria-expanded'], 'false', 'folded by default');
+    eq(text.includes('Subscription count'), false, 'and what it owns waits until it is unfolded');
   });
 
-  check('the two pages differ by exactly one column', () => {
+  check('unfolded, a group lists its projections by their local names, without a tag column', () => {
+    sandbox.state.groupOpen = { Course: true };
+    const main = page();
+    sandbox.renderProjections(model(), main);
+    const section = findAll(main, (n) => n.tag === 'section' && /\bpgroup\b/.test(n.className || ''))[0];
+    const text = textOf(section);
+    eq(text.includes('Subscription count') && text.includes('Capacity'), true, `named locally: ${text}`);
+    eq(text.includes('Course capacity'), false, 'not by the name it had at the top level');
+    eq(text.includes('tagged by'), false, 'the heading already said what they are kept per');
+    eq(!!button(section, '+ projection'), true, 'and it has an adder of its own');
+    sandbox.state.groupOpen = {};
+  });
+
+  check('the two ledgers differ by exactly one column', () => {
     const free = sandbox.projectionLedger(model(), {
       owner: null, nameHead: 'projection', entries: [], add: null,
     });
     const owned = sandbox.projectionLedger(model(), {
-      owner: 'Course', nameHead: 'property', entries: [], add: null,
+      owner: 'Course', nameHead: 'projection', entries: [], add: null,
     });
-    eq(textOf(free.children[0]), 'projectiontagged byholdsstarts at', 'Projections says what each is tagged by');
-    eq(textOf(owned.children[0]), 'propertyholdsstarts at',
-      'an entity does not, because Identity above it already has');
+    eq(textOf(free.children[0]), 'projectiontagged byholdsstarts at', 'the top level says what each is tagged by');
+    eq(textOf(owned.children[0]), 'projectionholdsstarts at', 'a group does not, because its heading has');
   });
 
   check('a row says the four things that differ, and nothing else', () => {
     sandbox.state.projDraft = null;
     const ledger = sandbox.projectionLedger(model(), {
-      owner: 'Course', nameHead: 'property', add: null,
-      entries: [{ projection: 'CourseCapacity', label: 'capacity',
-                  binding: { name: 'capacity', projection: 'CourseCapacity' } }],
+      owner: 'Course', nameHead: 'projection', add: null,
+      entries: [{ projection: 'Course.capacity', label: 'Capacity' }],
     });
     const text = textOf(ledger);
-    eq(text.includes('capacity'), true, 'the property');
+    eq(text.includes('Capacity'), true, 'the projection');
     eq(text.includes('Integer'), true, 'what it holds');
     eq(text.includes('0'), true, 'and where it starts');
     eq(/moved by|read by|Course defined/.test(text), false,
       'who moves it and who reads it wait until the row is opened');
   });
 
-  check('opening a row opens its editor against the same definition', () => {
+  check('opening a grouped row opens its editor on the projection it amounts to', () => {
     sandbox.state.projDraft = null;
-    sandbox.toggleProjectionRow(model(), 'CourseCapacity');
-    eq(sandbox.state.projDraft.name, 'CourseCapacity', 'the row being edited is the row that is open');
+    sandbox.toggleProjectionRow(model(), 'Course.capacity');
+    eq(sandbox.state.projDraft.name, 'Course.capacity', 'the row being edited is the row that is open');
     eq(sandbox.state.projDraft.body.valueType, 'integer', 'holding the projection body');
-    eq(sandbox.state.projTab, 'definition', 'on its definition');
-    sandbox.toggleProjectionRow(model(), 'CourseCapacity');
+    eq(sandbox.state.projDraft.body.tags, [{ name: 'courseId', tagType: 'CourseId' }], 'tagged by its group');
+    sandbox.toggleProjectionRow(model(), 'Course.capacity');
     eq(sandbox.state.projDraft, null, 'and clicking it again folds it shut');
   });
 
-  check('the editor says what the projection queries in a line, and shows the query behind the glyph', () => {
-    const body = model()['projection-definitions'].CourseCapacity;
-    const draft = projectionDraftFrom(body);
-    const types = new Set(body.handlers.map((handler) => handler.event)).size;
-    const usage = () => sandbox.projectionUsage(model(), draft, 'CourseCapacity', {});
-    eq(textOf(usage()).includes(`1 call · ${types} type${types === 1 ? '' : 's'} · 1 tag`), true, `one line: ${textOf(usage())}`);
-    sandbox.state.queryPop = 'projection:CourseCapacity';
-    try {
-      const open = usage();
-      eq(findAll(open, (n) => /\bdq-box\b/.test(n.className || '')).length, 1, 'the query, as the box every page draws');
-      eq(textOf(open).includes('CourseId:{courseId}'), true, 'its value a placeholder for whoever reads it');
-    } finally {
-      sandbox.state.queryPop = null;
-    }
-  });
-
-  check('a handler is added under the handlers, and its event reads as an event', () => {
-    const draft = projectionDraftFrom(model()['projection-definitions'].CourseCapacity);
-    const [editor] = sandbox.projectionFields(model(), draft);
-    const order = findAll(editor, (n) => /\bphandler\b/.test(n.className || '')
-      || (n.tag === 'button' && textOf(n) === '+ handler'));
-    eq(order.length > 1 && textOf(order[order.length - 1]) === '+ handler', true, 'the adder comes after every row');
-    eq(findAll(editor, (n) => n.tag === 'select' && n.className === 'kind-event').length, draft.handlers.length,
-      'each handler\'s event picker wears the event\'s look');
-  });
-
-  check('an opened row renders both of its tabs', () => {
-    store.set('dcb-playground:experimental', 'on');
-    const open = (name) => {
-      const body = model()['projection-definitions'][name];
-      sandbox.state.projDraft = { name, body: projectionDraftFrom(body) };
-    };
-    for (const tab of ['definition', 'checks']) {
-      const main = page();
-      sandbox.state.view = 'entity';
-      sandbox.state.entity = 'Course';
-      open('CourseCapacity');
-      sandbox.state.projTab = tab;
-      sandbox.renderEntity(model(), main);
-      const text = textOf(main);
-      eq(text.includes('Definition') && text.includes('Checks'), true,
-        `the ${tab} tab still offers the other`);
-      eq(text.includes('cardinality'), tab === 'definition',
-        'and only one of them is showing at a time');
-    }
-    // The same row, on the page for the ones nothing binds.
+  check('a grouped projection\'s page says its qualified name, and shows its tag fixed', () => {
+    sandbox.goToProjection('Course.capacity');
+    eq(sandbox.state.view, 'projections', 'it opens where every projection opens');
+    eq(sandbox.state.groupOpen.Course, true, 'with its group unfolded for it');
     const main = page();
-    open('CourseNumbering');
-    sandbox.state.projTab = 'checks';
     sandbox.renderProjections(model(), main);
-    eq(textOf(main).includes('issues c1 before anything has happened'), true,
-      'the checks tab lists what checks it');
+    const foot = findAll(main, (n) => /\bpfoot\b/.test(n.className || ''))[0];
+    eq(textOf(foot).includes('Course.capacity'), true, `the name it is read by: ${textOf(foot)}`);
+    eq(!!button(foot, 'Move out of group'), true, 'a way out of the group');
+    eq(!!button(foot, 'Move into group…'), false, 'and none into another');
+    const partition = findAll(main, (n) => n.tag === 'section' && /psection/.test(n.className || '')
+      && textOf(n).startsWith('partition'))[0];
+    eq(findAll(partition, (n) => n.tag === 'button' && textOf(n) === '+ parameter').length, 0,
+      'no tag to add – the group\'s is the one');
+    eq(textOf(partition).includes('Course id'), true, 'shown, not offered');
     sandbox.state.projDraft = null;
-    sandbox.state.projTab = 'definition';
-    store.set('dcb-playground:experimental', 'on');
   });
 
-  check('both names a bound projection has can be changed from its row', () => {
-    store.set('dcb-playground:experimental', 'on');
-    sandbox.state.view = 'entity';
-    sandbox.state.entity = 'Course';
-    sandbox.toggleProjectionRow(model(), 'CourseCapacity');
-    // Starting a rename closes every other form – the row it is drawn
-    // inside must survive that, or the form has nowhere to appear.
-    sandbox.startRenameInRow(() => { sandbox.state.renamingProjection = 'CourseCapacity'; });
-    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseCapacity',
-      'the row stays open while what it is about is being renamed');
-    const main = sandbox.document.createElement('div');
-    sandbox.renderEntity(model(), main);
-    eq(textOf(main).includes('Rename – every reference is rewritten with it'), true, 'and the form is in it');
-    sandbox.state.renamingProjection = null;
-
-    sandbox.startRenameInRow(() => sandbox.openMember('entity:Course', 'capacity'));
-    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseCapacity',
-      'the same for the other of its two names');
-    const other = sandbox.document.createElement('div');
-    sandbox.renderEntity(model(), other);
-    eq(textOf(other).includes('what this entity calls'), true, 'which is the binding');
-    sandbox.state.editMember = null;
+  check('an edit to a grouped projection autosaves into its group', () => {
+    sandbox.toggleProjectionRow(model(), 'Course.capacity');
+    sandbox.state.projDraft.body.initialValue = 5;
+    sandbox.autoSaveProjectionDraft();
+    const inner = model()['group-definitions'].Course.projections.find((p) => p.name === 'capacity');
+    eq(inner.initialValue, 5, 'the group holds the change');
+    eq('tags' in inner, false, 'and no tag of its own');
+    const before = sandbox.projectState()[id];
+    sandbox.autoSaveProjectionDraft();
+    eq(sandbox.projectState()[id] === before, true, 'an unchanged draft is not stored again');
     sandbox.state.projDraft = null;
-    store.set('dcb-playground:experimental', 'on');
   });
 
-  check('a projection knows who reads it, bound or not', () => {
-    eq(projectionReaders(model(), 'CourseNumbering'), ['DefineCourse'],
-      'read directly by name, because nothing binds it');
-    eq(projectionReaders(model(), 'CourseCapacity'), ['SubscribeStudentToCourse'],
-      'and this one through the alias of the entity that does');
+  check('renaming a grouped projection renames its local name', () => {
+    sandbox.toggleProjectionRow(model(), 'Course.capacity');
+    sandbox.startRenameInRow(() => { sandbox.state.renamingProjection = 'Course.capacity'; });
+    const main = page();
+    sandbox.renderProjections(model(), main);
+    const input = findAll(main, (n) => n.tag === 'input' && n.value === 'Capacity')[0];
+    eq(!!input, true, 'the field holds the local name');
+    input.oninput({ target: { value: 'seat limit' } });
+    input.onkeydown({ key: 'Enter', preventDefault() {} });
+    eq(!!projectState()[id]['group-definitions'].Course.projections.find((p) => p.name === 'seatLimit'), true,
+      'spelled lowerCamel, inside the group');
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'Course.seatLimit', 'and the row follows it');
+    sandbox.renameDefinition('projection-definition', id, 'Course.seatLimit', 'capacity');
+    sandbox.state.projDraft = null;
+  });
+
+  check('a projection knows who reads it, by name or through a group', () => {
+    eq(projectionReaders(model(), 'CourseNumbering'), ['DefineCourse'], 'read directly by name');
+    eq(projectionReaders(model(), 'Course.capacity'), ['SubscribeStudentToCourse'], 'and by its qualified name');
+    const before = lists(model()['command-definitions'].SubscribeStudentToCourse);
+    // Moving it in said its reads through an alias; put one back in place.
+    const subscribe = lists(model()['command-definitions'].SubscribeStudentToCourse);
+    let rewrote = false;
+    sandbox.forEachCommandOperand(subscribe, (operand) => {
+      if (sandbox.operandSource(operand) === 'alias-property' && operand.property === 'capacity' && !rewrote) {
+        const binding = subscribe.boundary.find((b) => b.alias === operand.alias);
+        for (const key of Object.keys(operand)) delete operand[key];
+        Object.assign(operand, { projection: 'Course.capacity', tags: binding.tags });
+        rewrote = true;
+      }
+    });
+    eq(rewrote, true, 'the fixture read it through an alias');
+    subscribe.boundary = subscribe.boundary.filter((b) => !b.group);
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', subscribe);
+    eq(projectionReaders(model(), 'Course.capacity'), ['SubscribeStudentToCourse'], 'as a read in place');
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', sandbox.deepClone(before));
+    eq(projectionReaders(model(), 'Course.capacity'), ['SubscribeStudentToCourse'], 'or as a group alias\'s member');
   });
 }
+
+// ---------------------------------------------------------------
+// Making groups, and moving projections in and out of them.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build('course-simple');
+  sandbox.setActiveModelId(id);
+  const page = () => sandbox.document.createElement('div');
+  const button = (root, label) => findAll(root, (n) => n.tag === 'button' && textOf(n) === label)[0];
+  const typeInto = (root, placeholder, value) => {
+    const input = findAll(root, (n) => n.tag === 'input' && n.attributes.placeholder === placeholder)[0];
+    if (!input) throw new Error(`no field "${placeholder}"`);
+    input.oninput({ target: { value } });
+  };
+
+  check('the name a group is offered under is read off its tag type', () => {
+    eq(sandbox.suggestGroupName('CourseId'), 'Course', 'CourseId → Course');
+    eq(sandbox.suggestGroupName('OrderKey'), 'Order', 'a key too');
+    eq(sandbox.suggestGroupName('Isbn'), 'Isbn', 'and a type that names no identifier stays as it is');
+  });
+
+  check('the + group form offers the tags the model already reads by', () => {
+    const tags = sandbox.groupTagChoices(model()).map((t) => t.name + ':' + t.tagType);
+    eq(tags.includes('courseId:CourseId') && tags.includes('studentId:StudentId'), true, tags.join(', '));
+    eq(new Set(tags).size, tags.length, 'each once');
+  });
+
+  check('+ group makes an empty group and shows it open', () => {
+    sandbox.closeForms();
+    const main = page();
+    sandbox.renderProjections(model(), main);
+    button(main, '+ group').onclick();
+    eq(!!sandbox.state.newGroup, true, 'the form is open');
+    const form = page();
+    sandbox.renderProjections(model(), form);
+    typeInto(form, 'group name', 'Student');
+    const tag = findAll(form, (n) => n.tag === 'select')[0];
+    tag.onchange({ target: { value: 'studentId:StudentId' } });
+    const again = page();
+    sandbox.renderProjections(model(), again);
+    typeInto(again, 'icon', '🎓');
+    button(again, 'Create').onclick();
+    const group = model()['group-definitions'].Student;
+    eq(group, { icon: '🎓', tag: { name: 'studentId', tagType: 'StudentId' }, projections: [] }, 'stored as asked');
+    eq(sandbox.state.newGroup, null, 'the form is gone');
+    eq(sandbox.state.groupOpen.Student, true, 'and the new group is shown open');
+  });
+
+  check('a new tag can be named in the form, its type with it', () => {
+    sandbox.state.newGroup = sandbox.newGroupDraft(model());
+    sandbox.state.newGroup.tag = ' new';   // `NEW`, the picker's "+ New tag…" row
+    const form = sandbox.newGroupForm(model());
+    typeInto(form, 'group name', 'Room');
+    typeInto(form, 'tag name, e.g. courseId', 'roomId');
+    typeInto(form, 'tag type, e.g. CourseId', 'RoomId');
+    button(form, 'Create').onclick();
+    eq(model()['group-definitions'].Room.tag, { name: 'roomId', tagType: 'RoomId' }, 'the tag it was given');
+    eq(model()['custom-type-definitions'].RoomId.isTag, true, 'and its type made a tag type');
+    sandbox.removeDefinition('group-definition', id, 'Room');
+  });
+
+  check('a group\'s own + projection makes a projection inside it, with no tag step', () => {
+    sandbox.closeForms();
+    sandbox.state.groupOpen = { Student: true };
+    sandbox.state.groupProjection = 'Student';
+    const main = page();
+    sandbox.renderProjections(model(), main);
+    const form = findAll(main, (n) => /\binline-form\b/.test(n.className || '')
+      && textOf(n).includes('New projection in Student'))[0];
+    eq(!!form, true, 'the form says where it lands');
+    typeInto(form, 'projection name', 'credits');
+    button(form, 'Create').onclick();
+    const inner = model()['group-definitions'].Student.projections.map((p) => p.name);
+    eq(inner, ['credits'], 'made inside the group, under a local name');
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'Student.credits', 'and opened in its row');
+    eq(sandbox.projectionWizardSteps(sandbox.state.projWizard, sandbox.state.projDraft.body, { groupName: 'Student' })
+      .steps.some((step) => step.key === 'partition'), false, 'whose wizard asks no partition');
+    sandbox.removeDefinition('projection-definition', id, 'Student.credits');
+    sandbox.closeForms();
+    sandbox.state.projWizard = null;
+  });
+
+  check('Move into group is offered to a projection whose one tag a group is read by', () => {
+    sandbox.toggleProjectionRow(model(), 'StudentExists');
+    const main = page();
+    sandbox.renderProjections(model(), main);
+    const foot = findAll(main, (n) => /\bpfoot\b/.test(n.className || ''))[0];
+    eq(!!button(foot, 'Move into group…'), true, 'offered on the row');
+    eq(!!button(foot, 'Move out of group'), false, 'and not the way out');
+    button(foot, 'Move into group…').onclick();
+    const choices = sandbox.projectionMoveChoices(model(), 'StudentExists');
+    eq(!!button(choices, '🎓Student'), true, `the accepting group: ${textOf(choices)}`);
+    eq(!!button(choices, 'New group…'), true, 'and a new one');
+    eq(sandbox.groupsAccepting(model(), 'CourseCapacity'), [], 'one tagged by another type is not offered Student');
+    button(choices, '🎓Student').onclick();
+    eq('StudentExists' in model()['projection-definitions'], false, 'moved out of the top level');
+    eq(model()['group-definitions'].Student.projections.map((p) => p.name), ['exists'], 'into the group, named locally');
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'Student.exists', 'the row follows it');
+    const register = JSON.stringify(model()['command-definitions'].RegisterStudent);
+    eq(register.includes('"group":"Student"') && register.includes('"property":"exists"'), true,
+      'and every read of it moved with it, through an alias of the group');
+  });
+
+  check('Move out of group is the way back', () => {
+    sandbox.moveOutOfGroup(model(), 'Student.exists');
+    eq('StudentExists' in model()['projection-definitions'], true, 'top-level again, under its old name');
+    eq(model()['group-definitions'].Student.projections, [], 'the group empty');
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'StudentExists', 'the row open on it');
+    eq(JSON.stringify(model()['command-definitions'].RegisterStudent).includes('"StudentExists"'), true,
+      'and its reads moved back');
+    sandbox.state.projDraft = null;
+  });
+
+  check('New group… makes a group for the projection, named off its tag, and moves it in', () => {
+    sandbox.toggleProjectionRow(model(), 'CourseCapacity');
+    sandbox.state.moveIntoGroup = 'CourseCapacity';
+    const choices = sandbox.projectionMoveChoices(model(), 'CourseCapacity');
+    eq(textOf(choices).includes('No group is read by Course id yet'), true, textOf(choices));
+    // What the page shows is what the last repaint saw – a row put back
+    // after it is not on screen.
+    let paintedOpen;
+    const realRender = sandbox.render;
+    sandbox.render = () => { paintedOpen = sandbox.state.projDraft && sandbox.state.projDraft.name; };
+    try { button(choices, 'New group…').onclick(); } finally { sandbox.render = realRender; }
+    eq(paintedOpen, 'CourseCapacity', 'the row the form is drawn in is still open when the page repaints');
+    eq(sandbox.state.newGroup.name, 'Course', 'the name suggested from the tag type');
+    eq(sandbox.state.newGroup.fixedTag, { name: 'courseId', tagType: 'CourseId' }, 'the tag prefilled');
+    eq(sandbox.state.newGroup.move, 'CourseCapacity', 'for this projection');
+    // Through a repaint, as the page shows it: the row the form is
+    // drawn in must have survived the click.
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'CourseCapacity', 'the row still open');
+    const shown = page();
+    sandbox.renderProjections(model(), shown);
+    eq(findAll(shown, (n) => /\bnew-group\b/.test(n.className || '')).length, 1, 'the form on the page');
+    const form = sandbox.projectionMoveChoices(model(), 'CourseCapacity');
+    eq(findAll(form, (n) => n.tag === 'select').length, 0, 'the tag is the projection\'s, not a choice');
+    button(form, 'Create and move').onclick();
+    eq(model()['group-definitions'].Course.projections.map((p) => p.name), ['capacity'], 'made, and moved in');
+    eq(sandbox.state.projDraft && sandbox.state.projDraft.name, 'Course.capacity', 'its row open');
+    eq(sandbox.state.groupOpen.Course, true, 'in its group, shown open');
+  });
+
+  check('a read of a grouped projection is the group, then the member, with the group\'s mark', () => {
+    sandbox.updateDefinition('group-definition', id, 'Course', { ...model()['group-definitions'].Course, icon: '📚' });
+    const read = { projection: 'Course.capacity', tags: { courseId: { parameterName: 'courseId' } } };
+    eq(sandbox.operandWords(read), 'Course (course id) · capacity', 'in words');
+    const ref = sandbox.projectionReadRef(read);
+    eq(textOf(ref), '📚Course (course id) · capacity', 'and on the page');
+    eq(sandbox.operandWords({ alias: 'course', property: 'seatsOn', arguments: { slot: { parameterName: 'slot' } } }),
+      'course · seats on (slot = slot)', 'a member read gives its own arguments');
+    eq(sandbox.readable('Course.subscriptionCount'), 'Course · subscription count', 'a qualified name, read');
+    const chip = sandbox.projectionRef(model(), 'Course.capacity');
+    eq(textOf(chip), '📚Course · capacity', 'a reference to it wears the group\'s mark');
+  });
+
+  check('a rule may start from a group, and reads one of its members', () => {
+    sandbox.state.view = 'slice';
+    sandbox.state.slice = 'ChangeCourseCapacity';
+    const slice = sandbox.sliceOf(model(), 'ChangeCourseCapacity');
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', target: 'group:Course' };
+    const editor = sandbox.ruleEditor(model(), slice, null);
+    const options = findAll(editor, (n) => n.tag === 'option').map((n) => n.value);
+    eq(options.includes('group:Course'), true, 'the group is on offer');
+    eq(options.includes('projection:Course.capacity'), false, 'its projection is read through it, not beside it');
+    eq(options.includes(JSON.stringify({ alias: 'course', property: 'capacity' })), true,
+      `and its members are the values: ${options.join(' | ')}`);
+    const pending = sandbox.pendingBinding(model(), slice, sandbox.state.ruleDraft);
+    eq(pending, { alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } },
+      'the read it brings is a group alias, tagged by what the command was given');
+    sandbox.state.ruleDraft = null;
+  });
+}
+
+// ---------------------------------------------------------------
+// A group heading's own actions, and a command's inline projection
+// going into a group the model already has – never a new one.
+// ---------------------------------------------------------------
+{
+  const { id, model } = grouped('course-simple');
+  sandbox.setActiveModelId(id);
+  const page = () => sandbox.document.createElement('div');
+  const button = (root, label) => findAll(root, (n) => n.tag === 'button' && textOf(n) === label)[0];
+  const heading = (open) => {
+    sandbox.closeForms();
+    sandbox.state.groupOpen = open ? { Course: true } : {};
+    const main = page();
+    sandbox.renderProjections(model(), main);
+    return findAll(main, (n) => n.attributes['data-key'] === 'group:Course')[0];
+  };
+
+  check('a folded heading is only the way in; unfolded, it carries the group\'s actions', () => {
+    const folded = heading(false);
+    eq(['+ projection', 'Icon', 'Rename', 'Remove'].some((label) => button(folded, label)), false,
+      'folded: no actions');
+    folded.onclick({ target: { closest: () => null } });
+    eq(sandbox.state.groupOpen.Course, true, 'a click on it unfolds it');
+    const open = heading(true);
+    eq(['+ projection', 'Icon', 'Rename', 'Remove'].every((label) => button(open, label)), true,
+      `unfolded: ${textOf(open)}`);
+    sandbox.state.groupOpen = {};
+  });
+
+  check('Rename on a group rewrites every read through it', () => {
+    button(heading(true), 'Rename').onclick();
+    eq(sandbox.state.renamingGroup, 'Course', 'the heading turns into the field');
+    sandbox.renameDefinition('group-definition', id, 'Course', 'Class');
+    eq(JSON.stringify(model()['command-definitions'].SubscribeStudentToCourse).includes('"Course.'), false,
+      'no read names the old group');
+    sandbox.renameDefinition('group-definition', id, 'Class', 'Course');
+    sandbox.closeForms();
+  });
+
+  check('a command\'s new projection may land in an existing group, and is never asked to make one', () => {
+    sandbox.state.view = 'slice';
+    sandbox.state.slice = 'ChangeCourseCapacity';
+    const frame = { kind: 'projection' };
+    const form = sandbox.newProjectionQuestion(model(), frame, () => {});
+    const picker = findAll(form, (n) => n.tag === 'select')[0];
+    const values = findAll(picker, (n) => n.tag === 'option').map((n) => n.value);
+    eq(values, ['', 'Course'], 'no group, or the one the model has – no "+ New group…"');
+    picker.onchange({ target: { value: 'Course' } });
+    eq(frame.group, 'Course', 'picked');
+    eq(frame.draft.body.tags, [{ name: 'courseId', tagType: 'CourseId' }], 'and the draft takes its tag');
+    sandbox.closeForms();
+    sandbox.state.view = 'projections';
+  });
+}
+
+// ---------------------------------------------------------------
+// A 10.x file with entities loads converted, and says so.
+// ---------------------------------------------------------------
+check('importing an older model with entities says what became of them', () => {
+  const { model } = build('course-simple');
+  const envelope = JSON.parse(JSON.stringify(sandbox.buildShareEnvelope(model(), [])));
+  envelope.$schema = 'https://dcb.events/schemas/model/v10.json';
+  envelope.dcbModelVersion = '10.0';
+  delete envelope.groupDefinitions;
+  envelope.entityDefinitions = [{
+    name: 'Student', properties: [{ name: 'exists', projection: 'StudentExists' }],
+  }];
+  const said = [];
+  const realToast = sandbox.toast;
+  sandbox.toast = (message, isError) => said.push([message, !!isError]);
+  try {
+    sandbox.finishImport(envelope);
+  } finally {
+    sandbox.toast = realToast;
+  }
+  const imported = sandbox.activeModel();
+  eq(Object.keys(imported['group-definitions']), ['Student'], 'the entity became a group');
+  eq(said.length, 1, 'said once');
+  eq(/Read as 11.0 says it: Entity Student became the group Student\./.test(said[0][0]), true, said[0][0]);
+  eq(said[0][1], false, 'as news, not as an error – nothing was lost');
+});
 
 // ---------------------------------------------------------------
 // A named field commits when the row is left. The button stays, but it
@@ -1451,7 +1810,7 @@ function build(index) {
 // gesture that moves on, and a name is what makes a field real.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
 
   const type = (adder, text) => {
@@ -1465,7 +1824,7 @@ function build(index) {
     const before = model()['command-definitions'].DefineCourse.properties.length;
     const adder = sandbox.propertyAdder(model(), {
       draftKey: 'in:DefineCourse',
-      onAdd: (property) => sandbox.updateDefinition('command-definition', id, 'DefineCourse', {
+      onAdd: (property) => updateDefinition('command-definition', id, 'DefineCourse', {
         ...model()['command-definitions'].DefineCourse,
         properties: [...model()['command-definitions'].DefineCourse.properties, property],
       }),
@@ -1535,18 +1894,6 @@ function build(index) {
     sandbox.state.fieldDraft = null;
   });
 
-  check('an entity property adder follows the same rule', () => {
-    const before = (model()['entity-definitions'].Course.properties || []).length;
-    const adder = sandbox.entityPropertyAdder(model(), 'Course');
-    type(adder, 'starting week');
-    sandbox.closeForms();
-    const properties = model()['entity-definitions'].Course.properties;
-    eq(properties.length, before + 1, 'the property landed on leaving');
-    eq(properties[properties.length - 1].name, 'startingWeek', 'named as typed');
-    eq(!!model()['projection-definitions'].CourseStartingWeek, true,
-      'and brought its projection with it, same as the button always did');
-  });
-
   sandbox.clearActiveModelId();
 }
 
@@ -1556,7 +1903,7 @@ function build(index) {
 // every step it holds back is one click from being shown.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
 
   const slice = () => sandbox.sliceOf(model(), 'CertifyCourse');
@@ -1566,7 +1913,7 @@ function build(index) {
     sandbox.createCommand(model(), 'certify course');
     eq(!!model()['command-definitions'].CertifyCourse, true, 'the command exists');
     eq(sandbox.state.wizard, { slice: 'CertifyCourse', upto: 0 }, 'and its page starts at step one');
-    eq((model()['command-definitions'].CertifyCourse.publishes || []).map((p) => p.name),
+    eq((lists(model()['command-definitions'].CertifyCourse).publishes || []).map((p) => p.name),
       ['CourseCertified'], 'the success event exists from the start – the model requires one');
     eq(model()['event-definitions'].CourseCertified.properties, [],
       'but it is bare: its fields wait for the step that shows it');
@@ -1577,10 +1924,10 @@ function build(index) {
     // produce one: with the rule that wanted it. A boundary written
     // without one would be pruned by this very write – nothing would
     // consult it – which is the whole point of the merge.
-    sandbox.updateDefinition('command-definition', id, 'CertifyCourse', {
+    updateDefinition('command-definition', id, 'CertifyCourse', {
       ...model()['command-definitions'].CertifyCourse,
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
-      boundary: [{ alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } }],
+      boundary: [{ alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } }],
       conditions: [{
         leftHandSide: { alias: 'course', property: 'status' },
         predicate: 'equals',
@@ -1594,22 +1941,23 @@ function build(index) {
     const event = model()['event-definitions'].CourseCertified;
     eq(event.properties.map((p) => p.name), ['courseId'],
       'the event now records what the command was given');
-    const emission = model()['command-definitions'].CertifyCourse.publishes[0];
+    const emission = lists(model()['command-definitions'].CertifyCourse).publishes[0];
     eq(emission.parameters, { courseId: { parameterName: 'courseId' } },
       'wired through unchanged, not merely declared');
     eq(sandbox.state.openEvent, 'CourseCertified', 'and its fields are on screen');
   });
 
   check('revealing the changes step ends the wizard with a proposal, not a write', () => {
-    const handlersBefore = model()['projection-definitions'].CourseStatus.handlers.length;
+    const status = () => sandbox.projectionsOf(model())['Course.status'];
+    const handlersBefore = status().handlers.length;
     sandbox.advanceWizard(model(), slice());   // changes revealed – wizard over
     eq(sandbox.state.wizard, null, 'everything is on screen, so the page is just the page');
     eq(sandbox.state.adder, 'chg:CourseCertified', 'the change adder is open');
-    eq(sandbox.state.changeDraft.target, JSON.stringify(['Course', 'status']),
-      'proposing the read entity\'s status');
+    eq(sandbox.state.changeDraft.target, JSON.stringify({ projection: 'Course.status' }),
+      'proposing the read group\'s first projection');
     eq(sandbox.state.changeDraft.value, JSON.stringify({ enumMember: 'Existent' }),
       'set to the first member that is not where it starts');
-    eq(model()['projection-definitions'].CourseStatus.handlers.length, handlersBefore,
+    eq(status().handlers.length, handlersBefore,
       'and nothing was written – a proposal waits to be submitted');
     sandbox.state.adder = null;
     sandbox.state.changeDraft = null;
@@ -1641,7 +1989,7 @@ function build(index) {
 // made is the thing selected, and the command never leaves the screen.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
 
   const drive = (form, text, buttonLabel) => {
@@ -1652,31 +2000,6 @@ function build(index) {
     button.onclick();
   };
 
-  check('an entity created mid-rule resumes the rule, holding it as the pending read', () => {
-    sandbox.state.slice = 'DefineCourse';
-    sandbox.state.view = 'slice';
-    sandbox.state.newEntityAt = 'rules';
-    const step = sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'DefineCourse'));
-    drive(step, 'room', 'Add');
-    eq(!!model()['entity-definitions'].Room, true, 'the entity exists');
-    eq(sandbox.state.adder, 'rule', 'the rule adder came back, not a read adder');
-    // A brand-new entity derives a brand-new identifier type, so
-    // nothing already in scope could identify one. The command gains
-    // the input that says which, in the same gesture – otherwise the
-    // entity is unreachable the instant it exists and the rule has
-    // nowhere to go.
-    eq(model()['command-definitions'].DefineCourse.properties.map((p) => p.name).includes('roomId'),
-      true, 'the command now takes the id that says which room');
-    eq(sandbox.state.ruleDraft.newRead.entity, 'Room',
-      'holding the thing that was just made as the read the rule will bring with it');
-    // A brand-new entity has no properties, so the rule's left side has
-    // nothing to name yet – the property form opens on it straight away
-    // rather than leaving the row in a dead end.
-    eq(sandbox.state.addingProp && sandbox.state.addingProp.only, 'Room',
-      'and the first property is what it asks for next');
-    sandbox.closeForms();
-  });
-
   // Under the merge a read is never committed on its own: nothing
   // consults it, so the write path would prune it in the same append
   // that stored it. The row holds out for the whole rule.
@@ -1686,7 +2009,7 @@ function build(index) {
     const before = model()['command-definitions'].ChangeCourseCapacity.boundary.length;
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: false, left: '', right: '',
-      target: 'entity:Course', touched: true,
+      target: 'group:Course', touched: true,
     };
     sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ChangeCourseCapacity'));
     sandbox.closeForms();
@@ -1694,45 +2017,39 @@ function build(index) {
       'no read landed, because no rule wanted one yet');
   });
 
-  check('a property created from inside a rule becomes the rule\'s subject', () => {
+  check('a projection created from inside a rule lands in the group it reads, and becomes the rule\'s subject', () => {
     sandbox.state.slice = 'DefineCourse';
-    sandbox.state.addingProp = { at: 'rule' };
-    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const draft = { predicate: 'equals', negate: false, left: '', right: '', target: 'alias:course' };
+    sandbox.state.ruleDraft = draft;
     const editor = sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
-    const form = findAll(editor, (n) => /inline-form/.test(n.className || ''))[0];
-    if (!form) throw new Error('the property form is not under the rule row');
-    drive(form, 'starting week', 'Add');
-    eq(!!model()['projection-definitions'].CourseStartingWeek, true, 'the property exists');
-    eq(sandbox.state.ruleDraft.left,
-      JSON.stringify({ alias: 'course', property: 'startingWeek' }),
+    const select = findAll(editor, (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option' && textOf(o).includes('New projection in Course')).length)[0];
+    if (!select) throw new Error('the value picker offers no new projection in the group');
+    select.onchange({ target: { value: ' new' } });   // `NEW`
+    const frame = sandbox.state.defFrames[sandbox.state.defFrames.length - 1];
+    eq(frame && frame.group, 'Course', 'the modal makes it inside the group');
+    sandbox.createProjectionFromName(model(), 'starting week', (name, body) => {
+      frame.draft = { name, body };
+      frame.onCreated(name);
+    }, { group: frame.group });
+    eq(!!model()['group-definitions'].Course.projections.find((p) => p.name === 'startingWeek'), true,
+      'the projection exists, in the group');
+    eq(draft.left, JSON.stringify({ alias: 'course', property: 'startingWeek' }),
       'and the rule is already about it, through the alias the command reads');
-    eq(sandbox.state.addingProp, null, 'the form is gone');
+    sandbox.closeAllDefinitionModals();
     sandbox.closeForms();
-  });
-
-  check('an entity created mid-change asks for its first property, not a lifecycle', () => {
-    sandbox.state.slice = 'DefineCourse';
-    sandbox.state.newEntityAt = 'changes:CourseDefined';
-    drive(sandbox.changeAdder(model(), 'CourseDefined'), 'venue', 'Add');
-    eq(model()['entity-definitions'].Venue.properties, [], 'the entity arrived bare');
-    eq(sandbox.state.addingProp, { eventName: 'CourseDefined', only: 'Venue' },
-      'and the property form opened for it');
-    sandbox.changeAdder(model(), 'CourseDefined');
-    eq(sandbox.state.fieldDraft.entity, 'Venue', 'on the entity just made, not the first by name');
-    eq(sandbox.state.changeDraft && sandbox.state.changeDraft.target
-      === JSON.stringify(['Venue', 'exists']), false, 'and nothing proposes setting `exists`');
-    sandbox.closeForms();
+    sandbox.state.projWizard = null;
   });
 
   check('a new event is born recording what the command was given', () => {
     sandbox.state.slice = 'SubscribeStudentToCourse';
-    sandbox.state.newEntityAt = 'event';
+    sandbox.state.newEmission = true;
     const step = sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse'));
     drive(step, 'course waitlisted', 'Add');
     const event = model()['event-definitions'].CourseWaitlisted;
     eq(event.properties.map((p) => p.name), ['courseId', 'studentId'],
       'field for field from the payload');
-    const emission = model()['command-definitions'].SubscribeStudentToCourse.publishes
+    const emission = lists(model()['command-definitions'].SubscribeStudentToCourse).publishes
       .find((e) => e.name === 'CourseWaitlisted');
     eq(emission.parameters, {
       courseId: { parameterName: 'courseId' },
@@ -1750,7 +2067,7 @@ function build(index) {
 // and Escape discards whatever state the row was in.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
   const LITERAL = ' literal';
 
@@ -1759,13 +2076,13 @@ function build(index) {
     sandbox.state.adder = 'chg:CourseDefined';
     sandbox.state.changeDraft = {
       eventName: 'CourseDefined',
-      target: JSON.stringify(['Course', 'subscriptionCount']),
+      target: JSON.stringify({ projection: 'Course.subscriptionCount' }),
       operation: 'set', value: LITERAL, valueText: '5',
       touched: true,
     };
     sandbox.stepChanges(model(), sandbox.sliceOf(model(), 'DefineCourse'));
     sandbox.closeForms();
-    const handler = model()['projection-definitions'].CourseSubscriptionCount.handlers
+    const handler = sandbox.projectionsOf(model())['Course.subscriptionCount'].handlers
       .find((x) => x.event === 'CourseDefined');
     eq(handler, { event: 'CourseDefined', operation: 'set', value: 5 },
       'the change landed without its button');
@@ -1787,7 +2104,7 @@ function build(index) {
   check('a touched, complete rule is added by leaving it', () => {
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
-    const count = model()['command-definitions'].DefineCourse.conditions.length;
+    const count = lists(model()['command-definitions'].DefineCourse).conditions.length;
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: true,
       left: JSON.stringify({ alias: 'course', property: 'status' }),
@@ -1797,7 +2114,7 @@ function build(index) {
     };
     sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
     sandbox.closeForms();
-    const conditions = model()['command-definitions'].DefineCourse.conditions;
+    const conditions = lists(model()['command-definitions'].DefineCourse).conditions;
     eq(conditions.length, count + 1, 'the rule landed without its button');
     eq(conditions[conditions.length - 1], {
       leftHandSide: { alias: 'course', property: 'status' },
@@ -1811,7 +2128,7 @@ function build(index) {
   check('a touched rule without its message is added by leaving it, refused with what it requires', () => {
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
-    const shipped = sandbox.deepClone(model()['command-definitions'].DefineCourse);
+    const shipped = lists(model()['command-definitions'].DefineCourse);
     const count = shipped.conditions.length;
     sandbox.state.ruleDraft = {
       predicate: 'equals', negate: true,
@@ -1825,16 +2142,16 @@ function build(index) {
     const field = findAll(editor, (n) => n.tag === 'input' && /\brejection\b/.test(n.className || ''))[0];
     eq(field.attributes.placeholder, 'Course status must not be Archived', 'the message it would get, shown while empty');
     sandbox.closeForms();
-    const conditions = model()['command-definitions'].DefineCourse.conditions;
+    const conditions = lists(model()['command-definitions'].DefineCourse).conditions;
     eq(conditions.length, count + 1, 'added');
     eq(conditions[count].rejection, 'Course status must not be Archived', 'with the derived message');
-    sandbox.updateDefinition('command-definition', id, 'DefineCourse', shipped);
+    updateDefinition('command-definition', id, 'DefineCourse', shipped);
   });
 
   // The read half of the merged row narrows exactly as the old read
   // adder did – it is the same question, asked inside the rule that
   // wants the answer. The target picker is the row's first select, so
-  // the identifier or argument picker is its second.
+  // the tag or argument picker is its second.
   const readRow = (command, target) => {
     sandbox.state.slice = command;
     sandbox.state.adder = 'rule';
@@ -1844,30 +2161,29 @@ function build(index) {
     return findAll(select, (n) => n.tag === 'option').map((n) => n.value);
   };
 
-  check('the identifier picker offers the id type only, first match pre-picked', () => {
-    const values = readRow('SubscribeStudentToCourse', 'entity:Course');
+  check('a group\'s tag picker offers its tag type only, first match pre-picked', () => {
+    const values = readRow('SubscribeStudentToCourse', 'group:Course');
     eq(values.includes(JSON.stringify({ parameterName: 'courseId' })), true,
       'the course id the payload carries is offered');
     eq(values.includes(JSON.stringify({ parameterName: 'studentId' })), false,
       'the student id beside it is not – wrong type');
-    eq(sandbox.state.ruleDraft.newRead.source, JSON.stringify({ parameterName: 'courseId' }),
-      'and the matching source is already picked');
+    eq(sandbox.state.ruleDraft.newRead.tags.courseId, JSON.stringify({ parameterName: 'courseId' }),
+      'and the matching value is already picked');
     sandbox.closeForms();
   });
 
   check('a list of the right type stays offered – that is the fan-out', () => {
-    const values = readRow('SubscribeStudentToCourse', 'entity:Student');
-    eq(values.includes(JSON.stringify({ alias: 'course', property: 'subscribedStudentIds' })), true,
-      'a StudentId list identifies many students at once');
+    const values = readRow('SubscribeStudentToCourse', 'group:Student');
+    eq(values.includes(JSON.stringify({ each: { alias: 'course', property: 'subscribedStudentIds' } })), true,
+      'a StudentId list picks many students at once, each');
     eq(values.includes(JSON.stringify({ parameterName: 'courseId' })), false,
       'the course id is still the wrong type');
     sandbox.closeForms();
   });
 
   // What the first question offers is what this command could actually
-  // reach. An entity nothing in scope can identify is a dead end, and a
-  // projection an entity property binds is read through that entity –
-  // every projection in this model is one.
+  // reach. A grouped projection is read through its group – every
+  // projection in this model is one.
   // The target picker is the first question's own select.
   const targetOptions = (command) => {
     sandbox.state.slice = command;
@@ -1881,28 +2197,21 @@ function build(index) {
   check('the first question offers only what this command can reach', () => {
     const values = targetOptions('SubscribeStudentToCourse');
     eq(values.some((v) => v.startsWith('projection:')), false,
-      'no projection an entity binds – course.capacity is read through the course');
+      'no grouped projection – course.capacity is read through the course');
     eq(values.filter((v) => v.startsWith('alias:')), ['alias:course', 'alias:student'],
       'the reads it already makes come first, by their alias');
-    eq(values.includes('entity:Course'), true, 'another Course – the payload carries a course id');
-    eq(values.includes('entity:Student'), true, 'another Student – and a student id');
+    eq(values.includes('group:Course'), true, 'another Course');
+    eq(values.includes('group:Student'), true, 'another Student');
     sandbox.closeForms();
   });
 
-  check('an entity nothing in scope can identify is not offered', () => {
-    sandbox.addDefinition('entity-definition', id, 'Room', { properties: [] });
-    eq(targetOptions('SubscribeStudentToCourse').includes('entity:Room'), false,
-      'nothing here carries a RoomId, so a rule about a room could never be finished');
-    sandbox.removeDefinition('entity-definition', id, 'Room');
-    sandbox.closeForms();
-  });
-
-  check('with the flag off, entities are neither offered nor invented', () => {
+  check('with the flag off, groups are offered all the same', () => {
     store.set('dcb-playground:experimental', 'off');
     const values = targetOptions('SubscribeStudentToCourse');
     store.set('dcb-playground:experimental', 'on');
-    eq(values.some((v) => v.startsWith('entity:')), false, 'no entity read');
-    eq(values.includes(' new'), false, 'and no "+ New entity…"');
+    eq(values.includes('group:Course') && values.includes('group:Student'), true,
+      'a group is not experimental');
+    eq(values.includes(' new'), false, 'and a rule never invents one');
     sandbox.closeForms();
   });
 
@@ -1933,7 +2242,7 @@ function build(index) {
 // keeps it honest – and undo, not a Discard button, is the way back.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build('course-simple');
   sandbox.setActiveModelId(id);
 
   check('an edited definition is stored without a Save press, row still open', () => {
@@ -2004,10 +2313,9 @@ function build(index) {
   check('the foot offers no Save or Discard – saving is not a gesture any more', () => {
     sandbox.state.projDraft = null;
     sandbox.toggleProjectionRow(model(), 'CourseCapacity');
-    sandbox.state.view = 'entity';
-    sandbox.state.entity = 'Course';
+    sandbox.state.view = 'projections';
     const main = sandbox.document.createElement('div');
-    sandbox.renderEntity(model(), main);
+    sandbox.renderProjections(model(), main);
     eq(findAll(main, (n) => n.tag === 'button' && textOf(n) === 'Save').length, 0, 'no Save');
     eq(findAll(main, (n) => n.tag === 'button' && textOf(n) === 'Discard changes').length, 0,
       'no Discard');
@@ -2025,7 +2333,7 @@ function build(index) {
 // watched values in it – on a sandbox watch.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
   store.set('dcb-playground:experimental', 'on');
 
@@ -2080,7 +2388,7 @@ function build(index) {
   });
 
   check('a watched projection shows the query it actually runs', () => {
-    const watch = sandbox.projectionWatch('CourseCapacity', { courseId: { tagType: 'CourseId', tagValue: 'c1' } });
+    const watch = sandbox.projectionWatch('Course.capacity', { courseId: { tagType: 'CourseId', tagValue: 'c1' } });
     eq(textOf(sandbox.projectionWatchCard(model(), watch)).includes('tagged CourseId("c1")'), true,
       'said in the spelling the code uses');
     sandbox.state.queryPop = 'watch:' + sandbox.watchKey(watch);
@@ -2090,7 +2398,7 @@ function build(index) {
       eq(text.includes('CourseId:c1'), true, 'the concrete tag, not a placeholder');
       eq(text.includes('CourseDefined'), true, 'and the events the fold handles');
       const trace = [];
-      sandbox.projectFromStore(model(), sandbox.memoryStore([]), 'CourseCapacity', { courseId: 'c1' }, { trace });
+      sandbox.projectFromStore(model(), sandbox.memoryStore([]), 'Course.capacity', { courseId: 'c1' }, { trace });
       eq(findAll(card, (n) => /\bdq-box\b/.test(n.className || '')).length, trace.filter((t) => t.call === 'read').length,
         'a box for every read the fold makes of the store');
     } finally {
@@ -2109,26 +2417,26 @@ function build(index) {
 // page read its effect as "undefined".
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
 
   check('a half-picked handler is not stored, and the finished one is', () => {
-    // Created the way the user does: as a property of Course, so the
-    // command page has a reason to speak about it below.
-    sandbox.addEntityProperty(model(), 'Course',
-      { name: 'starting week', valueType: 'integer', isList: false });
-    sandbox.toggleProjectionRow(model(), 'CourseStartingWeek');
+    // Created the way the user does: in Course, so the command page
+    // has a reason to speak about it below.
+    sandbox.addGroupProjection(id, 'Course', 'startingWeek',
+      { valueType: 'integer', isList: false, initialValue: 0, handlers: [] });
+    sandbox.toggleProjectionRow(model(), 'Course.startingWeek');
     const draft = sandbox.state.projDraft.body;
     // The editor's order of events: the event is picked first, the
     // value after – and the autosave between the two picks.
     draft.handlers.push({ event: 'CourseDefined', operation: 'set', value: '', valueText: '' });
     sandbox.autoSaveProjectionDraft();
-    eq(model()['projection-definitions'].CourseStartingWeek.handlers, [],
-      'nothing stored while the row is half-way');
+    const stored = () => sandbox.projectionsOf(model())['Course.startingWeek'].handlers;
+    eq(stored(), [], 'nothing stored while the row is half-way');
     eq(draft.handlers.length, 1, 'but the row is still on screen being edited');
     draft.handlers[0].value = JSON.stringify({ eventProperty: 'capacity' });
     sandbox.autoSaveProjectionDraft();
-    eq(model()['projection-definitions'].CourseStartingWeek.handlers,
+    eq(stored(),
       [{ event: 'CourseDefined', operation: 'set', value: { eventProperty: 'capacity' } }],
       'and the whole handler lands the moment it is whole');
     sandbox.state.projDraft = null;
@@ -2144,12 +2452,12 @@ function build(index) {
   });
 
   check('a valueless handler stores, and the advisory says what is missing', () => {
-    updateDefinition('projection-definition', id, 'CourseStartingWeek', {
+    updateDefinition('projection-definition', id, 'Course.startingWeek', {
       valueType: 'integer', isList: false, initialValue: 0,
       handlers: [{ event: 'CourseDefined', operation: 'set' }],
     });
     eq(sandbox.modelAdvisories(model()).some(
-      (a) => a.name === 'CourseStartingWeek'
+      (a) => a.name === 'Course.startingWeek'
         && /says what it does but not what value it takes/.test(a.message)
     ), true, 'undefined is not a literal, whatever operandSource thinks');
   });
@@ -2161,7 +2469,7 @@ function build(index) {
 // answers from an earlier one – so the combined view is one query per
 // trip. Its own block, because `build` starts a fresh store.
 {
-  const { id, model } = build(3);
+  const { id, model } = build('course-schedules');
   sandbox.setActiveModelId(id);
   store.set('dcb-playground:experimental', 'on');
 
@@ -2189,19 +2497,19 @@ function build(index) {
 // interface honest about what the write path now lets in.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
 
   check('a model full of dangling references still renders every page', () => {
     // Every class of representable defect, injected through the same
     // command functions any editor or agent would use.
-    sandbox.removeDefinition('projection-definition', id, 'CourseCapacity');
+    sandbox.removeDefinition('projection-definition', id, 'Course.capacity');
     sandbox.removeDefinition('event-definition', id, 'CourseDefined');
-    sandbox.removeDefinition('entity-definition', id, 'Student');
+    sandbox.removeDefinition('group-definition', id, 'Student');
     addTaggedEvent(id, 'weird_thing', { properties: [] });
-    sandbox.updateDefinition('command-definition', id, 'DefineCourse', {
+    updateDefinition('command-definition', id, 'DefineCourse', {
       properties: [{ name: 'courseId', propertyType: 'NoSuchType', isOptional: false, isList: false }],
-      boundary: [{ alias: 'ghost', entity: 'NoSuchEntity', id: { parameterName: 'courseId' } }],
+      boundary: [{ alias: 'ghost', group: 'NoSuchGroup', tags: { courseId: { parameterName: 'courseId' } } }],
       conditions: [{ leftHandSide: { alias: 'ghost', property: 'gone' }, predicate: 'equals',
         rightHandSide: { enumMember: 'Never' } }],
       publishes: [{ name: 'NoSuchEvent', parameters: {} }],
@@ -2219,8 +2527,9 @@ function build(index) {
     paint(sandbox.renderEvents);
     paint(sandbox.renderProjections);
     paint(sandbox.renderCustomTypes);
-    sandbox.state.entity = 'Course';
-    paint(sandbox.renderEntity);
+    sandbox.state.groupOpen = { Course: true };
+    paint(sandbox.renderProjections);
+    sandbox.state.groupOpen = {};
 
     // The slice view of the broken command, step by step, with the
     // flag both ways.
@@ -2239,6 +2548,499 @@ function build(index) {
 
     // And the problems list still stands behind all of it.
     eq(sandbox.problems(current).length > 0, true, 'problems lists the fallout');
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// A command with branches (11.0): every page shows them, and an edit
+// on the page never flattens or drops one.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build('course-simple');
+  sandbox.setActiveModelId(id);
+  const course = { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } };
+  const branch = {
+    branches: [
+      { condition: { any: [
+        { leftHandSide: course, predicate: 'equals', rightHandSide: { enumMember: 'Archived' } },
+        { leftHandSide: course, predicate: 'equals', rightHandSide: { enumMember: 'NonExistent' } },
+      ] }, steps: [{ reject: 'Course is gone' }] },
+    ],
+    otherwise: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } }],
+  };
+  sandbox.updateDefinition('command-definition', id, 'ArchiveCourse', {
+    ...model()['command-definitions'].ArchiveCourse,
+    steps: [{ condition: { leftHandSide: { parameterName: 'courseId' }, predicate: 'isNotEmpty' }, rejection: 'No course' }, branch],
+  });
+
+  check('a branch shows on the command page, the rule map and the overview, editable in place', () => {
+    const current = model();
+    sandbox.state.slice = 'ArchiveCourse';
+    const slice = sandbox.sliceOf(current, 'ArchiveCourse');
+    eq([slice.rules.length, slice.branches.length, slice.emits.length, slice.allEmits.length], [1, 1, 0, 1],
+      'one rule and one branch on top, its emission inside');
+    const decision = textOf(sandbox.stepDecision(current, slice));
+    eq(decision.includes('Branch – the first arm that holds runs'), true, decision);
+    eq(decision.includes('Course is gone') && !decision.includes('Edit in code'), true, 'its reject, edited in place: ' + decision);
+    eq(/if .*Archived.*or .*Non existent|or /.test(decision), true, 'its condition joined with or');
+    eq(['+ or', '+ else if', '+ reject', '+ require', '+ if', '+ branch'].every((label) => decision.includes(label)), true,
+      'what may be added: ' + decision);
+    const append = textOf(sandbox.stepEmits(current, slice));
+    eq(append.includes('in branches') && append.includes('Course archived'), true,
+      'the append step names what the branches record, not "–": ' + append);
+    const paint = (fn) => { const main = sandbox.document.createElement('div'); fn(current, main); return textOf(main); };
+    const map = paint(sandbox.renderRuleMap);
+    eq(map.includes('else → emit'), true, 'the rule map says each arm');
+    paint(sandbox.renderCoupling);
+    eq(sandbox.problems(current).some((p) => p.what === 'Archive course' && /records nothing/.test(p.why)), false,
+      'an emission inside a branch is still recorded');
+  });
+
+  check('editing the rules on the page keeps the branch where it was', () => {
+    sandbox.state.slice = 'ArchiveCourse';
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => { b.conditions.push({ leftHandSide: { parameterName: 'courseId' }, predicate: 'startsWith', rightHandSide: 'c', rejection: 'Not a course id' }); });
+    const steps = model()['command-definitions'].ArchiveCourse.steps;
+    eq(steps.map((step) => sandbox.stepKind(step)), ['rule', 'rule', 'branch'], 'the new rule after the last, the branch kept');
+    eq(steps[2], branch, 'unchanged');
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => { b.conditions = []; });
+    eq(model()['command-definitions'].ArchiveCourse.steps, [branch], 'removing every rule leaves the branch');
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// A command with a for each (11.0): every page shows it and what it
+// emits, read-only, and an edit on the page never drops it.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build('course-simple');
+  sandbox.setActiveModelId(id);
+  const loop = {
+    forEach: ['courseId'], in: { parameterName: 'courseIds' },
+    steps: [{ branches: [{
+      condition: { leftHandSide: { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } }, predicate: 'equals', rightHandSide: { enumMember: 'Existent' } },
+      steps: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } }],
+    }] }],
+  };
+  sandbox.addDefinition('command-definition', id, 'ArchiveCourses', {
+    properties: [{ name: 'courseIds', propertyType: 'CourseId', isOptional: false, isList: true }],
+    boundary: [],
+    steps: [{ condition: { leftHandSide: { parameterName: 'courseIds' }, predicate: 'isNotEmpty' }, rejection: 'No course' }, loop],
+  });
+
+  check('a for each shows on the command page, the rule map and the overview, editable in place', () => {
+    const current = model();
+    eq(sandbox.modelAdvisories(current).filter((a) => a.name === 'ArchiveCourses'), [], 'advisory-clean');
+    sandbox.state.slice = 'ArchiveCourses';
+    const slice = sandbox.sliceOf(current, 'ArchiveCourses');
+    eq([slice.rules.length, slice.branches.length, slice.emits.length, slice.allEmits.length], [1, 1, 0, 1],
+      'one rule and the loop on top, its emission inside');
+    const decision = textOf(sandbox.stepDecision(current, slice));
+    eq(/For each/.test(decision), false, 'a loop is not a rule: ' + decision);
+    const append = textOf(sandbox.stepEmits(current, slice));
+    eq(/For each – once per element/.test(append) && append.includes('for each courseId in'), true, append);
+    eq(append.includes('emit') && append.includes('Course archived') && append.includes('+ for each'), true,
+      'the append step holds the loop and what it records: ' + append);
+    const paint = (fn) => { const main = sandbox.document.createElement('div'); fn(current, main); return textOf(main); };
+    const map = paint(sandbox.renderRuleMap);
+    eq(/for each courseId in .* → if .* → emit Course archived/.test(map), true, 'the rule map says the loop and its arm: ' + map);
+    paint(sandbox.renderCoupling);
+    for (const fn of ['renderOverview', 'renderEventModel', 'renderMetro', 'renderEvents', 'renderProjections']) paint(sandbox[fn]);
+    eq(paint(sandbox.renderEventModel).includes('Archive courses'), true, 'the event model shows the command recording its event');
+    eq(sandbox.problems(current).some((p) => p.what === 'Archive courses' && /records nothing/.test(p.why)), false,
+      'an emission inside a loop is still recorded');
+  });
+
+  check('editing the rules on the page keeps the loop where it was', () => {
+    sandbox.state.slice = 'ArchiveCourses';
+    sandbox.patch('command-definition', 'ArchiveCourses', (b) => { b.conditions = []; });
+    eq(model()['command-definitions'].ArchiveCourses.steps, [loop], 'removing every rule leaves the loop, unchanged');
+    sandbox.patch('command-definition', 'ArchiveCourses', (b) => { b.publishes.push({ name: 'CourseArchived', parameters: { courseId: { tagType: 'CourseId', tagValue: 'c9' } } }); });
+    const steps = model()['command-definitions'].ArchiveCourses.steps;
+    eq([steps[0], sandbox.stepKind(steps[1])], [loop, 'emit'], 'an emission added goes last, the loop kept');
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// Branches and loops authored on the page (11.0): every arm, its
+// condition and its steps through the editors, the code view printing
+// what was built, and nothing else in the command moved.
+// ---------------------------------------------------------------
+{
+  const { id, model } = build('course-simple');
+  sandbox.setActiveModelId(id);
+  const cmd = (name) => model()['command-definitions'][name];
+  const paintAll = (name) => {
+    const slice = sandbox.sliceOf(model(), name);
+    const root = sandbox.document.createElement('div');
+    root.appendChild(sandbox.stepDecision(model(), slice));
+    root.appendChild(sandbox.stepEmits(model(), slice));
+    return root;
+  };
+  const button = (name, label, nth = 0) => {
+    const found = findAll(paintAll(name), (n) => n.tag === 'button' && textOf(n) === label);
+    if (!found[nth]) throw new Error(`no button "${label}" (${found.length}) in ${textOf(paintAll(name))}`);
+    return found[nth];
+  };
+  const firstSelect = (name) => findAll(paintAll(name), (n) => n.tag === 'select')[0];
+  const course = { projection: 'CourseStatus', tags: { courseId: { parameterName: 'courseId' } } };
+  const status = (member) => ({ leftHandSide: course, predicate: 'equals', rightHandSide: { enumMember: member } });
+  const pickRight = (member) => Object.assign(sandbox.state.ruleDraft, { right: JSON.stringify({ enumMember: member }) });
+  const printed = (name) => {
+    const text = sandbox.modelToSource(model());
+    const start = text.indexOf('command ' + name);
+    return text.slice(start, text.indexOf('\n}\n', start) + 2);
+  };
+  const roundTrips = () => {
+    const parsed = sandbox.parseModelSource(sandbox.modelToSource(model()));
+    eq(parsed.diagnostics.filter((d) => d.severity === 'error'), [], 'the printed text parses');
+    eq(sandbox.modelToSource(model()).includes(' json {'), false, 'and no definition falls back to JSON');
+  };
+
+  check('a branch is started from Rules by its first condition, before what is recorded', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ branch').onclick();
+    eq(sandbox.state.adder, 'branch', 'the adder is open');
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('Archived');
+    button('ArchiveCourse', 'Add branch').onclick();
+    const steps = cmd('ArchiveCourse').steps;
+    eq(steps.map((s) => sandbox.stepKind(s)), ['rule', 'branch', 'emit'], 'after the rule, before the emission');
+    eq(steps[1], { branches: [{ condition: status('Archived'), steps: [] }] }, 'one arm, nothing in it yet, no message');
+  });
+
+  check('an arm takes a reject, a second comparison joined by or, and an else that emits', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ reject').onclick();
+    const form = paintAll('ArchiveCourse');
+    findAll(form, (n) => n.tag === 'input' && n.attributes.type === 'text')[0].oninput({ target: { value: 'Course is gone' } });
+    findAll(form, (n) => n.tag === 'button' && textOf(n) === 'Add reject')[0].onclick();
+    // The rule above offers + and / + or too; the arm's come second.
+    button('ArchiveCourse', '+ or', 1).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('NonExistent');
+    button('ArchiveCourse', 'Add or').onclick();
+    button('ArchiveCourse', '+ else').onclick();
+    // The else arm's adders are the second set.
+    button('ArchiveCourse', '+ emit', 1).onclick();
+    const eventPicker = findAll(paintAll('ArchiveCourse'), (n) => n.tag === 'select').find((n) =>
+      findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'CourseArchived'));
+    eventPicker.onchange({ target: { value: 'CourseArchived' } });
+    button('ArchiveCourse', 'Add emit').onclick();
+    const branch = cmd('ArchiveCourse').steps[1];
+    eq(branch, {
+      branches: [{ condition: { any: [status('Archived'), status('NonExistent')] }, steps: [{ reject: 'Course is gone' }] }],
+      otherwise: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } }],
+    }, 'the branch as built, the emission filled from the same-named input');
+    eq(printed('ArchiveCourse').includes(
+      'if CourseStatus(courseId) == Archived or CourseStatus(courseId) == NonExistent => reject "Course is gone"\n  else => emit CourseArchived { courseId }'),
+    true, printed('ArchiveCourse'));
+    roundTrips();
+  });
+
+  check('a comparison is edited, removed, and the arm reordered and removed in place', () => {
+    sandbox.state.slice = 'ArchiveCourse';
+    // Edit the second comparison: NonExistent → Existent.
+    button('ArchiveCourse', 'Edit', 2).onclick();
+    eq(sandbox.state.editStep, 'br:1:0:m1', 'the second comparison is open');
+    pickRight('Existent');
+    button('ArchiveCourse', 'Save').onclick();
+    eq(cmd('ArchiveCourse').steps[1].branches[0].condition, { any: [status('Archived'), status('Existent')] }, 'edited in place');
+    // Add an else if, then move it up.
+    button('ArchiveCourse', '+ else if').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('NonExistent');
+    button('ArchiveCourse', 'Add else if').onclick();
+    eq(cmd('ArchiveCourse').steps[1].branches.map((arm) => arm.condition), [{ any: [status('Archived'), status('Existent')] }, status('NonExistent')], 'a second arm, before else');
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => sandbox.moveBranchArm(b, [1], 1, -1));
+    eq(cmd('ArchiveCourse').steps[1].branches[0].condition, status('NonExistent'), 'moved up');
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => sandbox.removeBranchArm(b, [1], 0));
+    // Removing one of two comparisons leaves the other alone.
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => sandbox.setArmCondition(b, [1], 0,
+      sandbox.withoutConditionMember(b.steps[1].branches[0].condition, 1)));
+    eq(cmd('ArchiveCourse').steps[1].branches, [{ condition: status('Archived'), steps: [{ reject: 'Course is gone' }] }], 'one arm, one comparison');
+    eq(cmd('ArchiveCourse').steps[0].rejection, 'Course is not active', 'the top-level rule untouched');
+    roundTrips();
+  });
+
+  check('a block arm takes a require and a nested if; removing the last arm removes the branch', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ require').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseSubscriptionCount' } });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'equals', right: ' literal', rightText: '0', rejection: 'Course has subscribers' });
+    button('ArchiveCourse', 'Add rule').onclick();
+    const arm = cmd('ArchiveCourse').steps[1].branches[0];
+    eq(arm.steps.map((s) => sandbox.stepKind(s)), ['reject', 'rule'], 'the rule after the reject');
+    eq(arm.steps[1].rejection, 'Course has subscribers', 'with its message');
+    eq(printed('ArchiveCourse').includes('require CourseSubscriptionCount(courseId) == 0\n      else reject "Course has subscribers"'), true, printed('ArchiveCourse'));
+    roundTrips();
+    sandbox.patch('command-definition', 'ArchiveCourse', (b) => sandbox.removeBranchArm(b, [1], 0));
+    eq(cmd('ArchiveCourse').steps.map((s) => sandbox.stepKind(s)), ['rule', 'emit'], 'the branch went with its last arm');
+  });
+
+  check('a for each over a list parameter is added from Append, and its body emits per element', () => {
+    sandbox.addDefinition('command-definition', id, 'ArchiveCourses', {
+      properties: [{ name: 'courseIds', propertyType: 'CourseId', isOptional: false, isList: true }], boundary: [], steps: [],
+    });
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourses';
+    button('ArchiveCourses', '+ for each').onclick();
+    const sourcePicker = firstSelect('ArchiveCourses');
+    const values = findAll(sourcePicker, (n) => n.tag === 'option').map((n) => n.value);
+    eq(values.includes('list:' + JSON.stringify({ parameterName: 'courseIds' })), true, 'the list parameter is offered: ' + values);
+    sourcePicker.onchange({ target: { value: 'list:' + JSON.stringify({ parameterName: 'courseIds' }) } });
+    const name = findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'input' && /loop-name/.test(n.className || ''))[0];
+    eq(name.attributes.placeholder, 'courseId', 'the element named after the list');
+    button('ArchiveCourses', 'Add for each').onclick();
+    eq(cmd('ArchiveCourses').steps, [{ forEach: ['courseId'], in: { parameterName: 'courseIds' }, steps: [] }], 'the loop, empty');
+    // Its body: an if whose arm emits.
+    button('ArchiveCourses', '+ if').onclick();
+    firstSelect('ArchiveCourses').onchange({ target: { value: 'projection:CourseStatus' } });
+    const target = findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'select')[1];
+    eq(findAll(target, (n) => n.tag === 'option').some((n) => n.value === JSON.stringify({ parameterName: 'courseId' })), true,
+      'the loop’s name tags the read');
+    pickRight('Existent');
+    button('ArchiveCourses', 'Add if').onclick();
+    eq(textOf(paintAll('ArchiveCourses')).includes('+ require'), false, 'a loop arm takes no rule');
+    button('ArchiveCourses', '+ emit').onclick();
+    findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'select').find((n) =>
+      findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'CourseArchived')).onchange({ target: { value: 'CourseArchived' } });
+    button('ArchiveCourses', 'Add emit').onclick();
+    eq(textOf(paintAll('ArchiveCourses')).includes('+ reject'), false, 'one emit fills a loop arm');
+    eq(printed('ArchiveCourses').includes('for each courseId in courseIds {\n    if CourseStatus(courseId) == Existent => emit CourseArchived { courseId }\n  }'),
+      true, printed('ArchiveCourses'));
+    eq(advisedOtherwise(model()).filter((a) => a.name === 'ArchiveCourses'), [], 'advisory-clean');
+    roundTrips();
+  });
+
+  check('a for each is renamed on the page, every use inside following, and its source changed', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourses';
+    sandbox.patch('command-definition', 'ArchiveCourses', (b) => {
+      b.properties.push({ name: 'otherIds', propertyType: 'CourseId', isOptional: false, isList: true });
+    });
+    const at = cmd('ArchiveCourses').steps.findIndex((s) => sandbox.stepKind(s) === 'loop');
+    button('ArchiveCourses', 'Edit', 0).onclick();
+    eq(sandbox.state.editStep, 'loop:' + at, 'the loop\'s head is open');
+    eq(sandbox.state.loopDraft, { source: 'list:' + JSON.stringify({ parameterName: 'courseIds' }), tags: {}, names: { _: 'courseId' } }, 'opened answered');
+    const name = () => findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'input' && /loop-name/.test(n.className || ''))[0];
+    // Typed and saved in one painted page – typing repaints nothing.
+    const once = paintAll('ArchiveCourses');
+    findAll(once, (n) => n.tag === 'input' && /loop-name/.test(n.className || ''))[0].oninput({ target: { value: 'archived' } });
+    findAll(once, (n) => n.tag === 'button' && textOf(n) === 'Save')[0].onclick();
+    const loop = () => cmd('ArchiveCourses').steps[at];
+    eq(loop().forEach, ['archived'], 'renamed');
+    eq(printed('ArchiveCourses').includes('for each archived in courseIds {\n    if CourseStatus(archived) == Existent => emit CourseArchived { courseId: archived }\n  }'),
+      true, 'every use inside follows: ' + printed('ArchiveCourses'));
+    // A new source: the element proposed from it, the uses following.
+    button('ArchiveCourses', 'Edit', 0).onclick();
+    const source = findAll(paintAll('ArchiveCourses'), (n) => n.tag === 'select')[0];
+    source.onchange({ target: { value: 'list:' + JSON.stringify({ parameterName: 'otherIds' }) } });
+    eq(name().attributes.placeholder, 'otherId', 'named after the list');
+    button('ArchiveCourses', 'Save').onclick();
+    eq([loop().forEach, loop().in], [['otherId'], { parameterName: 'otherIds' }], 'its source and name');
+    eq(printed('ArchiveCourses').includes('if CourseStatus(otherId) == Existent => emit CourseArchived { courseId: otherId }'), true, printed('ArchiveCourses'));
+    eq(advisedOtherwise(model()).filter((a) => a.name === 'ArchiveCourses'), [], 'advisory-clean');
+    eq(textOf(paintAll('ArchiveCourses')).includes('Edit in code'), false, 'nothing left to the code view');
+    roundTrips();
+  });
+
+  check('a name of a loop outside it is no use of it: a rename leaves a payload name alone', () => {
+    const body = sandbox.deepClone(cmd('ArchiveCourses'));
+    body.steps.unshift({ condition: { leftHandSide: { parameterName: 'otherIds' }, predicate: 'isNotEmpty' }, rejection: 'None' });
+    body.steps.push({ forEach: ['otherIds'], in: { parameterName: 'courseIds' }, steps: [{ name: 'CourseArchived', parameters: { courseId: { parameterName: 'otherIds' } } }] });
+    sandbox.setLoopHead(body, [body.steps.length - 1], { names: ['c'] });
+    eq(body.steps[0].condition.leftHandSide, { parameterName: 'otherIds' }, 'the rule outside keeps its name');
+    eq(body.steps[body.steps.length - 1].steps[0].parameters.courseId, { parameterName: 'c' }, 'the use inside follows');
+  });
+
+  check('a for each over an open read names each open tag', () => {
+    sandbox.applyModelSource(id, swap(sandbox.modelToSource(model()), '// Commands', [
+      'projection Seat (tag courseId: CourseId, tag studentId: StudentId): boolean = false {',
+      '  on StudentSubscribedToCourse => set true',
+      '  on StudentUnsubscribedFromCourse => set false',
+      '}',
+      '',
+      '// Commands',
+    ].join('\n')));
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ for each').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'open:Seat' } });
+    const pickers = findAll(paintAll('ArchiveCourse'), (n) => n.tag === 'select');
+    eq(sandbox.state.loopDraft.tags, { courseId: JSON.stringify({ parameterName: 'courseId' }), studentId: '*' }, 'the course bound, the student open');
+    eq(pickers.length >= 3, true, 'a picker per tag');
+    button('ArchiveCourse', 'Add for each').onclick();
+    const loop = cmd('ArchiveCourse').steps[cmd('ArchiveCourse').steps.length - 1];
+    eq(loop, { forEach: ['studentId'], in: { projection: 'Seat', tags: { courseId: { parameterName: 'courseId' }, studentId: { open: true } } }, steps: [] }, 'one name, the open tag’s');
+    eq(printed('ArchiveCourse').includes('for each studentId in Seat(courseId, *) {}'), true, printed('ArchiveCourse'));
+    roundTrips();
+  });
+
+  check('a top-level rule and emission move into an arm and back out, in order, nothing lost', () => {
+    sandbox.closeForms();
+    sandbox.addDefinition('command-definition', id, 'CloseCourse', {
+      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }], boundary: [],
+      steps: [
+        { condition: status('Existent'), rejection: 'Course is not active' },
+        { branches: [{ condition: status('Archived'), steps: [{ reject: 'Gone' }] }], otherwise: [] },
+        { name: 'CourseArchived', parameters: { courseId: { parameterName: 'courseId' } } },
+      ],
+    });
+    sandbox.state.slice = 'CloseCourse';
+    const original = sandbox.deepClone(cmd('CloseCourse').steps);
+    const offers = () => findAll(paintAll('CloseCourse'), (n) => n.tag === 'button' && textOf(n) === 'Move into…');
+    const picker = () => findAll(paintAll('CloseCourse'), (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option').some((o) => textOf(o) === 'into which arm?'))[0];
+    eq(offers().length, 2, 'the rule and the emission each offer it');
+    offers()[0].onclick();
+    const arms = findAll(picker(), (o) => o.tag === 'option').map((o) => [o.value, textOf(o)]).filter(([v]) => v);
+    eq(arms.map(([, text]) => text.trim()), ['if CourseStatus(courseId) == Archived', 'else'], 'the arms, by their conditions');
+    // The rule into the if arm: before the branch, so first in the arm.
+    picker().onchange({ target: { value: JSON.stringify([1, 0]) } });
+    eq(cmd('CloseCourse').steps.map((s) => sandbox.stepKind(s)), ['branch', 'emit'], 'out of the top');
+    eq(cmd('CloseCourse').steps[0].branches[0].steps, [original[0], { reject: 'Gone' }], 'first in the arm');
+    // The emission into else: after the branch, so last there.
+    offers()[0].onclick();
+    picker().onchange({ target: { value: JSON.stringify([0, 'otherwise']) } });
+    eq(cmd('CloseCourse').steps, [{ branches: [{ condition: status('Archived'), steps: [original[0], { reject: 'Gone' }] }], otherwise: [original[2]] }],
+      'the emission in else');
+    eq(printed('CloseCourse').includes('else => emit CourseArchived { courseId }'), true, printed('CloseCourse'));
+    roundTrips();
+    // And back out: the rule before the branch, the emission after it.
+    const outs = () => findAll(paintAll('CloseCourse'), (n) => n.tag === 'button' && textOf(n) === 'Move out');
+    eq(outs().length, 2, 'the rule and the emission move out; a reject has nowhere to go at the top');
+    outs()[0].onclick();
+    outs()[0].onclick();
+    eq(cmd('CloseCourse').steps, original, 'as it was');
+    roundTrips();
+  });
+
+  check('moving out of a nested arm lands in the outer arm, and a step never moves into itself', () => {
+    const body = {
+      steps: [{ branches: [{ condition: status('Archived'), steps: [
+        { reject: 'A' },
+        { branches: [{ condition: status('Existent'), steps: [{ reject: 'B' }] }] },
+      ] }] }],
+    };
+    sandbox.moveStepOutOfArm(body, [0, 0, 1, 0, 0]);
+    eq(body.steps[0].branches[0].steps.map((s) => s.reject || sandbox.stepKind(s)), ['A', 'branch', 'B'], 'beside the inner branch, in the outer arm');
+    const before = JSON.stringify(body);
+    sandbox.moveStepIntoArm(body, [0], [0, 0]);
+    eq(JSON.stringify(body), before, 'a branch is not moved into its own arm');
+    eq(sandbox.armTargets(body).map((t) => t.listPath), [[0, 0], [0, 0, 1, 0]], 'nested arms are targets too');
+  });
+
+  check('a top-level rule joined with and is edited a comparison at a time', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ and', 0).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseSubscriptionCount' } });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'equals', right: ' literal', rightText: '0' });
+    button('ArchiveCourse', 'Add and').onclick();
+    const rule = cmd('ArchiveCourse').steps[0];
+    eq(rule.rejection, 'Course is not active', 'the message kept');
+    eq(rule.condition.all.length, 2, 'two comparisons, joined by and');
+    roundTrips();
+  });
+
+  check('a condition as a tree: a comparison joins the whole, is bracketed with one, or joins its group', () => {
+    const [a, b, c] = [status('Existent'), status('Archived'), status('NonExistent')];
+    eq(sandbox.withConditionJoined(a, [], 'all', b), { all: [a, b] }, 'one comparison joined');
+    eq(sandbox.withConditionJoined({ all: [a, b] }, [1], 'any', c), { all: [a, { any: [b, c] }] }, 'bracketed with the comparison');
+    eq(sandbox.withConditionJoined({ all: [a, { any: [b, c] }] }, [1], 'any', a), { all: [a, { any: [b, c, a] }] }, 'added to its group');
+    eq(sandbox.withConditionJoined({ any: [a, b] }, [], 'all', c), { all: [{ any: [a, b] }, c] }, 'the whole bracketed');
+    eq(sandbox.withConditionNode({ all: [a, { any: [b, c] }] }, [1, 0], null), { all: [a, c] }, 'a group of one is its member');
+    eq(sandbox.withConditionNode({ all: [a, b] }, [0], null), b, 'one left stands alone');
+    eq(sandbox.conditionNodeAt({ all: [a, { any: [b, c] }] }, [1, 1]), c, 'found by its path');
+    eq(sandbox.conditionLines({ all: [a, { any: [b, { all: [c, a] }] }] }).map((l) => [l.path.join('.'), l.joiner, l.opens, l.closing.length, l.indent]),
+      [['0', null, 0, 0, 0], ['1.0', 'all', 1, 0, 0], ['1.1.0', 'any', 1, 0, 1], ['1.1.1', 'all', 0, 2, 2]], 'laid out as lines');
+  });
+
+  check('a rule brackets a comparison with one joined the other way, at any depth, and loses nothing', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    const course = (projection) => ({ projection, tags: { courseId: { parameterName: 'courseId' } } });
+    const none = { leftHandSide: course('CourseSubscriptionCount'), predicate: 'equals', rightHandSide: 0 };
+    const capacity = { leftHandSide: course('CourseCapacity'), predicate: 'greaterThan', rightHandSide: 0 };
+    // `Existent and none`: bracket the second with an or.
+    button('ArchiveCourse', '+ (… or …)', 1).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('Archived');
+    button('ArchiveCourse', 'Add or').onclick();
+    eq(cmd('ArchiveCourse').steps[0].condition, { all: [status('Existent'), { any: [none, status('Archived')] }] }, 'a group in the and');
+    eq(cmd('ArchiveCourse').steps[0].rejection, 'Course is not active', 'the message kept');
+    eq(printed('ArchiveCourse').includes('require CourseStatus(courseId) == Existent and (CourseSubscriptionCount(courseId) == 0 or CourseStatus(courseId) == Archived)'),
+      true, printed('ArchiveCourse'));
+    const page = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ArchiveCourse')));
+    eq(page.includes('Edit in code'), false, 'edited on the page: ' + page);
+    eq(/and \(.*or .*\)/.test(page), true, 'the group bracketed on the page: ' + page);
+    // One deeper: bracket the group's second comparison with an and.
+    button('ArchiveCourse', '+ (… and …)', 1).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseCapacity' } });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'greaterThan', right: ' literal', rightText: '0' });
+    button('ArchiveCourse', 'Add and').onclick();
+    eq(cmd('ArchiveCourse').steps[0].condition, { all: [status('Existent'), { any: [none, { all: [status('Archived'), capacity] }] }] }, 'a group in the group');
+    roundTrips();
+    // Add to the outer group from its last line.
+    button('ArchiveCourse', '+ or in (…)').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('NonExistent');
+    button('ArchiveCourse', 'Add or').onclick();
+    eq(cmd('ArchiveCourse').steps[0].condition.all[1].any.length, 3, 'three in the or');
+    // Edit the innermost comparison: its path names it.
+    sandbox.state.editStep = null;
+    const editKey = 'rule:0:m1.1.1';
+    const edits = findAll(paintAll('ArchiveCourse'), (n) => n.tag === 'button' && textOf(n) === 'Edit');
+    edits[3].onclick();
+    eq(sandbox.state.editStep, editKey, 'the innermost comparison is open');
+    Object.assign(sandbox.state.ruleDraft, { rightText: '5' });
+    button('ArchiveCourse', 'Save').onclick();
+    eq(cmd('ArchiveCourse').steps[0].condition.all[1].any[1].all[1].rightHandSide, 5, 'edited in place');
+    // Removing a comparison of the inner group leaves its other one.
+    sandbox.patch('command-definition', 'ArchiveCourse', (body) => {
+      body.steps[0].condition = sandbox.withConditionNode(body.steps[0].condition, [1, 1, 1], null);
+    });
+    eq(cmd('ArchiveCourse').steps[0].condition, { all: [status('Existent'), { any: [none, status('Archived'), status('NonExistent')] }] },
+      'the inner group of one is its comparison');
+    // The whole bracketed: (… ) or …
+    button('ArchiveCourse', '+ or', 0).onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseCapacity' } });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'greaterThan', right: ' literal', rightText: '0' });
+    button('ArchiveCourse', 'Add or').onclick();
+    eq(Object.keys(cmd('ArchiveCourse').steps[0].condition), ['any'], 'the whole or-ed');
+    roundTrips();
+  });
+
+  check('an arm\'s condition takes a bracketed group the same way', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ArchiveCourse';
+    button('ArchiveCourse', '+ branch').onclick();
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('Archived');
+    button('ArchiveCourse', 'Add branch').onclick();
+    const at = cmd('ArchiveCourse').steps.findIndex((s) => sandbox.stepKind(s) === 'branch');
+    sandbox.patch('command-definition', 'ArchiveCourse', (body) => {
+      body.steps[at].branches[0].condition = { all: [status('Archived'), status('Existent')] };
+    });
+    sandbox.state.adder = 'br:' + at + ':0:g1:any';
+    firstSelect('ArchiveCourse').onchange({ target: { value: 'projection:CourseStatus' } });
+    pickRight('NonExistent');
+    button('ArchiveCourse', 'Add or').onclick();
+    eq(cmd('ArchiveCourse').steps[at].branches[0].condition,
+      { all: [status('Archived'), { any: [status('Existent'), status('NonExistent')] }] }, 'bracketed in the arm');
+    eq(printed('ArchiveCourse').includes('if CourseStatus(courseId) == Archived and (CourseStatus(courseId) == Existent or CourseStatus(courseId) == NonExistent) =>'),
+      true, printed('ArchiveCourse'));
+    roundTrips();
+    sandbox.patch('command-definition', 'ArchiveCourse', (body) => sandbox.removeStepAt(body, [at]));
   });
 
   sandbox.clearActiveModelId();
@@ -2651,7 +3453,10 @@ function build(index) {
     sandbox.deleteDcbModel(shipped.id);
   });
 
-  check('saved from the page or applied as code, a scenario is stored the same', () => {
+  // 11.0: the page's save spells the null into what a draft left
+  // unset, an optional list too; code is stored as written, a property
+  // left out unspecified (a partial scenario).
+  check('saved from the page, a draft spells out its nulls; applied as code, a scenario is stored as written', () => {
     addTaggedEvent(id, 'NotizenErfasst', {
       properties: [
         { name: 'anordnungId', propertyType: 'string', isOptional: false, isList: false },
@@ -2662,8 +3467,8 @@ function build(index) {
     const body = () => ({ projection: 'X', given: [{ event: 'NotizenErfasst', data: { anordnungId: 'a1' } }] });
     const saved = sandbox.canonicalScenario(model(), 'projection-scenario-definition', body());
     const applied = sandbox.completeScenario(model(), { kind: 'projection-scenario-definition', body: body() }).body;
-    eq(applied.given, saved.given, 'one spelling');
-    eq(saved.given[0].data, { anordnungId: 'a1', notiz: null }, 'an optional list left unset, as evaluation leaves it');
+    eq(applied.given[0].data, { anordnungId: 'a1' }, 'as written');
+    eq(saved.given[0].data, { anordnungId: 'a1', notiz: null, anhaenge: null }, 'an optional list left unset is null too');
   });
 }
 
@@ -2732,7 +3537,7 @@ function build(index) {
   });
 
   check('custom types section the type list; built-ins alone do not', () => {
-    const { model } = build(0);
+    const { model } = build('course-simple');
     const sel = sandbox.pick(sandbox.typeOptions(model()), 'integer', () => {});
     const groups = findAll(sel, (n) => n.tag === 'optgroup');
     eq(groups.map((g) => g.label), ['Built-in', 'Custom'], 'two sections');
@@ -2750,7 +3555,7 @@ function build(index) {
 // mean "into this group", never "at this position".
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
 
   check('commands within a feature sit alphabetically, wherever they were added', () => {
     const feature = sandbox.featureOf(Object.values(model()['command-definitions'])[0]);
@@ -2789,534 +3594,14 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// What a scripted handler can see comes from the definitions alone –
-// the handled event's properties, the shape of the initial state, the
-// script's arguments – and is synthesized into the TypeScript preamble
-// the editor prefixes to the code. Pure model → text; the Monaco
-// widget around it is DOM and deliberately not reached here.
-// ---------------------------------------------------------------
-{
-  const { scriptHandlerPreamble } = sandbox;
-  const has = (text, part, why) =>
-    eq(text.includes(part), true, why + ' – expected the preamble to contain: ' + part);
-  const model = {
-    'custom-type-definitions': {
-      CourseId: { schema: { type: 'string' }, isTag: true },
-      StudentStatus: { schema: { type: 'string', enum: ['NonExistent', 'Existent'] } },
-      Money: { properties: [
-        { name: 'amount', propertyType: 'integer' },
-        { name: 'currency', propertyType: 'string' }] },
-    },
-    'event-definitions': {
-      CoursePriced: { properties: [
-        { name: 'courseId', propertyType: 'CourseId' },
-        { name: 'price', propertyType: 'Money' },
-        { name: 'seats', propertyType: 'integer', isList: true },
-        { name: 'note', propertyType: 'string', isOptional: true },
-        { name: 'status', propertyType: 'StudentStatus' },
-        { name: 'ghost', propertyType: 'NoSuchType' }] },
-    },
-  };
-  const body = {
-    valueType: 'integer',
-    arguments: [{ name: 'courseId', propertyType: 'CourseId' }, { name: '', propertyType: 'CourseId' }],
-    script: { initialState: { count: 0, open: true, ids: [], seats: { taken: 0 } } },
-  };
-
-  check('the preamble types exactly what the handler can see', () => {
-    const text = scriptHandlerPreamble(model, body, { event: 'CoursePriced' });
-    eq(text.split('\n')[0], 'export {};', 'each handler is its own file scope');
-    eq(text.split('\n').pop(), '__check(', 'and ends opening the checked expression the code is');
-    has(text, 'type CourseId = string & { readonly __type: "CourseId" };',
-      'identifier types are branded, so mixing two of them squiggles');
-    has(text, 'type StudentStatus = "NonExistent" | "Existent";',
-      'enums are literal unions');
-    has(text, 'type Money = { amount: number; currency: string };',
-      'a composite type carries its fields');
-    has(text, 'readonly type: "CoursePriced";', 'event.type is the name itself, and read-only');
-    has(text, 'readonly courseId: CourseId;', 'as is every field – the event is frozen at run time');
-    has(text, 'courseId: CourseId;', 'event data is typed from the definition');
-    has(text, 'seats: number[];', 'a list property is a list');
-    has(text, 'note: string | null;', 'an optional property may be the null it publishes');
-    has(text, 'ghost: any;', 'a dangling type reference stays permissive, never fatal');
-    has(text, 'count: number', 'state keys are typed from the initial state');
-    has(text, '/** starts at 0 */', 'and hint where they start');
-    has(text, 'ids: any[]', 'an empty initial list promises nothing about elements');
-    has(text, '[key: string]: any', 'state stays loose – scripts may grow keys');
-    has(text, 'declare const args: { courseId: CourseId };',
-      'arguments are typed, unnamed rows are not offered');
-  });
-
-  check('what a handler returns is held to what the projection holds', () => {
-    const returned = (over) => {
-      const text = scriptHandlerPreamble(model, over, { event: 'CoursePriced' });
-      return text.match(/__check\(nextState: ([\s\S]*?)\): void;/)[1];
-    };
-    eq(returned({ valueType: 'boolean', script: { initialState: false } }), 'boolean',
-      'a boolean projection wants a boolean back');
-    eq(returned({ valueType: 'boolean', script: { initialState: null } }), 'boolean | null',
-      'a null start is how nullable is spelled, so null stays returnable');
-    eq(returned({ valueType: 'CourseId', script: { initialState: null } }), 'string | null',
-      'brands widen in return position – code can compare ids, never mint one');
-    eq(returned({ valueType: 'StudentStatus', script: { initialState: null } }),
-      '"NonExistent" | "Existent" | null', 'an enum wants one of its members back');
-    eq(returned({ valueType: 'StudentStatus', isList: true, script: { initialState: [] } }),
-      '("NonExistent" | "Existent")[] | any[]', 'a list projection wants the list');
-    eq(returned({ valueType: 'NoSuchType', script: { initialState: null } }), 'any',
-      'an unresolved held type checks nothing rather than everything wrongly');
-    eq(returned({ valueType: 'integer', script: { initialState: 7, exposes: 'total' } }),
-      '{ total: number } & { [key: string]: any } | number',
-      'with exposes the value type constrains the exposed field of the record');
-  });
-
-  check('no event chosen (or a renamed-away one) leaves the data open', () => {
-    const text = scriptHandlerPreamble(model, body, { event: '' });
-    has(text, 'declare const event: { readonly type: string; readonly data: { readonly [key: string]: any } };',
-      'unknown event, unknowable data');
-  });
-
-  check('the predefined models synthesize cleanly', () => {
-    const { model: projected } = build(ENTITIES);
-    const [eventName] = Object.keys(projected()['event-definitions']);
-    const text = scriptHandlerPreamble(projected(),
-      { valueType: 'integer', script: { initialState: null, arguments: [] } },
-      { event: eventName });
-    has(text, 'type: ' + JSON.stringify(eventName) + ';', 'a real event types by name');
-    has(text, 'declare const state: any;', 'a null initial state promises nothing');
-    has(text, '__check(nextState: number | null): void;', 'and stays returnable');
-  });
-}
-
-// ---------------------------------------------------------------
-// Lifecycles – each entity's status derived as a state machine.
-// ---------------------------------------------------------------
-{
-  const { lifecycleMachines } = sandbox;
-  const machineOf = (model, entity) =>
-    lifecycleMachines(model).machines.find((m) => m.entity === entity);
-
-  check('the base course model derives both machines', () => {
-    const { model } = build(ENTITIES);
-    const course = machineOf(model(), 'Course');
-    eq(course.states, ['NonExistent', 'Existent', 'Archived'], 'the enum is the states');
-    eq(course.initial, 'NonExistent', 'the projection initial value is the entry state');
-    eq(course.terminal, ['Archived'], 'nothing guarded leaves Archived');
-    const defined = course.transitions.find((t) => t.event === 'CourseDefined');
-    eq(defined.target, 'Existent', 'the handler value is the arrow head');
-    eq(defined.sources, ['NonExistent'], 'DefineCourse is guarded, so the arrow starts there');
-    eq(defined.unguarded, false, 'and the base model guards it');
-    const archived = course.transitions.find((t) => t.event === 'CourseArchived');
-    eq(archived.sources, ['Existent'], 'ArchiveCourse requires Existent');
-    eq(course.perState.Existent.map((e) => e.command).sort(), [
-      'ArchiveCourse', 'ChangeCourseCapacity', 'SubscribeStudentToCourse',
-      'UnsubscribeStudentFromCourse',
-    ], 'every command guarded to Existent lands there');
-    eq(course.perState.Existent.find((e) => e.command === 'ArchiveCourse').movesTo,
-      'Archived', 'a command publishing a transitioning event knows where it moves');
-    eq(course.perState.Archived, [], 'nothing is guarded to run at Archived');
-  });
-
-  check('a command with no rule over a lifecycle it binds is unguarded', () => {
-    const { id, model } = build(ENTITIES);
-    // Built for the purpose rather than borrowed from a shipped model:
-    // a command that *binds* a student and never tests whether it
-    // exists. The shipped Unsubscribe used to be that example, until it
-    // stopped reading the student it never tested.
-    sandbox.addDefinition('command-definition', id, 'NudgeStudent', {
-      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
-      boundary: [{ alias: 'student', entity: 'Student', id: { parameterName: 'studentId' } }],
-      conditions: [{
-        leftHandSide: { alias: 'student', property: 'subscriptionCount' },
-        predicate: 'greaterThan', rightHandSide: 0,
-      }],
-      publishes: [{ name: 'StudentRegistered', parameters: { studentId: { parameterName: 'studentId' } } }],
-    });
-    const student = machineOf(model(), 'Student');
-    for (const state of student.states) {
-      const entry = student.perState[state].find((e) => e.command === 'NudgeStudent');
-      eq(entry.unguarded, true, 'flagged unguarded at ' + state);
-    }
-    eq(student.perState.true.find((e) => e.command === 'SubscribeStudentToCourse').unguarded,
-      false, 'Subscribe carries a student · exists rule and is pinned');
-    eq(student.perState.true.some((e) => e.command === 'UnsubscribeStudentFromCourse'), false,
-      'and Unsubscribe is absent – it no longer reads a student, so it is not in this machine');
-    sandbox.removeDefinition('command-definition', id, 'NudgeStudent');
-    eq(student.terminal, ['true'], 'nothing leaves existing – a derived dead end');
-  });
-
-  check('an unguarded transition is drawn from the initial state, by convention', () => {
-    // The sequence layer drops DefineCourse's status rule.
-    const { model } = seeded('Sequence with entities', 'seedBase', 'seedAddSequence');
-    const course = machineOf(model(), 'Course');
-    const defined = course.transitions.find((t) => t.event === 'CourseDefined');
-    eq(defined.unguarded, true, 'the numbering guards it, the status does not');
-    eq(defined.conventional, true, 'so its source is convention, not derivation');
-    eq(defined.sources, ['NonExistent'], 'and the convention is the initial state');
-    eq(course.terminal, ['Archived'], 'the conventional arrow still counts as a way out');
-  });
-
-  check('the pricing model derives across both entities', () => {
-    const { model } = seeded('Pricing with entities', 'seedProductPricing');
-    const order = machineOf(model(), 'Order');
-    eq(order.states, ['false', 'true'], 'a boolean lifecycle is a two-state machine');
-    eq(order.compact, true, 'and the page draws it as a row, not a diagram');
-    eq(order.transitions.find((t) => t.event === 'ProductsOrdered').sources, ['false'],
-      'OrderProducts requires the order not to exist yet – read off isFalse');
-    const product = machineOf(model(), 'Product');
-    eq(product.perState.true.map((e) => e.command).sort(),
-      ['ChangeProductPrice', 'OrderProducts'],
-      'a fanned-out binding still pins the command by its isTrue rule');
-  });
-
-  check('an entity designating no lifecycle is excluded with its reason', () => {
-    const { id, model } = build(ENTITIES);
-    addDefinition('entity-definition', id, 'Room', { properties: [] });
-    const { machines, excluded } = lifecycleMachines(model());
-    eq(machines.some((m) => m.entity === 'Room'), false, 'no machine without a designation');
-    eq(excluded.find((e) => e.entity === 'Room').reason, 'none', 'and the page can say why');
-  });
-
-  check('a scripted lifecycle is excluded, not advised against', () => {
-    const { model } = seeded('Scripted with entities', 'seedContentDecisionsScripted');
-    const { machines, excluded } = lifecycleMachines(model());
-    eq(machines.some((m) => m.entity === 'Document'), false, 'no machine can be read from a script');
-    eq(excluded.find((e) => e.entity === 'Document').reason, 'scripted', 'the page says why');
-    // The designation is right even though the diagram is impossible, so
-    // nothing complains about it.
-    eq(sandbox.modelAdvisories(model())
-      .filter((a) => a.kind === 'entity-definition' && a.name === 'Document').length, 0,
-      'and it is not an advisory');
-  });
-
-  check('a negated status rule allows the complement', () => {
-    const { id, model } = build(ENTITIES);
-    const body = sandbox.deepClone(model()['command-definitions'].ArchiveCourse);
-    body.conditions[0].negate = true;
-    updateDefinition('command-definition', id, 'ArchiveCourse', body);
-    const course = machineOf(model(), 'Course');
-    eq(course.transitions.find((t) => t.event === 'CourseArchived').sources.sort(),
-      ['Archived', 'NonExistent'], 'everything but Existent');
-  });
-
-  // `equalsAny` over the status is a set of allowed states, so the
-  // derivation reads it – but only a list of member references; a bare
-  // literal makes the rule unreadable, not guessed at.
-  const archiveGuardedBy = (rightHandSide, negate) => {
-    const { id, model } = build(ENTITIES);
-    const body = sandbox.deepClone(model()['command-definitions'].ArchiveCourse);
-    body.conditions = [{
-      leftHandSide: { alias: 'course', property: 'status' },
-      predicate: 'equalsAny',
-      rightHandSide,
-      ...(negate ? { negate: true } : {}),
-    }];
-    updateDefinition('command-definition', id, 'ArchiveCourse', body);
-    return machineOf(model(), 'Course').transitions.find((t) => t.event === 'CourseArchived');
-  };
-
-  check('an equalsAny status rule allows the listed set', () => {
-    const archived = archiveGuardedBy([{ enumMember: 'NonExistent' }, { enumMember: 'Existent' }]);
-    eq(archived.sources, ['NonExistent', 'Existent'], 'allowed exactly where listed');
-    eq(archived.unguarded, false, 'and read as a guard');
-  });
-
-  check('a negated equalsAny allows the complement of the listed set', () => {
-    const archived = archiveGuardedBy([{ enumMember: 'Existent' }], true);
-    eq(archived.sources.sort(), ['Archived', 'NonExistent'], 'everything but the listed');
-  });
-
-  check('a bare literal in the list leaves the command unguarded, not guessed at', () => {
-    const archived = archiveGuardedBy([{ enumMember: 'Existent' }, 'Archived']);
-    eq(archived.unguarded, true, 'unreadable, so unguarded');
-  });
-
-  check('an empty list reads as "allowed nowhere", which is what it evaluates to', () => {
-    const archived = archiveGuardedBy([]);
-    eq(archived.sources, [], 'no state allows it');
-    eq(archived.unguarded, false, 'a read guard, not a missing one');
-  });
-}
-
-// ---------------------------------------------------------------
-// Promoting a boolean lifecycle into a real one, and the suggestion
-// that offers to.
-// ---------------------------------------------------------------
-{
-  const { lifecycleMachines, lifecycleMergeSuggestion, isMonotoneBoolean } = sandbox;
-
-  // A student is the two-state case in every shipped model, so it is
-  // what a promotion is exercised against.
-  const promoted = () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    sandbox.mergeIntoLifecycle(model(), 'Student', {
-      typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
-      steps: [{ state: 'Existent', from: 'exists' }, { state: 'Graduated', from: null }],
-    });
-    return { id, model };
-  };
-
-  check('promotion invents the enum, renames the property and moves the designation', () => {
-    const { model } = promoted();
-    const student = model()['entity-definitions'].Student;
-    eq(student.lifecycle, 'status', 'the designation followed the rename');
-    eq(student.properties.some((p) => p.name === 'status'), true, 'the property is renamed');
-    eq(student.properties.some((p) => p.name === 'exists'), false, 'and `exists` is gone');
-    eq(model()['custom-type-definitions'].StudentStatus.schema.enum,
-      ['NonExistent', 'Existent', 'Graduated'], 'the enum holds all three, in order');
-    const projection = model()['projection-definitions'].StudentStatus;
-    eq(projection.valueType, 'StudentStatus', 'the projection holds the enum');
-    eq(projection.initialValue, { enumMember: 'NonExistent' }, 'and starts where false did');
-    eq(projection.handlers.find((h) => h.event === 'StudentRegistered').value,
-      { enumMember: 'Existent' }, 'set true became set Existent');
-    eq(model()['projection-definitions'].StudentExists, undefined,
-      'the absorbed fold is gone, nothing referencing it');
-  });
-
-  check('promotion rewrites every rule that guarded the boolean', () => {
-    const { model } = promoted();
-    const register = model()['command-definitions'].RegisterStudent.conditions[0];
-    eq(register, {
-      leftHandSide: { alias: 'student', property: 'status' },
-      predicate: 'equals', rejection: 'Student is already registered',
-      rightHandSide: { enumMember: 'NonExistent' },
-    }, 'isFalse became equals NonExistent, and kept its message');
-    // The part worth being exact about: a graduated student still
-    // exists, so "student exists" is every state the boolean was
-    // true in – not just the one named after it. Narrowing this to
-    // `equals Existent` would silently change what the rule means, and
-    // an earlier cut of this did exactly that.
-    const subscribe = model()['command-definitions'].SubscribeStudentToCourse.conditions
-      .find((c) => c.leftHandSide && c.leftHandSide.alias === 'student');
-    eq(subscribe, {
-      leftHandSide: { alias: 'student', property: 'status' },
-      predicate: 'equalsAny', rejection: 'Student is not registered',
-      rightHandSide: [{ enumMember: 'Existent' }, { enumMember: 'Graduated' }],
-    }, 'isTrue became every state it held in');
-  });
-
-  check('two hand-added booleans merge into one lifecycle', () => {
-    // The case the first cut of the suggestion missed entirely: neither
-    // boolean is the designated lifecycle, and both were added by hand.
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    addTaggedEvent(id, 'StudentExpelled', {
-      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
-    });
-    addDefinition('projection-definition', id, 'StudentExpulsion', {
-      tags: [{ name: 'studentId', tagType: 'StudentId' }],
-      valueType: 'boolean', isList: false, initialValue: false,
-      handlers: [{ event: 'StudentExpelled', operation: 'set', value: true }],
-    });
-    const student = sandbox.deepClone(model()['entity-definitions'].Student);
-    student.properties.push({ name: 'expelled', projection: 'StudentExpulsion' });
-    updateDefinition('entity-definition', id, 'Student', student);
-    const body = sandbox.deepClone(model()['command-definitions'].SubscribeStudentToCourse);
-    body.conditions.push({
-      leftHandSide: { alias: 'student', property: 'expelled' }, predicate: 'isFalse',
-      rejection: 'Student was expelled',
-    });
-    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
-
-    eq(sandbox.entityMergeCandidates(model(), 'Student'), ['exists', 'expelled'],
-      'both are offered, in progression order');
-    const suggestion = sandbox.lifecycleMergeSuggestion(
-      model(), model()['command-definitions'].SubscribeStudentToCourse
-    );
-    eq(suggestion.booleans, ['exists', 'expelled'], 'and the command asks for it');
-
-    sandbox.mergeIntoLifecycle(model(), 'Student', {
-      typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
-      steps: [{ state: 'Registered', from: 'exists' }, { state: 'Expelled', from: 'expelled' }],
-    });
-    const after = model()['entity-definitions'].Student;
-    eq(after.lifecycle, 'status', 'one designated lifecycle');
-    eq(after.properties.map((p) => p.name), ['status', 'subscriptionCount'],
-      'both booleans absorbed, the merged one where the first of them was');
-    eq(model()['projection-definitions'].StudentStatus.handlers, [
-      { event: 'StudentRegistered', operation: 'set', value: { enumMember: 'Registered' } },
-      { event: 'StudentExpelled', operation: 'set', value: { enumMember: 'Expelled' } },
-    ], 'one handler per absorbed setter, each into its own state');
-    eq(model()['projection-definitions'].StudentExpulsion, undefined, 'the absorbed folds are gone');
-
-    const rules = model()['command-definitions'].SubscribeStudentToCourse.conditions
-      .filter((c) => c.leftHandSide && c.leftHandSide.alias === 'student'
-        && c.leftHandSide.property === 'status');
-    eq(rules, [
-      { leftHandSide: { alias: 'student', property: 'status' }, predicate: 'equalsAny',
-        rejection: 'Student is not registered',
-        rightHandSide: [{ enumMember: 'Registered' }, { enumMember: 'Expelled' }] },
-      { leftHandSide: { alias: 'student', property: 'status' }, predicate: 'equalsAny',
-        rejection: 'Student was expelled',
-        rightHandSide: [{ enumMember: 'NonExistent' }, { enumMember: 'Registered' }] },
-    ], 'exists became both later states; not-expelled became both earlier ones');
-    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'SubscribeStudentToCourse'), [],
-      'and the command is clean afterwards');
-  });
-
-  check('two booleans one event moves cannot become one lifecycle', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    // Both set by StudentRegistered, so the merged fold would need two
-    // handlers for one event – refused before anything is written.
-    addDefinition('projection-definition', id, 'StudentGreeted', {
-      tags: [{ name: 'studentId', tagType: 'StudentId' }],
-      valueType: 'boolean', isList: false, initialValue: false,
-      handlers: [{ event: 'StudentRegistered', operation: 'set', value: true }],
-    });
-    const student = sandbox.deepClone(model()['entity-definitions'].Student);
-    student.properties.push({ name: 'greeted', projection: 'StudentGreeted' });
-    updateDefinition('entity-definition', id, 'Student', student);
-    const before = JSON.stringify(model()['entity-definitions'].Student);
-    sandbox.mergeIntoLifecycle(model(), 'Student', {
-      typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
-      steps: [{ state: 'Registered', from: 'exists' }, { state: 'Greeted', from: 'greeted' }],
-    });
-    eq(JSON.stringify(model()['entity-definitions'].Student), before, 'nothing was written');
-    eq(model()['custom-type-definitions'].StudentStatus, undefined, 'not even the enum');
-  });
-
-  check('a non-monotone boolean is refused as a stage', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    addTaggedEvent(id, 'StudentPaused', {
-      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
-    });
-    addTaggedEvent(id, 'StudentResumed', {
-      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
-    });
-    addDefinition('projection-definition', id, 'StudentPause', {
-      tags: [{ name: 'studentId', tagType: 'StudentId' }],
-      valueType: 'boolean', isList: false, initialValue: false,
-      handlers: [
-        { event: 'StudentPaused', operation: 'set', value: true },
-        { event: 'StudentResumed', operation: 'set', value: false },
-      ],
-    });
-    const student = sandbox.deepClone(model()['entity-definitions'].Student);
-    student.properties.push({ name: 'paused', projection: 'StudentPause' });
-    updateDefinition('entity-definition', id, 'Student', student);
-    eq(sandbox.entityMergeCandidates(model(), 'Student'), ['exists'],
-      'a two-way boolean is not a stage, so it is not offered');
-    sandbox.mergeIntoLifecycle(model(), 'Student', {
-      typeName: 'StudentStatus', property: 'status', initialState: 'NonExistent',
-      steps: [{ state: 'Registered', from: 'exists' }, { state: 'Paused', from: 'paused' }],
-    });
-    eq(model()['custom-type-definitions'].StudentStatus, undefined,
-      'and asking for it anyway is refused');
-  });
-
-  check('a promotion is one undo step', () => {
-    const { model } = promoted();
-    eq(model()['entity-definitions'].Student.lifecycle, 'status', 'promoted');
-    sandbox.undo();
-    const student = model()['entity-definitions'].Student;
-    eq(student.lifecycle, 'exists', 'and one undo puts the whole thing back');
-    eq(model()['custom-type-definitions'].StudentStatus, undefined, 'enum and all');
-    eq(model()['command-definitions'].RegisterStudent.conditions[0].predicate, 'isFalse',
-      'with the rules as they were');
-  });
-
-  check('the promoted machine is drawn as a real lifecycle, not a compact row', () => {
-    const { model } = promoted();
-    const student = lifecycleMachines(model()).machines.find((m) => m.entity === 'Student');
-    eq(student.states, ['NonExistent', 'Existent', 'Graduated'], 'three states');
-    eq(student.compact, false, 'so it earns the band');
-    eq(student.transitions.find((t) => t.event === 'StudentRegistered').sources, ['NonExistent'],
-      'and the rewritten rule still pins the arrow');
-  });
-
-  // The discriminator. A one-way boolean folds into a lifecycle; an
-  // orthogonal one must not, because collapsing it destroys a dimension.
-  const withSecondBoolean = (handlers) => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    addTaggedEvent(id, 'CourseFlagged', {
-      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
-    });
-    addTaggedEvent(id, 'CourseUnflagged', {
-      properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
-    });
-    addDefinition('projection-definition', id, 'StudentFlag', {
-      tags: [{ name: 'studentId', tagType: 'StudentId' }],
-      valueType: 'boolean', isList: false, initialValue: false, handlers,
-    });
-    const student = sandbox.deepClone(model()['entity-definitions'].Student);
-    student.properties.push({ name: 'isFlagged', projection: 'StudentFlag' });
-    updateDefinition('entity-definition', id, 'Student', student);
-    const body = sandbox.deepClone(model()['command-definitions'].SubscribeStudentToCourse);
-    body.conditions.push({
-      leftHandSide: { alias: 'student', property: 'isFlagged' }, predicate: 'isFalse',
-    });
-    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
-    return { id, model };
-  };
-
-  check('a one-way boolean is monotone, and the merge is offered', () => {
-    const { model } = withSecondBoolean([
-      { event: 'CourseFlagged', operation: 'set', value: true },
-    ]);
-    eq(isMonotoneBoolean(model(), 'Student', 'isFlagged'), true, 'nothing sets it back');
-    const suggestion = lifecycleMergeSuggestion(
-      model(), model()['command-definitions'].SubscribeStudentToCourse
-    );
-    eq(suggestion && suggestion.entity, 'Student', 'the entity to promote');
-    eq(suggestion.booleans, ['exists', 'isFlagged'],
-      'both booleans, lifecycle first – existence is always the first stage');
-  });
-
-  check('a boolean that goes both ways is not monotone, and nothing is offered', () => {
-    // The `exists && !isPublic` shape: a student can be flagged and
-    // unflagged, so these are not stages of one life. Merging them into
-    // one enum would lose the ability to be existent-and-unflagged.
-    const { model } = withSecondBoolean([
-      { event: 'CourseFlagged', operation: 'set', value: true },
-      { event: 'CourseUnflagged', operation: 'set', value: false },
-    ]);
-    eq(isMonotoneBoolean(model(), 'Student', 'isFlagged'), false, 'one handler sets it back');
-    eq(lifecycleMergeSuggestion(
-      model(), model()['command-definitions'].SubscribeStudentToCourse
-    ), null, 'so the suggestion stays silent');
-  });
-
-  check('a boolean nothing ever sets is not a door either way', () => {
-    const { model } = withSecondBoolean([]);
-    eq(isMonotoneBoolean(model(), 'Student', 'isFlagged'), false, 'no handlers, no direction');
-  });
-
-  check('two rules over one lifecycle alone suggest nothing', () => {
-    const { model } = build(ENTITIES);
-    eq(lifecycleMergeSuggestion(
-      model(), model()['command-definitions'].SubscribeStudentToCourse
-    ), null, 'the shipped command guards a lifecycle and no second boolean');
-  });
-}
-
-// ---------------------------------------------------------------
 // Saying "the course exists" – rendering only, never storage.
 // ---------------------------------------------------------------
 {
-  const { model } = build(ENTITIES);
-  const body = () => model()['command-definitions'].SubscribeStudentToCourse;
+  const { model } = build(GROUPED);
+  const body = () => lists(model()['command-definitions'].SubscribeStudentToCourse);
   const partsOf = (condition) => sandbox.conditionParts(condition, model(), body());
 
-  check('a read of a designated boolean lifecycle reads as existence', () => {
-    const exists = { leftHandSide: { alias: 'student', property: 'exists' }, predicate: 'isTrue' };
-    eq(partsOf(exists), { left: 'student', verb: 'exists', right: null }, 'affirmative');
-    eq(partsOf({ ...exists, predicate: 'isFalse' }),
-      { left: 'student', verb: 'does not exist', right: null }, 'and denied');
-    eq(partsOf({ ...exists, negate: true }),
-      { left: 'student', verb: 'does not exist', right: null }, 'negation flips it too');
-  });
-
-  check('the sugar is rendering only – nothing is stored differently', () => {
-    const stored = body().conditions.find((c) => c.leftHandSide.alias === 'student');
-    eq(stored, { leftHandSide: { alias: 'student', property: 'exists' }, predicate: 'isTrue',
-      rejection: 'Student is not registered' }, 'an ordinary unary condition over an ordinary property');
-    eq(sandbox.ruleSentence(model(), body(), stored), 'student exists', 'said in words');
-  });
-
-  check('an enum lifecycle is left to say itself', () => {
+  check('an enum status is left to say itself', () => {
     const status = {
       leftHandSide: { alias: 'course', property: 'status' },
       predicate: 'equals', rightHandSide: { enumMember: 'Existent' },
@@ -3331,14 +3616,6 @@ function build(index) {
       { left: 'student · exists', verb: 'holds', right: null }, 'no context, no sugar');
   });
 
-  check('a boolean machine labels its states off the property', () => {
-    const student = sandbox.lifecycleMachines(model()).machines
-      .find((m) => m.entity === 'Student');
-    eq(sandbox.lifecycleStateWords(student, 'true'), 'exists', 'the true state');
-    eq(sandbox.lifecycleStateWords(student, 'false'), 'does not exist', 'and the false one');
-    eq(sandbox.lifecycleStateWords({ isBoolean: true, property: 'isArchived' }, 'false'),
-      'is not archived', 'an is-prefixed predicate negates in place');
-  });
 }
 
 // ---------------------------------------------------------------
@@ -3349,7 +3626,7 @@ function build(index) {
   const { operationsFor, hasSuccessor, offersSuccessor, handlerValueChoices } = sandbox;
 
   check('the operations offered follow the type held', () => {
-    const { model } = build(ENTITIES);
+    const { model } = build(GROUPED);
     eq(operationsFor(model(), { valueType: 'boolean', isList: false }), ['set'],
       'a boolean only ever becomes something – it does not go up by or gain');
     eq(operationsFor(model(), { valueType: 'CourseStatus', isList: false }), ['set'],
@@ -3361,7 +3638,7 @@ function build(index) {
   });
 
   check('a value type over a number counts like the number it wraps', () => {
-    const { id, model } = build(ENTITIES);
+    const { id, model } = build(GROUPED);
     addDefinition('custom-type-definition', id, 'Hours', { schema: { type: 'integer' } });
     addDefinition('custom-type-definition', id, 'Rate', { schema: { type: 'number' } });
     eq(operationsFor(model(), { valueType: 'Hours', isList: false }),
@@ -3373,13 +3650,13 @@ function build(index) {
   });
 
   check('the change adder offers only the operations the target admits', () => {
-    const { id, model } = build(ENTITIES);
+    const { id, model } = build(GROUPED);
     sandbox.setActiveModelId(id);
-    const painted = (entity, property) => {
+    const painted = (projection) => {
       sandbox.state.adder = 'chg:StudentRegistered';
       sandbox.state.changeDraft = {
         eventName: 'StudentRegistered',
-        target: JSON.stringify([entity, property]),
+        target: JSON.stringify({ projection }),
         operation: 'set', value: '',
       };
       const main = sandbox.document.createElement('div');
@@ -3387,12 +3664,12 @@ function build(index) {
       return main;
     };
     // The reported bug: a boolean was offered every operation there is.
-    const bool = textOf(painted('Student', 'exists'));
+    const bool = textOf(painted('Student.exists'));
     eq(/increment|decrement|append|remove/.test(bool), false,
       'nothing an existence flag cannot do is on screen');
     eq(bool.includes('set'), true, 'only "set", and it is said rather than picked');
 
-    const counted = painted('Student', 'subscriptionCount');
+    const counted = painted('Student.subscriptionCount');
     const ops = findAll(counted, (n) => n.tag === 'select')
       .map((sel) => (sel.children || []).map(textOf).join('|'))
       .find((text) => text.includes('increment'));
@@ -3401,12 +3678,12 @@ function build(index) {
   });
 
   check('a boolean target offers true and false as values', () => {
-    const { id, model } = build(ENTITIES);
+    const { id, model } = build(GROUPED);
     sandbox.setActiveModelId(id);
     sandbox.state.adder = 'chg:StudentRegistered';
     sandbox.state.changeDraft = {
       eventName: 'StudentRegistered',
-      target: JSON.stringify(['Student', 'exists']),
+      target: JSON.stringify({ projection: 'Student.exists' }),
       operation: 'set', value: '',
     };
     const main = sandbox.document.createElement('div');
@@ -3421,7 +3698,7 @@ function build(index) {
   });
 
   check('"the one after" is offered only where a next value exists', () => {
-    const { model } = build(ENTITIES);
+    const { model } = build(GROUPED);
     eq(hasSuccessor(model(), 'integer'), true, 'integers count up');
     eq(hasSuccessor(model(), 'CourseId'), true, 'and so do scalar identifiers');
     eq(hasSuccessor(model(), 'boolean'), false, 'there is no value after true');
@@ -3440,10 +3717,9 @@ function build(index) {
 
   // Narrower than validation on purpose: a successor numbers something,
   // so it is offered to `set` an integer or a named value type, never a
-  // plain string, never beside another verb – and `currentValue`, which
-  // only ever repeats or doubles what is held, is not offered at all.
-  check('a successor is offered only to set a numbering, and currentValue never', () => {
-    const { model } = build(ENTITIES);
+  // plain string, never beside another verb.
+  check('a successor is offered only to set a numbering', () => {
+    const { model } = build(GROUPED);
     eq(offersSuccessor(model(), 'integer'), true, 'an integer counts');
     eq(offersSuccessor(model(), 'CourseId'), true, 'and so does a named scalar type');
     eq(offersSuccessor(model(), 'string'), false, 'a plain string does not, digits or not');
@@ -3459,13 +3735,10 @@ function build(index) {
     eq(values('integer', 'set').includes(next), true, 'set an integer: offered');
     eq(values('integer', 'increment').includes(next), false, 'increment by it: not');
     eq(values('string', 'set').some((v) => v.includes('successor')), false, 'set a string: not');
-    for (const [type, op] of [['integer', 'set'], ['integer', 'increment'], ['string', 'set']]) {
-      eq(values(type, op).some((v) => v.includes('currentValue')), false, `no currentValue for ${type} ${op}`);
-    }
   });
 
   check('an event field reads as its path once picked', () => {
-    const { model } = build(ENTITIES);
+    const { model } = build(GROUPED);
     const event = { properties: [{ name: 'courseId', propertyType: 'CourseId', isList: false }] };
     const choices = handlerValueChoices(model(), { valueType: 'CourseId', isList: false }, event, 'set');
     const sel = sandbox.pick(choices, choices[1][0], () => {});
@@ -3480,7 +3753,7 @@ function build(index) {
   });
 
   check('a successor the editor no longer offers is still refused if written', () => {
-    const { id } = build(ENTITIES);
+    const { id } = build(GROUPED);
     let refused = null;
     try {
       sandbox.updateDefinition('projection-definition', id, 'StudentExists', {
@@ -3531,7 +3804,7 @@ function build(index) {
 
   check('and folded with its operations, stored and evaluated as written', () => {
     eq(sandbox.operationsFor(model(), { valueType: 'Hours' }), ['set', 'increment', 'decrement'], 'decrement on Hours');
-    const body = model()['command-definitions'].Allocate;
+    const body = lists(model()['command-definitions'].Allocate);
     eq(body.conditions[0].predicate, 'greaterThanOrEquals', 'the ordering, stored');
     eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
   });
@@ -3562,11 +3835,11 @@ function build(index) {
   });
 
   check('a touched, complete equalsAny rule is added by leaving it', () => {
-    const { id, model } = build(ENTITIES);
+    const { id, model } = build(GROUPED);
     sandbox.setActiveModelId(id);
     sandbox.state.slice = 'DefineCourse';
     sandbox.state.adder = 'rule';
-    const count = model()['command-definitions'].DefineCourse.conditions.length;
+    const count = lists(model()['command-definitions'].DefineCourse).conditions.length;
     sandbox.state.ruleDraft = {
       predicate: 'equalsAny', negate: false,
       left: JSON.stringify({ alias: 'course', property: 'status' }),
@@ -3577,7 +3850,7 @@ function build(index) {
     };
     sandbox.ruleEditor(model(), sandbox.sliceOf(model(), 'DefineCourse'), null);
     sandbox.closeForms();
-    const conditions = model()['command-definitions'].DefineCourse.conditions;
+    const conditions = lists(model()['command-definitions'].DefineCourse).conditions;
     eq(conditions.length, count + 1, 'the rule landed without its button');
     eq(conditions[conditions.length - 1], {
       leftHandSide: { alias: 'course', property: 'status' },
@@ -3591,15 +3864,15 @@ function build(index) {
 // ---------------------------------------------------------------
 // The merged step. "To decide, it looks at" and "It is only allowed
 // if" are one step, and the reason is a rule about ownership: a read
-// is not something anyone declares. It arrives with the rule, guard,
+// is not something anyone declares. It arrives with the rule,
 // emission or chain that wanted it, and leaves with the last of them.
 // These hold the seam where that is true – the write path – and the
 // one gesture that now spans both halves.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(3);   // Course Example (with schedules)
+  const { id, model } = build('course-schedules');   // Course Example (with schedules)
   sandbox.setActiveModelId(id);
-  const command = (name) => model()['command-definitions'][name];
+  const command = (name) => lists(model()['command-definitions'][name]);
 
   check('the reasons a read is consulted, on the shipped models', () => {
     const refs = sandbox.bindingReferences(model(), command('RescheduleCourse'));
@@ -3610,12 +3883,9 @@ function build(index) {
     eq([...numbering.get('courseNumbering')], ['emission', 'serialisation'],
       'a projection read whose value the event records, with no rule at all – and, taking no tags, '
       + 'one that serialises the command');
-    // Coverage is the fifth reason, and it holds only for a *derived*
-    // tag. `Assign`'s previous instructor is one: the `Unassigned` tag
-    // is taken from `course.instructorId`, a claim about state that was
-    // read. A tag straight off the payload asserts nothing about state
-    // and keeps no read alive – which is why the shipped Unsubscribe no
-    // longer binds the student it never tests.
+    // A tag straight off the payload asserts nothing about state and
+    // keeps no read alive – which is why the shipped Unsubscribe does
+    // not bind the student it never tests.
     eq(command('UnsubscribeStudentFromCourse').boundary.map((b) => b.alias), ['course'],
       'the course only – the student id is asserted by the caller');
   });
@@ -3662,9 +3932,9 @@ function build(index) {
 }
 
 {
-  const { id, model } = build(3);   // its own copy: this one strips a command down
+  const { id, model } = build('course-schedules');   // its own copy: this one strips a command down
   sandbox.setActiveModelId(id);
-  const command = (name) => model()['command-definitions'][name];
+  const command = (name) => lists(model()['command-definitions'][name]);
 
   check('removing a read takes the rules about it, and leaves the chain to dangle', () => {
     // `course` is the root of this command's chain: `students` draws
@@ -3693,9 +3963,9 @@ function build(index) {
 }
 
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
-  const command = (name) => model()['command-definitions'][name];
+  const command = (name) => lists(model()['command-definitions'][name]);
 
   check('a rule brings its read with it, in a single append', () => {
     const before = command('ChangeCourseCapacity');
@@ -3705,7 +3975,7 @@ function build(index) {
     // The step-level adder, opened on a read that does not exist yet:
     // another Course, identified by the id the payload carries.
     sandbox.state.ruleDraft = {
-      predicate: 'equals', negate: false, target: 'entity:Course', touched: true,
+      predicate: 'equals', negate: false, target: 'group:Course', touched: true,
       left: JSON.stringify({ alias: 'course2', property: 'status' }),
       right: JSON.stringify({ enumMember: 'Existent' }), rejection: 'Other course is not active',
     };
@@ -3714,7 +3984,7 @@ function build(index) {
     const after = command('ChangeCourseCapacity');
     eq(after.boundary.length, before.boundary.length + 1, 'the read landed');
     eq(after.boundary[after.boundary.length - 1], {
-      alias: 'course2', entity: 'Course', id: { parameterName: 'courseId' },
+      alias: 'course2', group: 'Course', tags: { courseId: { parameterName: 'courseId' } },
     }, 'aliased apart from the course already bound, identified as picked');
     eq(after.conditions.length, before.conditions.length + 1, 'and the rule that wanted it');
     eq(sandbox.logRevisionNow() - revisionBefore, 1,
@@ -3725,12 +3995,12 @@ function build(index) {
     // What an agent writing a whole body, or a hand-written file, can
     // still produce. It bounds the append, so it stays until someone
     // edits this command – and says so meanwhile.
-    sandbox.addDefinition('command-definition', id, 'TouchCourse', {
+    addDefinition('command-definition', id, 'TouchCourse', {
       properties: [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }],
       boundary: [
-        { alias: 'course', entity: 'Course', id: { parameterName: 'courseId' } },
+        { alias: 'course', group: 'Course', tags: { courseId: { parameterName: 'courseId' } } },
         // A projection read: no rule names it, no emission takes its
-        // value, and coverage has nothing to say about it – the one
+        // value, and no tag is derived from it – the one
         // shape of read that really is consulted by nothing.
         { alias: 'spare', projection: 'CourseCapacity', arguments: { courseId: { parameterName: 'courseId' } } },
       ],
@@ -3762,9 +4032,9 @@ function build(index) {
 // can still author everything the old two could.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
-  const cmd = () => model()['command-definitions'].SubscribeStudentToCourse;
+  const cmd = () => lists(model()['command-definitions'].SubscribeStudentToCourse);
   const shipped = JSON.parse(JSON.stringify(cmd()));
   const slice = () => sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
 
@@ -3773,9 +4043,9 @@ function build(index) {
   // fails here rather than passing quietly, because the control it
   // needs would never be on screen.
   // `target` is the first answer: a read the command does not have yet
-  // (`entity:Course`), or one it already makes, by its alias
+  // (`group:Course`), or one it already makes, by its alias
   // (`alias:course`).
-  const addRule = ({ target, left, existence, predicate, right, rightText, negate, rejection }) => {
+  const addRule = ({ target, left, predicate, right, rightText, negate, rejection }) => {
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
     const paint = () => sandbox.stepDecision(model(), slice());
@@ -3798,18 +4068,10 @@ function build(index) {
       eq(selects().length, 1, 'and it is the only one on screen');
       selects()[0].onchange({ target: { value: target } });
     }
-    if (existence) {
-      // An existence row answers the third question with the second, so
-      // it is never asked – the button is already there.
-      valueQuestion().onchange({ target: { value: ' ' + existence + ':' + left } });
-      eq(/What must be true of it\?/.test(textOf(paint())), false,
-        'existence picked: no third question');
-    } else {
-      valueQuestion().onchange({ target: { value: left } });
-      eq(/What must be true of it\?/.test(textOf(paint())), true,
-        'answering that revealed the third question – no Next was pressed');
-      draft().predicate = predicate;
-    }
+    valueQuestion().onchange({ target: { value: left } });
+    eq(/What must be true of it\?/.test(textOf(paint())), true,
+      'answering that revealed the third question – no Next was pressed');
+    draft().predicate = predicate;
     if (negate) draft().negate = true;
     if (right !== undefined) draft().right = right;
     if (rightText !== undefined) { draft().right = ' literal'; draft().rightText = rightText; }
@@ -3824,7 +4086,7 @@ function build(index) {
 
   check('the first question is asked on its own – two pickers, not five', () => {
     sandbox.state.slice = 'SubscribeStudentToCourse';
-    sandbox.updateDefinition('command-definition', id, 'SubscribeStudentToCourse', {
+    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', {
       ...cmd(), boundary: [], conditions: [],
     });
     sandbox.state.adder = 'rule';
@@ -3835,7 +4097,7 @@ function build(index) {
     eq(/What is this rule about\?/.test(textOf(step)), true, 'asked as a question');
     // Answering it is what reveals the next: the row never asks for a
     // Next to be pressed.
-    findAll(step, (n) => n.tag === 'select')[0].onchange({ target: { value: 'entity:Course' } });
+    findAll(step, (n) => n.tag === 'select')[0].onchange({ target: { value: 'group:Course' } });
     const after = sandbox.stepDecision(model(), slice());
     eq(findAll(after, (n) => n.tag === 'select').length, 3,
       'what it is about, where its id comes from, and which of its values');
@@ -3847,12 +4109,10 @@ function build(index) {
     // Two rules that each bring a read with them, then three more about
     // reads that already exist – including one whose two sides are the
     // same read, and one compared against a number nobody declared.
-    addRule({ target: 'entity:Course', left: A('course', 'status'),
+    addRule({ target: 'group:Course', left: A('course', 'status'),
       predicate: 'equals', right: JSON.stringify({ enumMember: 'Existent' }), rejection: 'Course is not active' });
-    // A boolean lifecycle: "exists" is a row of the second question,
-    // and picking it is the whole test – the message is still asked.
-    addRule({ target: 'entity:Student', left: A('student', 'exists'), existence: 'exists',
-      rejection: 'Student is not registered' });
+    addRule({ target: 'group:Student', left: A('student', 'exists'),
+      predicate: 'isTrue', rejection: 'Student is not registered' });
     addRule({ target: 'alias:course', left: A('course', 'subscriptionCount'),
       predicate: 'lessThan', right: A('course', 'capacity'), rejection: 'Course is full' });
     addRule({ target: 'alias:course', left: A('course', 'subscribedStudentIds'),
@@ -3866,44 +4126,18 @@ function build(index) {
     eq(cmd().conditions, shipped.conditions, 'and so are the rules, in order');
   });
 
-  check('existence is two rows of the value question, not a property and a predicate', () => {
-    const A = (alias, property) => JSON.stringify({ alias, property });
-    sandbox.state.adder = 'rule';
-    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '', target: 'alias:student' };
-    const picker = () => findAll(sandbox.stepDecision(model(), slice()), (n) => n.tag === 'select').pop();
-    const values = findAll(picker(), (n) => n.tag === 'option').map((o) => o.value);
-    eq(values.includes(' exists:' + A('student', 'exists')), true, 'the present state is offered');
-    eq(values.includes(' absent:' + A('student', 'exists')), true, 'and the absent one');
-    eq(/does not exist/.test(textOf(picker())), true, 'said as a state');
-    eq(values.includes(A('student', 'exists')), false,
-      'and the bare property is not, so there is no "not … is true" to assemble');
-    picker().onchange({ target: { value: ' absent:' + A('student', 'exists') } });
-    eq(sandbox.state.ruleDraft.predicate, 'isFalse', '"does not exist" is isFalse');
-    eq(!!sandbox.state.ruleDraft.negate, false, 'never a negated isTrue');
-    sandbox.closeForms();
-
-    // Opened for editing, another spelling of the same thing keeps its
-    // own row and the third question – it is shown as stored.
-    sandbox.state.adder = 'rule';
-    sandbox.state.ruleDraft = {
-      predicate: 'isTrue', negate: true, left: A('student', 'exists'), right: '', target: 'alias:student',
-    };
-    const step = sandbox.stepDecision(model(), slice());
-    eq(/What must be true of it\?/.test(textOf(step)), true, 'a negated isTrue opens whole');
-    sandbox.closeForms();
-  });
 }
 
 // ---------------------------------------------------------------
-// A model with no entity at all states its rules over projections: the
+// A model with no group at all states its rules over projections: the
 // first question offers every one, a value for each of its tags is asked
 // beside it, and the rule reads it in place – `Label(documentId)`.
 // ---------------------------------------------------------------
 {
-  const id = sandbox.createDcbModel('Entity Free Probe');
+  const id = sandbox.createDcbModel('Group Free Probe');
   sandbox.setActiveModelId(id);
   sandbox.applyModelSource(id, [
-    'model "Entity Free Probe"',
+    'model "Group Free Probe"',
     'tag type DocumentId = string',
     'tag type FolderId = string',
     'event Labelled { tag documentId: DocumentId, label: string }',
@@ -3924,7 +4158,7 @@ function build(index) {
   const paint = () => sandbox.stepDecision(model(), slice());
   const selects = () => findAll(paint(), (n) => n.tag === 'select');
 
-  check('with no entity, the first question offers the projections it can reach', () => {
+  check('with no group, the first question offers the projections it can reach', () => {
     sandbox.state.slice = 'Finish';
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
@@ -3951,14 +4185,14 @@ function build(index) {
     sandbox.state.ruleDraft.rejection = 'Label is not foo';
     const button = findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0];
     button.onclick();
-    const body = model()['command-definitions'].Finish;
+    const body = lists(model()['command-definitions'].Finish);
     // Read in place (8.0): no alias is invented, the rule names the read.
     eq(body.boundary, [], 'no binding');
     eq(body.conditions, [{
       leftHandSide: { projection: 'Label', tags: { documentId: { parameterName: 'documentId' } } },
       predicate: 'equals', rightHandSide: 'foo', rejection: 'Label is not foo',
     }], 'the rule reads Label by the command\'s own document id');
-    eq(sandbox.modelAdvisories(model()).length, 0, 'advisory-clean');
+    eq(advisedOtherwise(model()).length, 0, 'advisory-clean');
   });
 
   check('a tag nothing in scope can fill brings a new input with the rule', () => {
@@ -3974,7 +4208,7 @@ function build(index) {
     sandbox.state.ruleDraft.predicate = 'lessThan';
     sandbox.state.ruleDraft.rejection = 'Folder is full';
     findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
-    const body = model()['command-definitions'].Finish;
+    const body = lists(model()['command-definitions'].Finish);
     eq(body.properties.map((p) => [p.name, p.propertyType]), [['documentId', 'DocumentId'], ['folderId', 'FolderId']],
       'the input it needed, named after the tag');
     eq(body.conditions[body.conditions.length - 1].leftHandSide,
@@ -3982,11 +4216,11 @@ function build(index) {
     const finish = sandbox.deepClone(body);
     finish.properties.pop();
     finish.conditions.pop();
-    sandbox.updateDefinition('command-definition', id, 'Finish', finish);
+    updateDefinition('command-definition', id, 'Finish', finish);
   });
 
   check('the first question asks no name; a stored read is named afterwards, and unnamed again', () => {
-    const shipped = sandbox.deepClone(model()['command-definitions'].Finish);
+    const shipped = lists(model()['command-definitions'].Finish);
     const addAbout = (target, rejection) => {
       sandbox.state.slice = 'Finish';
       sandbox.state.adder = 'rule';
@@ -3997,7 +4231,7 @@ function build(index) {
         { predicate: 'lessThan', right: ' literal', rightText: '5', rejection });
       findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
     };
-    const body = () => model()['command-definitions'].Finish;
+    const body = () => lists(model()['command-definitions'].Finish);
     const added = () => body().conditions.slice(shipped.conditions.length).map((c) => c.leftHandSide);
     const read = { projection: 'DoneCount', tags: { documentId: { parameterName: 'documentId' } } };
     const n = shipped.conditions.length;
@@ -4039,7 +4273,7 @@ function build(index) {
     eq(body().boundary, [], 'no binding');
     eq(added(), [read, read], 'read in place again');
 
-    sandbox.updateDefinition('command-definition', id, 'Finish', shipped);
+    updateDefinition('command-definition', id, 'Finish', shipped);
   });
 
   check('a projection read in place is never asked which of its values, reopened', () => {
@@ -4057,16 +4291,14 @@ function build(index) {
     sandbox.closeForms();
   });
 
-  // State changes, the same way: an event that moves a projection no
-  // entity binds says so, and the change adder sets one.
+  // State changes, the same way: an event that moves a projection
+  // says so, and the change adder sets one.
   const changes = () => sandbox.stepChanges(model(), slice());
   check('the state changes name the projections an event moves', () => {
     sandbox.state.slice = 'Finish';
     const step = changes();
     eq(/Done count/.test(textOf(step)), true, 'DoneCount counts Done');
     eq(/Changes nothing we know/.test(textOf(step)), false, 'so it is not nothing');
-    eq(findAll(step, (n) => n.tag === 'button' && textOf(n) === '+ New entity').length, 0,
-      'and no entity is asked for to change it');
   });
 
   check('a change to a projection is recorded, and opened again, from the step', () => {
@@ -4078,7 +4310,7 @@ function build(index) {
     const label = JSON.stringify({ projection: 'Label' });
     eq(targets.includes(label), true, 'a projection is a target');
     eq(targets.includes(JSON.stringify({ projection: 'DoneCount' })), true, 'one already moved by it too');
-    eq(targets.includes(' new'), false, 'no "+ New property…" without an entity to put it on');
+    eq(targets.includes(' new'), false, 'no "+ New…" door among the targets');
     Object.assign(sandbox.state.changeDraft, { target: label, value: ' literal', valueText: 'done', touched: true });
     findAll(changes(), (n) => n.tag === 'button' && textOf(n) === '+ Record a change')[0].onclick();
     eq(model()['projection-definitions'].Label.handlers.find((x) => x.event === 'Done'),
@@ -4097,10 +4329,10 @@ function build(index) {
   // FolderSize is tagged by a FolderId, and no event here carries one:
   // no event can reach it, so none is offered to move it.
   const readFolder = () => {
-    const body = sandbox.deepClone(model()['command-definitions'].Finish);
+    const body = lists(model()['command-definitions'].Finish);
     body.boundary.push({ alias: 'folder', projection: 'FolderSize', tags: { folderId: { tagType: 'FolderId', tagValue: 'f1' } } });
     body.conditions.push({ leftHandSide: { alias: 'folder' }, predicate: 'lessThan', rightHandSide: 100, rejection: 'Folder is full' });
-    sandbox.updateDefinition('command-definition', id, 'Finish', body);
+    updateDefinition('command-definition', id, 'Finish', body);
   };
   check('an event that reaches none of a projection\'s reads is not offered to move it', () => {
     readFolder();
@@ -4176,7 +4408,7 @@ function build(index) {
     '}',
   ].join('\n'));
   const model = () => projectState()[id];
-  const cmd = () => model()['command-definitions'].Assign;
+  const cmd = () => lists(model()['command-definitions'].Assign);
   const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'Assign'));
   const required = { projection: 'RequiredSeniority', tags: { projectId: { parameterName: 'projectId' } } };
 
@@ -4240,7 +4472,7 @@ function build(index) {
       { ...rule, rejection: 'Developer seniority must be more than 0' },
       { ...rule, rejection: 'Too junior' },
     ];
-    sandbox.updateDefinition('command-definition', id, 'Assign', withRules);
+    updateDefinition('command-definition', id, 'Assign', withRules);
     sandbox.state.slice = 'Assign';
     const edit = (i) => {
       sandbox.state.sel = 'rule:' + i;
@@ -4252,23 +4484,23 @@ function build(index) {
     sandbox.closeForms();
     eq(edit(1).rejection, 'Too junior', 'written: kept');
     sandbox.closeForms();
-    sandbox.updateDefinition('command-definition', id, 'Assign', shipped);
+    updateDefinition('command-definition', id, 'Assign', shipped);
   });
 
   check('an alias is put back in place only while every use is its whole value', () => {
     const body = {
       boundary: [{ alias: 'senior', ...seniority }],
-      conditions: [{ leftHandSide: { alias: 'senior' }, predicate: 'greaterThan', rightHandSide: 0, rejection: 'r' }],
+      steps: [{ condition: { leftHandSide: { alias: 'senior' }, predicate: 'greaterThan', rightHandSide: 0 }, rejection: 'r' }],
     };
     eq(sandbox.aliasInlinable(body, 'senior'), true, 'a rule about its value');
     const viaProperty = sandbox.deepClone(body);
-    viaProperty.conditions.push({ leftHandSide: { alias: 'senior', property: 'level' }, predicate: 'isNotEmpty', rejection: 'r' });
+    viaProperty.steps.push({ condition: { leftHandSide: { alias: 'senior', property: 'level' }, predicate: 'isNotEmpty' }, rejection: 'r' });
     eq(sandbox.aliasInlinable(viaProperty, 'senior'), false, 'not with a property of it read');
     const asTag = sandbox.deepClone(body);
     asTag.boundary.push({ alias: 'other', projection: 'RequiredSeniority', tags: { projectId: { alias: 'senior' } } });
     eq(sandbox.aliasInlinable(asTag, 'senior'), false, 'nor with another read tagged by it');
     sandbox.inlineAliasedRead(body, 'senior');
-    eq(body, { boundary: [], conditions: [{ leftHandSide: seniority, predicate: 'greaterThan', rightHandSide: 0, rejection: 'r' }] },
+    eq(body, { boundary: [], steps: [{ condition: { leftHandSide: seniority, predicate: 'greaterThan', rightHandSide: 0 }, rejection: 'r' }] },
       'back in place');
   });
 }
@@ -4291,17 +4523,15 @@ function build(index) {
     'event ProjectDefined { tag projectId: ProjectId, requiredSeniority: Seniority[] }',
     'event EmployeeHired { tag employeeId: EmployeeId, seniority: Seniority }',
     'event Assigned { tag projectId: ProjectId, tag employeeId: EmployeeId }',
-    'entity Project (tag projectId: ProjectId) {',
-    '  requiredSeniority = RequiredSeniority',
+    'group Project (tag projectId: ProjectId) {',
+    '  projection requiredSeniority: Seniority[] = [] {',
+    '    on ProjectDefined => set event.data.requiredSeniority',
+    '  }',
     '}',
-    'entity Employee (tag employeeId: EmployeeId) {',
-    '  seniority = EmployeeSeniority',
-    '}',
-    'projection RequiredSeniority (tag projectId: ProjectId): Seniority[] = [] {',
-    '  on ProjectDefined => set event.data.requiredSeniority',
-    '}',
-    'projection EmployeeSeniority (tag employeeId: EmployeeId): Seniority = Junior {',
-    '  on EmployeeHired => set event.data.seniority',
+    'group Employee (tag employeeId: EmployeeId) {',
+    '  projection seniority: Seniority = Junior {',
+    '    on EmployeeHired => set event.data.seniority',
+    '  }',
     '}',
     'command Assign(projectId: ProjectId, employeeId: EmployeeId, wanted: Seniority[]) {',
     '  alias project = Project(projectId)',
@@ -4312,7 +4542,7 @@ function build(index) {
     '}',
   ].join('\n'));
   const model = () => projectState()[id];
-  const cmd = () => model()['command-definitions'].Assign;
+  const cmd = () => lists(model()['command-definitions'].Assign);
   const slice = () => sandbox.sliceOf(model(), 'Assign');
   const paint = () => sandbox.stepDecision(model(), slice());
   const A = (alias, property) => JSON.stringify({ alias, property });
@@ -4364,35 +4594,35 @@ function build(index) {
 
 
 {
-  const { id, model } = build(ENTITIES);   // its own copy: this one strips an entity down
+  const { id, model } = build(GROUPED);   // its own copy: this one strips a group down
   sandbox.setActiveModelId(id);
   const slice = () => sandbox.sliceOf(model(), 'SubscribeStudentToCourse');
 
   // The bug this guards: what is on screen is derived from what has
   // been answered, never accumulated by the act of answering. Gate a
-  // question on a change event instead, and an entity with exactly one
-  // property deadlocks – its only property is filled in for you, so a
-  // `<select>` already showing it fires nothing when you pick it, and
+  // question on a change event instead, and a group with exactly one
+  // projection deadlocks – its only projection is filled in for you, so
+  // a `<select>` already showing it fires nothing when you pick it, and
   // there is no event left to advance on.
-  check('an entity with one property does not strand the wizard', () => {
-    sandbox.updateDefinition('entity-definition', id, 'Student', {
-      properties: [{ name: 'subscriptionCount', projection: 'StudentSubscriptionCount' }],
-    });
+  check('a group with one projection does not strand the wizard', () => {
+    sandbox.moveProjectionOutOfGroup(id, 'Student.exists');
+    eq(sandbox.groupProjections(model()['group-definitions'].Student).map((p) => p.name),
+      ['subscriptionCount'], 'one projection left in Student');
     sandbox.state.slice = 'SubscribeStudentToCourse';
     sandbox.state.adder = 'rule';
     sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
     const paint = () => sandbox.stepDecision(model(), slice());
     paint();
     findAll(paint(), (n) => n.tag === 'select')[0]
-      .onchange({ target: { value: 'entity:Student' } });
+      .onchange({ target: { value: 'group:Student' } });
     const step = paint();
-    // The only property is the answer, so the question after it is
+    // The only projection is the answer, so the question after it is
     // already there – no second pick, and nothing to get stuck on.
     // `student2`, because this command already reads a student – the
     // picker offered "another Student…", which is a different instance.
     eq(sandbox.state.ruleDraft.left,
       JSON.stringify({ alias: 'student2', property: 'subscriptionCount' }),
-      'its one property answered the second question by itself');
+      'its one projection answered the second question by itself');
     eq(/What must be true of it\?/.test(textOf(step)), true,
       'so the third question is on screen without another event');
     eq(findAll(step, (n) => n.tag === 'button').some((b) => textOf(b) === 'Add rule'), true,
@@ -4400,346 +4630,6 @@ function build(index) {
     sandbox.closeForms();
   });
 
-}
-
-// ---------------------------------------------------------------
-// The pages the lifecycle change added or reshaped, actually painted.
-//
-// Everything above tests the derivation. These paint it, because a
-// render path that throws takes the whole page with it and nothing
-// else here would notice.
-// ---------------------------------------------------------------
-{
-  const { readable } = sandbox;
-  const has = (text, part, why) =>
-    eq(text.includes(part), true, why + ' – expected the page to contain: ' + part);
-
-  const paintTree = (view, model, before) => {
-    const main = sandbox.document.createElement('div');
-    sandbox.state.view = view;
-    if (before) before();
-    if (view === 'lifecycles') sandbox.renderLifecycles(model, main);
-    else sandbox.renderEntity(model, main);
-    return main;
-  };
-  const paint = (view, model, before) => textOf(paintTree(view, model, before));
-  // "none" as a row of its own – valued '', drawn as no value – rather
-  // than as a word somewhere on the page.
-  const offersNone = (tree) => findAll(tree, (n) => n.tag === 'option'
-    && n.value === '' && n.className === 'none' && textOf(n) === 'none').length > 0;
-
-  for (const [index, slug] of [[0, 'course-simple'], [4, 'pricing-simple'],
-    [5, 'content-decisions-scripted'], [2, 'course-tenant']]) {
-    check(`${slug} paints its Lifecycles page`, () => {
-      const { model } = build(index);
-      sandbox.setActiveModelId(model().id);
-      const text = paint('lifecycles', model());
-      eq(text.length > 0, true, 'something was drawn');
-      const { machines, excluded } = sandbox.lifecycleMachines(model());
-      for (const machine of machines) {
-        has(text, readable(machine.entity), `${machine.entity} is on the page`);
-      }
-      for (const e of excluded) {
-        has(text, readable(e.entity), `${e.entity} is said to be missing, not dropped`);
-      }
-    });
-  }
-
-  check('a boolean machine is drawn compactly and an enum one is not', () => {
-    const { model } = build(ENTITIES);
-    sandbox.setActiveModelId(model().id);
-    const text = paint('lifecycles', model());
-    has(text, 'Existence only', 'the two weights are separated');
-    has(text, 'Student registered', 'and a boolean machine names what brings one into being');
-  });
-
-  check('an entity page paints its lifecycle in Identity, not the ledger', () => {
-    const { model } = build(ENTITIES);
-    sandbox.setActiveModelId(model().id);
-    sandbox.state.lcOpen = {};
-    const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    has(text, 'identified by', 'the Identity row is there');
-    // Folded by default: the lifecycle rides on the identifier line, in
-    // words, and the track is one click away.
-    has(text, 'state exists · set by Student registered', 'folded onto the identifier line');
-    eq(text.includes('stateexists'), false, 'with no state row of its own yet');
-    // The chip is the property in every branch – it used to be the
-    // setters when there were any, which left the empty case naming
-    // itself twice.
-    const open = paint('entity', model(), () => { sandbox.state.lcOpen = { Student: true }; });
-    has(open, 'stateexists', 'opened, the state row names the property');
-    has(open, 'Student registered', 'with what moves it drawn on the arrow');
-    eq(open.includes('exists once'), false, 'and no longer says the same word twice');
-    eq(/What we know about each one[\s\S]*exists/.test(open), false,
-      'and `exists` is not also a property row');
-    sandbox.state.lcOpen = {};
-  });
-
-  check('an enum lifecycle folds to its state count', () => {
-    const { model } = build(ENTITIES);
-    sandbox.setActiveModelId(model().id);
-    sandbox.state.lcOpen = {};
-    const text = paint('entity', model(), () => { sandbox.state.entity = 'Course'; });
-    has(text, 'state status · 3 states', 'counted, not listed');
-    eq(text.includes('Archived'), false, 'the states wait for the row');
-  });
-
-  check('a lifecycle nothing sets still says so, folded', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    const fold = sandbox.lifecycleOf(model(), 'Student').projectionName;
-    const body = sandbox.deepClone(model()['projection-definitions'][fold]);
-    body.handlers = [];
-    updateDefinition('projection-definition', id, fold, body);
-    sandbox.state.lcOpen = {};
-    const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    // It is only there because somebody added it, so nothing hides it:
-    // `set by –` is the next step, not noise.
-    has(text, 'state exists · set by –', 'on the identifier line');
-    eq(text.includes('+ lifecycle'), false, 'and no offer to add another');
-  });
-
-  check('an entity with no lifecycle offers one and says nothing else about state', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    sandbox.createEntity(model(), 'room');
-    sandbox.state.lcMenu = null;
-    const text = paint('entity', model(), () => { sandbox.state.entity = 'Room'; });
-    has(text, '+ lifecycle', 'the one way to add one');
-    eq(/not designated|exists/.test(text), false, 'and no word about existence');
-    const open = paint('entity', model(), () => { sandbox.state.lcMenu = 'lc+:Room'; });
-    has(open, 'Exists (boolean)', 'the one-click boolean');
-    has(open, 'Named states (enum)…', 'the enum');
-    eq(open.includes('Existing property…'), false, 'and no designation with nothing to designate');
-    sandbox.state.lcMenu = null;
-  });
-
-  check('an enum lifecycle named from nothing needs only two states', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    sandbox.createEntity(model(), 'room');
-    const text = paint('entity', model(), () => {
-      sandbox.state.entity = 'Room';
-      sandbox.state.promoting = 'Room';
-      sandbox.state.promoteDraft = sandbox.scratchLifecycleDraft('Room');
-    });
-    has(text, 'Name its states', 'the form opens in its own mode');
-    sandbox.closeForms();
-    eq(sandbox.mergeIntoLifecycle(model(), 'Room', {
-      typeName: 'RoomStatus', property: 'status', initialState: 'Draft',
-      steps: [{ from: null, state: 'Published' }],
-    }), 'status', 'two states are enough');
-    const lifecycle = sandbox.lifecycleOf(model(), 'Room');
-    eq(lifecycle.isBoolean, false, 'an enum');
-    eq(lifecycle.states, ['Draft', 'Published'], 'with the states as named');
-    eq(model()['projection-definitions'].RoomStatus.handlers, [], 'and nothing moving it yet');
-    // Promoting a boolean still wants three: two would be the boolean
-    // again, with vocabulary.
-    eq(sandbox.mergeIntoLifecycle(model(), 'Student', {
-      typeName: 'StudentPhase', property: 'phase', initialState: 'Out',
-      steps: [{ from: 'exists', state: 'In' }],
-    }), undefined, 'a boolean promoted to two states is refused');
-    eq(sandbox.lifecycleOf(model(), 'Student').property, 'exists', 'and nothing changed');
-  });
-
-  check('an enum lifecycle cannot reuse a property name the entity has', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    sandbox.createEntity(model(), 'room');
-    sandbox.addExistenceLifecycle(model(), 'Room');
-    sandbox.removeLifecycle(model(), 'Room');
-    eq(sandbox.mergeIntoLifecycle(model(), 'Room', {
-      typeName: 'RoomPhase', property: 'exists', initialState: 'A', steps: [{ from: null, state: 'B' }],
-    }), undefined, 'refused');
-    eq('RoomPhase' in model()['custom-type-definitions'], false, 'before anything was written');
-  });
-
-  check('the inline track gives up on anything that is not a chain', () => {
-    const chain = {
-      isBoolean: false, states: ['Draft', 'Live', 'Gone'], initial: 'Draft',
-      opaque: [], terminal: ['Gone'],
-      transitions: [
-        { event: 'Published', target: 'Live', sources: ['Draft'] },
-        { event: 'Removed', target: 'Gone', sources: ['Live'] },
-      ],
-    };
-    eq(!!sandbox.lifecycleTrack(chain), true, 'a chain draws');
-    eq(sandbox.lifecycleTrack({ ...chain, states: [...chain.states, 'Revived'] }), null,
-      'a fourth state does not');
-    eq(sandbox.lifecycleTrack({ ...chain, opaque: ['Recomputed'] }), null,
-      'nor one with a handler this cannot read');
-    eq(sandbox.lifecycleTrack({
-      ...chain,
-      transitions: [...chain.transitions, { event: 'Restored', target: 'Live', sources: ['Gone'] }],
-    }), null, 'nor a way back');
-    eq(sandbox.lifecycleTrack({
-      ...chain,
-      transitions: [...chain.transitions, { event: 'Dropped', target: 'Gone', sources: ['Draft'] }],
-    }), null, 'nor a jump the chain would have hidden');
-  });
-
-  check('the promotion form paints for a boolean lifecycle', () => {
-    const { model } = build(ENTITIES);
-    sandbox.setActiveModelId(model().id);
-    const tree = paintTree('entity', model(), () => {
-      sandbox.state.entity = 'Student';
-      sandbox.state.promoting = 'Student';
-    });
-    const text = textOf(tree);
-    has(text, 'Give it more than two states', 'the form is open');
-    eq(offersNone(tree), true, 'a state with no boolean behind it is expressible');
-    has(text, 'the enum these states belong to', 'and naming is what it asks for');
-    sandbox.closeForms();
-  });
-
-  check('the merge form can drop a boolean and reorder the stages', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    for (const [prop, event, fold] of [['registered', 'DidRegister', 'DidRegisterFold'],
-      ['expelled', 'WasExpelled', 'WasExpelledFold']]) {
-      addTaggedEvent(id, event, {
-        properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
-      });
-      addDefinition('projection-definition', id, fold, {
-        tags: [{ name: 'studentId', tagType: 'StudentId' }],
-        valueType: 'boolean', isList: false, initialValue: false,
-        handlers: [{ event, operation: 'set', value: true }],
-      });
-      const body = sandbox.deepClone(model()['entity-definitions'].Student);
-      body.properties.push({ name: prop, projection: fold });
-      updateDefinition('entity-definition', id, 'Student', body);
-    }
-    eq(sandbox.entityMergeCandidates(model(), 'Student'), ['exists', 'registered', 'expelled'],
-      'all three are one-way');
-
-    // Absorb only two of the three, in an order the offer would not have
-    // proposed – `exists` stays an ordinary property.
-    sandbox.mergeIntoLifecycle(model(), 'Student', {
-      typeName: 'StudentStatus', property: 'status', initialState: 'Prospective',
-      steps: [{ state: 'Registered', from: 'registered' }, { state: 'Expelled', from: 'expelled' }],
-    });
-    const after = model()['entity-definitions'].Student;
-    eq(after.lifecycle, 'status', 'the merged property is designated');
-    eq(after.properties.some((p) => p.name === 'exists'), true,
-      'the boolean left out stays as its own property');
-    eq(model()['projection-definitions'].StudentExists !== undefined, true,
-      'and so does its fold');
-    eq(model()['custom-type-definitions'].StudentStatus.schema.enum,
-      ['Prospective', 'Registered', 'Expelled'], 'in the order the steps were given');
-  });
-
-  check('the designation picker offers only properties with states', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    eq(sandbox.lifecycleCandidates(model(), 'Student'), ['exists'],
-      'a count is not a lifecycle; a boolean is');
-    eq(sandbox.lifecycleCandidates(model(), 'Course'), ['status'],
-      'an enum property is offered too');
-    const tree = paintTree('entity', model(), () => {
-      sandbox.state.entity = 'Student';
-      sandbox.state.designating = 'Student';
-    });
-    const text = textOf(tree);
-    has(text, 'the state is', 'the picker is open');
-    eq(offersNone(tree), true, 'and un-designating is possible wherever designating is');
-    sandbox.closeForms();
-  });
-
-  check('designating a different property moves the lifecycle', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    // A hand-built state property, which is the case the picker exists
-    // for: nothing about it came from the scaffold or a promotion.
-    addDefinition('custom-type-definition', id, 'Standing',
-      { schema: { type: 'string', enum: ['Unknown', 'Good', 'Poor'] } });
-    addDefinition('projection-definition', id, 'StudentStanding', {
-      tags: [{ name: 'studentId', tagType: 'StudentId' }],
-      valueType: 'Standing', isList: false, initialValue: { enumMember: 'Unknown' },
-      handlers: [{ event: 'StudentRegistered', operation: 'set', value: { enumMember: 'Good' } }],
-    });
-    const student = sandbox.deepClone(model()['entity-definitions'].Student);
-    student.properties.push({ name: 'standing', projection: 'StudentStanding' });
-    updateDefinition('entity-definition', id, 'Student', student);
-    eq(sandbox.lifecycleCandidates(model(), 'Student'), ['exists', 'standing'], 'both eligible');
-
-    const moved = sandbox.deepClone(model()['entity-definitions'].Student);
-    moved.lifecycle = 'standing';
-    updateDefinition('entity-definition', id, 'Student', moved);
-    const lifecycle = sandbox.lifecycleOf(model(), 'Student');
-    eq(lifecycle.property, 'standing', 'the designation moved');
-    eq(lifecycle.isBoolean, false, 'to an enum');
-    eq(lifecycle.states, ['Unknown', 'Good', 'Poor'], 'with its own states');
-    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Student'), [],
-      'and nothing complains – `exists` is now an ordinary property');
-  });
-
-  check('un-designating leaves an entity with no lifecycle, which is allowed', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    const body = sandbox.deepClone(model()['entity-definitions'].Student);
-    delete body.lifecycle;
-    updateDefinition('entity-definition', id, 'Student', body);
-    eq(sandbox.lifecycleOf(model(), 'Student'), null, 'none resolves');
-    eq(sandbox.lifecycleRefusal(model(), 'Student'), 'none', 'and that is the reason given');
-    eq(sandbox.modelAdvisories(model()).filter((a) => a.name === 'Student'), [],
-      'no advisory – an entity need not have one');
-    const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    has(text, '+ lifecycle', 'the page offers one back');
-    eq(text.includes('not designated'), false, 'rather than calling the absence a fault');
-    const open = paint('entity', model(), () => { sandbox.state.lcMenu = 'lc+:Student'; });
-    has(open, 'Exists (boolean)', 'which would designate the `exists` still there');
-    has(open, 'Existing property…', 'beside the picker for it');
-    sandbox.state.lcMenu = null;
-  });
-
-  check('the entity page offers the merge where the booleans are', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    addTaggedEvent(id, 'StudentExpelled2', {
-      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
-    });
-    addDefinition('projection-definition', id, 'StudentExpelled2Fold', {
-      tags: [{ name: 'studentId', tagType: 'StudentId' }],
-      valueType: 'boolean', isList: false, initialValue: false,
-      handlers: [{ event: 'StudentExpelled2', operation: 'set', value: true }],
-    });
-    const student = sandbox.deepClone(model()['entity-definitions'].Student);
-    student.properties.push({ name: 'expelled', projection: 'StudentExpelled2Fold' });
-    updateDefinition('entity-definition', id, 'Student', student);
-    // No command guards either of them, so the rule wizard would never
-    // get the chance – this is the surface that does.
-    const text = paint('entity', model(), () => { sandbox.state.entity = 'Student'; });
-    has(text, 'exists, expelled never go back', 'the offer names both booleans, and why');
-    has(text, 'Merge', 'and offers to take them');
-  });
-
-  check('the merge prompt paints in the decide step', () => {
-    const { id, model } = build(ENTITIES);
-    sandbox.setActiveModelId(id);
-    addTaggedEvent(id, 'StudentSuspended', {
-      properties: [{ name: 'studentId', propertyType: 'StudentId', isOptional: false, isList: false }],
-    });
-    addDefinition('projection-definition', id, 'StudentSuspension', {
-      tags: [{ name: 'studentId', tagType: 'StudentId' }],
-      valueType: 'boolean', isList: false, initialValue: false,
-      handlers: [{ event: 'StudentSuspended', operation: 'set', value: true }],
-    });
-    const student = sandbox.deepClone(model()['entity-definitions'].Student);
-    student.properties.push({ name: 'isSuspended', projection: 'StudentSuspension' });
-    updateDefinition('entity-definition', id, 'Student', student);
-    const body = sandbox.deepClone(model()['command-definitions'].SubscribeStudentToCourse);
-    body.conditions.push({
-      leftHandSide: { alias: 'student', property: 'isSuspended' }, predicate: 'isFalse',
-    });
-    updateDefinition('command-definition', id, 'SubscribeStudentToCourse', body);
-
-    const main = sandbox.document.createElement('div');
-    sandbox.state.slice = 'SubscribeStudentToCourse';
-    main.appendChild(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SubscribeStudentToCourse')));
-    const text = textOf(main);
-    has(text, 'stages of one life', 'the offer is made where the rule was written');
-    has(text, 'Give Student a lifecycle instead', 'with a way to take it');
-  });
 }
 
 // ---------------------------------------------------------------
@@ -4760,10 +4650,10 @@ function build(index) {
     eq(move(2, 0, false), 'acbd1', 'up, after');
   });
 
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
   const command = 'SubscribeStudentToCourse';
-  const lefts = () => model()['command-definitions'][command].conditions
+  const lefts = () => lists(model()['command-definitions'][command]).conditions
     .map((c) => c.leftHandSide.alias + '.' + c.leftHandSide.property);
   const rows = () => {
     sandbox.state.slice = command;
@@ -4826,7 +4716,7 @@ function build(index) {
 // from its name – and not from the actions at its right.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
   // Nothing has happened, so the subscription is refused – any
   // scenario will do; what is under test is its row.
@@ -4859,7 +4749,7 @@ function build(index) {
 // stored name and payload kept out of the text and in the tooltip.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(3);
+  const { id, model } = build('course-schedules');
   sandbox.setActiveModelId(id);
 
   const paint = () => {
@@ -4876,7 +4766,7 @@ function build(index) {
     }
     eq(text.includes('SubscribeStudentToCourse'), false, 'the stored name is not on the page');
     eq(text.includes('Student subscribed to course'), true, 'the event it appends');
-    eq(text.includes('others'), true, 'an alias that says more than the entity name');
+    eq(text.includes('others'), true, 'an alias that says more than the group name');
     eq(text.includes('always allowed'), true, 'DefineCourse has no rules');
     eq(text.includes('6 rules'), true, 'SubscribeStudentToCourse has six');
   });
@@ -4916,9 +4806,9 @@ function build(index) {
     eq(map.stations[subscribe.stations[0]], { name: 'SubscribeStudentToCourse', kind: 'command', lines: [4] },
       'the line starts at its command, a station of its own');
     eq(map.stations[subscribe.stations[subscribe.stations.length - 1]].name, 'StudentSubscribedToCourse', 'the terminus');
-    const withEntities = build(ENTITIES).model();
-    eq(sandbox.metroReadProjections(withEntities, withEntities['command-definitions'].ArchiveCourse), ['CourseStatus'],
-      'a read through an entity property is a read of its projection');
+    const groups = build(GROUPED).model();
+    eq(sandbox.metroReadProjections(groups, groups['command-definitions'].ArchiveCourse), ['Course.status'],
+      'a read through a group\'s alias is a read of its projection, by its qualified name');
   });
 
   const octilinear = (name, layout) => {
@@ -4997,21 +4887,21 @@ function build(index) {
 }
 
 // ---------------------------------------------------------------
-// The event model: an order derived along the lifecycles, event lanes
+// The event model: an order by feature and as written, event lanes
 // by tag, and a read model wherever an event first moves some state.
 // ---------------------------------------------------------------
 {
-  const { model } = build(3);
+  const { model } = build('course-schedules');
   const em = () => sandbox.eventModel(model());
   const commandsOf = (columns) => columns.filter((c) => c.kind === 'command').map((c) => c.command);
 
-  check('commands are ordered along the lifecycles, feature order breaking ties', () => {
+  check('commands are ordered by feature, and within one as they were written', () => {
     eq(model().name, 'Course Example (with schedules)', 'the example these expectations are about');
     eq(commandsOf(em().columns), [
-      'DefineCourse', 'RegisterStudent',
-      'ChangeCourseCapacity', 'RescheduleCourse', 'SubscribeStudentToCourse', 'UnsubscribeStudentFromCourse',
-      'ArchiveCourse',
-    ], 'creators first, the command that ends a course last');
+      'DefineCourse', 'ChangeCourseCapacity', 'ArchiveCourse', 'RescheduleCourse',
+      'RegisterStudent',
+      'SubscribeStudentToCourse', 'UnsubscribeStudentFromCourse',
+    ], 'the creating command first, as the author wrote it – not the rail\'s alphabet');
   });
 
   check('event lanes are tags, and an event with two tags spans both', () => {
@@ -5023,17 +4913,17 @@ function build(index) {
 
   check('a read model follows the first event that moves each piece of state, once', () => {
     const reads = em().columns.filter((c) => c.kind === 'read');
-    eq(reads[0], { kind: 'read', entity: 'Course', properties: ['status', 'capacity', 'slots'], from: 'CourseDefined' },
+    eq(reads[0], { kind: 'read', group: 'Course', properties: ['status', 'capacity', 'slots'], from: 'CourseDefined' },
       'what defining a course sets');
     eq(reads.some((r) => r.projection === 'CourseNumbering'), true, 'a standalone projection is a read model too');
-    const seen = reads.flatMap((r) => r.properties.map((p) => r.entity + '.' + p));
+    const seen = reads.flatMap((r) => r.properties.map((p) => r.group + '.' + p));
     eq(seen.length, new Set(seen).size, 'no property introduced twice');
-    const fromSubscribe = reads.filter((r) => r.from === 'StudentSubscribedToCourse').map((r) => r.entity);
+    const fromSubscribe = reads.filter((r) => r.from === 'StudentSubscribedToCourse').map((r) => r.group);
     eq(fromSubscribe, ['Course', 'Student'], 'in lane order');
   });
 
   check('the layout places no two cards on top of each other', () => {
-    for (const index of [0, 3, 8]) {
+    for (const index of [0, 3, 6]) {
       const { model: m } = build(index);
       const layout = sandbox.eventModelLayout(m(), sandbox.eventModel(m()));
       const cards = layout.cards;
@@ -5049,7 +4939,7 @@ function build(index) {
   });
 
   check('the code view paints, and going back to the pages applies what was typed', () => {
-    const { id, model: m } = build(ENTITIES);
+    const { id, model: m } = build(GROUPED);
     sandbox.setActiveModelId(id);
     const { state } = sandbox;
     Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: false });
@@ -5065,12 +4955,12 @@ function build(index) {
     eq(sandbox.codeDirty(), true, 'edited');
     sandbox.leaveCode();
     eq(state.code, false, 'back on the pages');
-    eq(m()['command-definitions'].ArchiveCourse.publishes[0].name, 'CourseCapacityChanged', 'applied on the way');
+    eq(lists(m()['command-definitions'].ArchiveCourse).publishes[0].name, 'CourseCapacityChanged', 'applied on the way');
     eq(sandbox.codeDirty(), false, 'and the text is what the model says');
   });
 
   check('the code stays the surface across pages it cannot show, and a kind page lands on its section', () => {
-    const { id, model: m } = build(ENTITIES);
+    const { id, model: m } = build(GROUPED);
     sandbox.setActiveModelId(id);
     const { state, codeView } = sandbox;
     Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: true, openEvent: null });
@@ -5092,7 +4982,7 @@ function build(index) {
   });
 
   check('the switch rides the header of the code, and unapplied code leads back to where it was left', () => {
-    const { id, model: m } = build(ENTITIES);
+    const { id, model: m } = build(GROUPED);
     sandbox.setActiveModelId(id);
     const { state, codeView } = sandbox;
     Object.assign(state, { view: 'slice', slice: 'ArchiveCourse', code: true });
@@ -5122,7 +5012,7 @@ function build(index) {
   });
 
   check('the split shows the page and its code, only where it fits, and follows the cursor', () => {
-    const { id, model: m } = build(ENTITIES);
+    const { id, model: m } = build(GROUPED);
     sandbox.setActiveModelId(id);
     const { state, codeView } = sandbox;
     const narrow = sandbox.matchMedia;
@@ -5196,7 +5086,7 @@ function build(index) {
   });
 
   check('a text the model moved under stays stale through a model switch, and is never applied', () => {
-    const { id, model: m } = build(ENTITIES);
+    const { id, model: m } = build(GROUPED);
     const other = createDcbModel('Other');
     const { state, codeView } = sandbox;
     sandbox.setActiveModelId(id);
@@ -5204,7 +5094,7 @@ function build(index) {
     const paint = () => sandbox.renderCode(sandbox.activeModel(), sandbox.document.createElement('div'));
     paint();
     sandbox.onCodeInput(swap(codeView.text, 'student.subscriptionCount < 10', 'student.subscriptionCount < 12'));
-    const body = JSON.parse(JSON.stringify(m()['command-definitions'].ArchiveCourse));
+    const body = lists(m()['command-definitions'].ArchiveCourse);
     body.publishes[0].name = 'CourseCapacityChanged';
     updateDefinition('command-definition', id, 'ArchiveCourse', body);
     paint();
@@ -5216,18 +5106,17 @@ function build(index) {
     paint();
     eq([codeView.stale, sandbox.codeDirty()], [true, true], 'still stale, still edited, when it comes back');
     sandbox.leaveCode();
-    eq(m()['command-definitions'].ArchiveCourse.publishes[0].name, 'CourseCapacityChanged', 'the change it missed survives');
+    eq(lists(m()['command-definitions'].ArchiveCourse).publishes[0].name, 'CourseCapacityChanged', 'the change it missed survives');
   });
 
-  check('the page paints, guarded emissions and all', () => {
-    const { id, model: m } = build(8);
+  check('the page paints, rule counts and all', () => {
+    const { id, model: m } = build('content-decisions-boundary');
     sandbox.setActiveModelId(id);
     const main = sandbox.document.createElement('div');
     sandbox.renderEventModel(m(), main);
     const text = textOf(main);
     eq(text.includes('Events tagged'), true, 'a tag lane');
-    eq(text.includes('guarded'), true, 'an emission with a when');
-    eq(text.includes('2 rules · 2 guards'), true, 'UpdateText counts both');
+    eq(text.includes('2 rules'), true, 'UpdateText counts its rules');
   });
 }
 
@@ -5331,7 +5220,7 @@ check('the reference links only anchors the website defines', () => {
   const links = sandbox.helpReferenceLinks();
   eq(links[0], sandbox.NOTATION_GUIDE_URL, 'the guide');
   eq(links.every((link) => link.startsWith(sandbox.NOTATION_GUIDE_URL)), true, 'only the notation pages');
-  eq(links.length, 32, 'the anchors the website defines, and no new one before it does');
+  eq(links.length, 25, 'the anchors the website defines, and no new one before it does');
   // dcb.events reads the list by loading shared.js with nothing around
   // it – no window, no document – so loading it must need neither.
   const bare = require('vm').createContext({});
@@ -5346,17 +5235,10 @@ check('the reference links only anchors the website defines', () => {
 // ---------------------------------------------------------------
 {
   check('experimentalFeatures names what a model uses', () => {
-    const { model } = build(ENTITIES);
-    const used = [...new Set(sandbox.experimentalFeatures(model()).map((f) => f.feature))].sort();
-    eq(used, ['entities', 'lifecycles'], 'course-simple – feature groups are not experimental');
-    const guarded = build(8).model;
-    eq(sandbox.experimentalFeatures(guarded()).some((f) => f.feature === 'guards' && f.where === 'UpdateText'),
-      true, 'a guarded emission, on its command');
-    const derived = build(9).model;
+    const { model } = build(GROUPED);
+    eq(sandbox.experimentalFeatures(model()), [], 'groups are not experimental, nor are feature groups');
+    const derived = build('content-decisions-derived').model;
     eq(sandbox.experimentalFeatures(derived()), [], 'a derived projection is not experimental');
-    const scripted = build(5).model;
-    eq(sandbox.experimentalFeatures(scripted()).some((f) => f.feature === 'scripted' && f.where === 'DocumentStatus'),
-      true, 'a scripted projection, on itself');
   });
 
   check('a shipped model is marked experimental exactly when it uses something experimental', () => {
@@ -5419,12 +5301,12 @@ check('the reference links only anchors the website defines', () => {
     eq(sandbox.modelToSource(model).includes('↯'), false, 'a fallback is never written');
   });
 
-  check('the notice names the features when the flag is off, and only then', () => {
-    const { model } = build(ENTITIES);
-    eq(sandbox.experimentalNotice(model()), null, 'flag on: nothing to say');
+  check('no language construct is experimental, so the notice has nothing to say', () => {
     store.set('dcb-playground:experimental', 'off');
-    const text = textOf(sandbox.experimentalNotice(model()));
-    eq(text.includes('entities, lifecycles.'), true, 'the features, by name: ' + text);
+    sandbox.PREDEFINED_MODELS.forEach((entry, index) => {
+      eq(sandbox.experimentalNotice(build(index).model()), null, entry.slug);
+    });
+    eq(sandbox.experimentalNotice(build(GROUPED).model()), null, 'nor a model with groups');
     store.set('dcb-playground:experimental', 'on');
   });
 
@@ -5473,7 +5355,7 @@ check('the reference links only anchors the website defines', () => {
     sandbox.closeForms();
   });
 
-  const { id, model } = build(ENTITIES);
+  const { id, model } = build(GROUPED);
   sandbox.setActiveModelId(id);
   const feature = sandbox.featureGroups(model()).find((g) => g.name !== sandbox.UNGROUPED).name;
 
@@ -5553,9 +5435,8 @@ check('the reference links only anchors the website defines', () => {
   const choose = (select, value) => { fresh(); select.onchange({ target: { value } }); };
   const NEW = ' new definition';
 
-  // The shipped models are stated without entities, so this is the
-  // flag-off page – the one most people see.
-  const { id, model } = build(0);
+  // A shipped model, with the flag off – the page most people see.
+  const { id, model } = build('course-simple');
   sandbox.setActiveModelId(id);
   store.set('dcb-playground:experimental', 'off');
   const openRuleAdder = () => {
@@ -5770,7 +5651,7 @@ check('the reference links only anchors the website defines', () => {
 // Advanced switch over what most projections never need.
 // ---------------------------------------------------------------
 {
-  const { id, model } = build(0);
+  const { id, model } = build('course-simple');
   sandbox.setActiveModelId(id);
   store.set('dcb-playground:experimental', 'off');
   const ADVANCED = 'dcb-playground:projection-advanced';
@@ -5807,41 +5688,32 @@ check('the reference links only anchors the website defines', () => {
     sandbox.closeForms();
   });
 
-  check('the Advanced switch keeps scripting and who reads it out of the way until asked', () => {
+  check('the Advanced switch keeps deriving and who reads it out of the way until asked', () => {
     store.set(ADVANCED, 'off');
+    const toggle = (root) => findAll(root, (n) => n.tag === 'label' && textOf(n).trim() === 'derived projection').length;
+    eq(toggle(editorOf('CourseCapacity')), 0, 'no deriving offered');
     const off = textOf(editorOf('CourseCapacity'));
-    eq(off.includes('scripted projection'), false, 'no scripting offered');
     eq(/read by/i.test(off), false, 'no readers');
     eq(/query/i.test(off), true, 'the query is always there');
     eq(off.includes('Course defined'), true, 'with the events it handles');
     store.set(ADVANCED, 'on');
-    const flag = store.get('dcb-playground:experimental');
-    store.delete('dcb-playground:experimental');
-    const plain = textOf(editorOf('CourseCapacity'));
-    eq(plain.includes('derived projection'), true, 'deriving is offered');
-    eq(plain.includes('scripted projection'), false, 'scripting is experimental');
-    store.set('dcb-playground:experimental', 'on');
+    eq(toggle(editorOf('CourseCapacity')), 1, 'deriving is offered');
     const on = textOf(editorOf('CourseCapacity'));
-    eq(on.includes('scripted projection'), true, 'scripting is offered with the flag on');
     eq(/read by/i.test(on), true, 'and who reads it is said');
-    if (flag === undefined) store.delete('dcb-playground:experimental'); else store.set('dcb-playground:experimental', flag);
     store.set(ADVANCED, 'off');
     sandbox.closeForms();
   });
 
-  check('a scripted projection shows its scripting with the switch off', () => {
+  check('a derived projection shows its kind with the switch off', () => {
     store.set(ADVANCED, 'off');
-    const { id: scriptedId, model: scripted } = build(
-      sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-scripted'));
-    sandbox.setActiveModelId(scriptedId);
-    store.set(ADVANCED, 'off');
-    const name = Object.keys(scripted()['projection-definitions'])
-      .find((n) => scripted()['projection-definitions'][n].script);
-    sandbox.state.projDraft = { name, body: projectionDraftFrom(scripted()['projection-definitions'][name]) };
+    const { id: derivedId, model: derived } = build(
+      sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'content-decisions-derived'));
+    sandbox.setActiveModelId(derivedId);
+    const name = 'DocumentHasPendingChanges';
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(derived()['projection-definitions'][name]) };
     const root = sandbox.document.createElement('div');
-    for (const node of sandbox.projectionFields(scripted(), sandbox.state.projDraft.body)) root.appendChild(node);
-    eq(textOf(root).includes('scripted projection'), true, 'the switch hides offers, not what is stored');
-    eq(textOf(root).includes('initial state'), true, 'its state is any JSON');
+    for (const node of sandbox.projectionFields(derived(), sandbox.state.projDraft.body)) root.appendChild(node);
+    eq(textOf(root).includes('derived projection'), true, 'the switch hides offers, not what is stored');
     sandbox.setActiveModelId(id);
     sandbox.closeForms();
   });
@@ -5910,7 +5782,7 @@ check('the reference links only anchors the website defines', () => {
     const now = hours()['projection-definitions'].DeveloperHasHoursForWeek;
     eq([now.tags.map((t) => t.name), now.arguments.map((a) => a.name)], [['developerId'], ['week', 'hours']],
       'the first argument now');
-    const read = hours()['command-definitions'].AllocateHours.conditions[3].leftHandSide;
+    const read = lists(hours()['command-definitions'].AllocateHours).conditions[3].leftHandSide;
     eq(Object.keys(read.arguments), ['hours', 'week'], 'the command gives it as an argument');
     eq(sandbox.state.projDraft.body.arguments.map((a) => a.name), ['week', 'hours'], 'and the draft says the same');
     sandbox.setActiveModelId(id);
@@ -6052,15 +5924,10 @@ check('the app is text: no file carries a raw control byte', () => {
     const moveRow = sandbox.moveRow;
     let moved = 0;
     sandbox.moveRow = () => { moved += 1; return true; };
-    for (const open of [
-      () => { sandbox.state.importExport = true; },
-      () => { sandbox.state.pendingImport = { envelope: {} }; },
-    ]) {
-      open();
-      key('ArrowDown');
-      sandbox.state.importExport = false; sandbox.state.pendingImport = null;
-    }
-    eq(moved, 0, 'behind Import & Export and the import gate');
+    sandbox.state.importExport = true;
+    key('ArrowDown');
+    sandbox.state.importExport = false;
+    eq(moved, 0, 'behind Import & Export');
     key('ArrowDown');
     eq(moved, 1, 'and with nothing open, they do');
     sandbox.moveRow = moveRow;
@@ -6095,7 +5962,7 @@ check('the app is text: no file carries a raw control byte', () => {
     // the -text variant, which the dark theme maps back to the kind.
     const css = fs.readFileSync(path.join(APP, 'shared.css'), 'utf8');
     const page = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
-    const bare = (css + page).match(/(^|[^-a-z])color: ?var\(--(event|entity|projection)\)/gm) || [];
+    const bare = (css + page).match(/(^|[^-a-z])color: ?var\(--(event|projection)\)/gm) || [];
     eq(bare, [], 'no kind colour as text');
     const root = css.slice(css.indexOf(':root'), css.indexOf('}', css.indexOf(':root')));
     const value = (name) => (root.match(new RegExp(`--${name}: (#[0-9a-f]{6})`)) || [])[1];
@@ -6108,7 +5975,7 @@ check('the app is text: no file carries a raw control byte', () => {
       const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
       return (hi + 0.05) / (lo + 0.05);
     };
-    for (const kind of ['event-text', 'entity-text']) {
+    for (const kind of ['event-text', 'projection-text']) {
       eq(contrast(value(kind), value('bg')) >= 4.5, true, `--${kind} ${value(kind)} on --bg: ${contrast(value(kind), value('bg')).toFixed(2)}`);
     }
   });
@@ -6389,7 +6256,7 @@ check('a skipped definition, a defective one and a tag named like an argument ke
   const [simple] = twoModels('course-simple');
   const envelope = JSON.parse(JSON.stringify(sandbox.buildShareEnvelope(simple)));
   envelope.eventDefinitions.push({ name: 'Broken', properties: 'not a list' });
-  envelope.commandDefinitions[0].publishes[0].name = 'CourseInvented';
+  envelope.commandDefinitions[0].steps.find((step) => step.name)['name'] = 'CourseInvented';
   const status = envelope.projectionDefinitions.find((p) => p.name === 'CourseStatus');
   status.arguments = [{ name: 'courseId', propertyType: 'CourseId', isOptional: false, isList: false }];
   const { model, skipped } = sandbox.modelFromEnvelope(envelope);
@@ -6410,14 +6277,14 @@ check('a planned query is one item per tag set, as the store is asked, naming th
   eq(subscribe[0][0].types.includes('CourseDefined') && subscribe[0][0].types.includes('StudentSubscribedToCourse'), true,
     'the types of every read under that tag');
   eq(subscribe[0][0].from.length > 1, true, `several reads behind the course item: ${subscribe[0][0].from.join(', ')}`);
-  const id = loadPredefinedModel(sandbox.PREDEFINED_MODELS.findIndex((m) => m.slug === 'course-schedules'));
+  const { id } = build('course-schedules');
   const schedules = projectState()[id];
   const reschedule = sandbox.commandPlan(sandbox.boundarySummary(schedules, schedules['command-definitions'].RescheduleCourse));
   eq(reschedule.after, 'head', 'a chain takes head first');
   eq(reschedule.calls.map((query) => query.map((item) => item.tags)), [
     [['CourseId:{courseId}']],
     [['StudentId:{each course.subscribedStudentIds}']],
-    [['CourseId:{each students.subscribedCourseIds except courseId}']],
+    [['CourseId:{each students.subscribedCourseIds}']],
   ], 'a chain: one query per call, its placeholders saying where the values come from');
   eq(reschedule.calls[1][0].fannedOut, true, 'a fan-out says so');
 });
@@ -6627,6 +6494,1491 @@ check('a history dropped because the model changed elsewhere says so', () => {
   sandbox.run(() => addDefinition('event-definition', simple.id, 'Again', { properties: [], tags: [] }));
   eq(textOf(historyPage(projectState()[simple.id])).includes('From here'), true, 'and where it starts again');
 });
+
+// ---------------------------------------------------------------
+// A projection's lifecycle: an enum projection read as a state
+// machine, worked out from its handlers and the rules that read it.
+// ---------------------------------------------------------------
+{
+  const { lifecycleOf, lifecycleMachine, lifecycleMovements } = sandbox;
+  const fromText = (text) => {
+    store.clear();
+    sandbox.bumpLogRevision();
+    store.set('dcb-playground:experimental', 'on');
+    const id = sandbox.createDcbModel('Lifecycle cases');
+    sandbox.applyModelSource(id, text);
+    return projectState()[id];
+  };
+  const arrows = (machine) => machine.transitions
+    .map((t) => `${t.sources.map(String).join('|')} -${t.event}-> ${t.target}${t.conventional ? ' (conventional)' : ''}`);
+  const allowedIn = (machine, state) => machine.perState
+    .find((entry) => entry.state === state).commands.map((entry) => entry.command);
+
+  // Every case the derivation has to tell apart, in one model.
+  const CASES = `model "Lifecycle cases"
+
+enum Status { Fresh, Open, Closed, Lost }
+tag type ThingId = string
+
+event Opened { tag thingId: ThingId }
+event Closed { tag thingId: ThingId }
+event Moved { tag thingId: ThingId, status: Status }
+event Reopened { tag thingId: ThingId }
+event Forgotten { tag thingId: ThingId }
+
+projection ThingStatus (tag thingId: ThingId): Status = Fresh {
+  on Opened => set Open
+  on Closed => set Closed
+  on Moved => set event.data.status
+  on Reopened => set Open
+  on Forgotten => set Lost
+}
+
+projection Openings (tag thingId: ThingId): integer = 0 {
+  on Opened => increment 1
+}
+
+command OpenThing(thingId: ThingId) {
+  emit Opened { thingId }
+}
+
+command CloseExpected(thingId: ThingId, expected: Status) {
+  require ThingStatus(thingId) == expected
+    else reject "Not as expected"
+
+  emit Closed { thingId }
+}
+
+command CloseBoth(a: ThingId, b: ThingId) {
+  require ThingStatus(a) == Open
+    else reject "A is not open"
+  require ThingStatus(b) == Open
+    else reject "B is not open"
+
+  emit Closed { thingId: a }
+}
+
+command ReopenThing(thingId: ThingId) {
+  require ThingStatus(thingId) == Closed
+    else reject "Not closed"
+
+  emit Reopened { thingId }
+}
+
+command MoveThing(thingId: ThingId, status: Status) {
+  emit Moved { thingId, status }
+}
+`;
+
+  check('an enum or a boolean is a machine, anything else with handlers moves, a derived one has none', () => {
+    const simple = build('course-simple').model();
+    eq(lifecycleOf(simple, simple['projection-definitions'].CourseStatus),
+      { kind: 'enum', states: ['NonExistent', 'Existent', 'Archived'] }, 'an enum one');
+    eq(lifecycleOf(simple, simple['projection-definitions'].StudentExists),
+      { kind: 'boolean', states: [false, true] }, 'a boolean one');
+    eq(lifecycleOf(simple, simple['projection-definitions'].CourseCapacity), { kind: 'movements' }, 'a number moves');
+    eq(lifecycleOf(simple, { ...simple['projection-definitions'].CourseStatus, isList: true }), { kind: 'movements' },
+      'and so does a list of states');
+    const groups = build('course-groups').model();
+    eq(!!lifecycleOf(groups, sandbox.projectionsOf(groups)['Course.status']), true, 'grouped ones too');
+    const derived = build('content-decisions-derived').model();
+    eq(lifecycleOf(derived, derived['projection-definitions'].DocumentHasPendingChanges), null, 'not a derived one');
+    eq(lifecycleMachine(simple, 'CourseCapacity'), null, 'no machine for what only moves');
+    eq(lifecycleMovements(simple, 'CourseStatus'), null, 'and no movements for a machine');
+  });
+
+  check('a boolean machine: false and true, guarded by is true and is false', () => {
+    const machine = lifecycleMachine(build('course-groups').model(), 'Student.exists');
+    eq(machine.states, [false, true], 'two states');
+    eq(machine.initial, false, 'starting false');
+    eq(arrows(machine), ['false -StudentRegistered-> true'], 'registering is the one arrow');
+    eq(machine.terminal, [true], 'and nothing unregisters');
+    eq(allowedIn(machine, false), ['RegisterStudent'], 'is false');
+    eq(allowedIn(machine, true), ['SubscribeStudentToCourse'], 'is true');
+  });
+
+  check('a number moves: each handler, who appends its event, and their rules over it', () => {
+    const model = build('course-simple').model();
+    const moves = lifecycleMovements(model, 'CourseSubscriptionCount');
+    eq(moves.initial, 0, 'it starts at its initial value');
+    const rows = moves.handlers.map((handler) => ({
+      event: handler.event, operation: handler.operation,
+      by: handler.appendedBy.map((entry) => [entry.command, entry.rules.map(sandbox.conditionText)]),
+    }));
+    eq(rows, [
+      { event: 'StudentSubscribedToCourse', operation: 'increment',
+        by: [['SubscribeStudentToCourse', ['CourseSubscriptionCount(courseId) < CourseCapacity(courseId)']]] },
+      { event: 'StudentUnsubscribedFromCourse', operation: 'decrement', by: [['UnsubscribeStudentFromCourse', []]] },
+    ], 'one row per handler, with the rules over it');
+    eq(moves.readers.map((entry) => [entry.command, entry.rules.map(sandbox.conditionText)]),
+      [['ChangeCourseCapacity', ['CourseSubscriptionCount(courseId) <= newCapacity']]], 'and who only reads it');
+    eq(lifecycleMovements(model, 'CourseCapacity').readers.map((entry) => entry.command), ['SubscribeStudentToCourse'],
+      'read on the other side of a rule too');
+  });
+
+  check('a grouped list moves through its group alias', () => {
+    const moves = lifecycleMovements(build('course-groups').model(), 'Course.subscribedStudentIds');
+    eq(moves.handlers.map((handler) => [handler.operation, handler.appendedBy.map((entry) => entry.rules.length)]),
+      [['append', [1]], ['remove', [1]]], 'contains and not contains');
+  });
+
+  check('what nobody appends is said', () => {
+    const moves = lifecycleMovements(fromText(CASES), 'Openings');
+    eq(moves.handlers[0].appendedBy.map((entry) => entry.command), ['OpenThing'], 'appended by OpenThing');
+    const text = swap(CASES, 'command OpenThing(thingId: ThingId) {\n  emit Opened { thingId }\n}\n', '');
+    eq(lifecycleMovements(fromText(text), 'Openings').handlers[0].appendedBy, [], 'and by nobody once it is gone');
+  });
+
+  check('a guarded machine: each handler an arrow, from the states its publishers require', () => {
+    const machine = lifecycleMachine(build('course-simple').model(), 'CourseStatus');
+    eq(machine.states, ['NonExistent', 'Existent', 'Archived'], 'the members, in declared order');
+    eq(machine.initial, 'NonExistent', 'starting where the projection does');
+    eq(arrows(machine), ['NonExistent -CourseDefined-> Existent', 'Existent -CourseArchived-> Archived'], 'the arrows');
+    eq(machine.terminal, ['Archived'], 'Archived is where it ends');
+    eq(machine.neverSet, [], 'every state is reached');
+    eq(allowedIn(machine, 'NonExistent'), ['DefineCourse'], 'what may run before it exists');
+    eq(allowedIn(machine, 'Existent').length, 4, 'and while it does');
+    eq(allowedIn(machine, 'Archived'), [], 'and nothing once archived');
+  });
+
+  check('an unguarded arrow back to the initial state comes from every other state reached', () => {
+    const { id, model } = build('course-simple');
+    addDefinition('projection-definition', id, 'Exists', {
+      tags: [], valueType: 'boolean', isList: false, initialValue: false,
+      handlers: [
+        { event: 'CourseDefined', operation: 'set', value: true },
+        { event: 'CourseArchived', operation: 'set', value: false },
+      ],
+    });
+    const machine = lifecycleMachine(model(), 'Exists');
+    eq(arrows(machine), ['false -CourseDefined-> true (conventional)', 'true -CourseArchived-> false (conventional)'],
+      'archiving leads back, from true');
+    eq(machine.terminal, [], 'so true is no end');
+  });
+
+  check('a grouped projection is read through its group alias alike', () => {
+    const machine = lifecycleMachine(build('course-groups').model(), 'Course.status');
+    eq(arrows(machine), ['NonExistent -CourseDefined-> Existent', 'Existent -CourseArchived-> Archived'], 'the same arrows');
+  });
+
+  check('a null initial value is a state of its own, which `== null` requires', () => {
+    const machine = lifecycleMachine(build('developer-hours').model(), 'ProjectStatus');
+    eq(machine.states, [null, 'Active', 'Archived'], 'the empty state first');
+    eq(machine.initial, null, 'and it starts there');
+    eq(arrows(machine), ['null -ProjectAdded-> Active', 'Active -ProjectArchived-> Archived'], 'the arrows');
+  });
+
+  check('several states a rule allows are several sources', () => {
+    const machine = lifecycleMachine(build('content-decisions-boundary').model(), 'DocumentLifecycle');
+    eq(arrows(machine).filter((a) => /DocumentPublished|DocumentArchived/.test(a)), [
+      'Draft|Published -DocumentPublished-> Published',
+      'Draft|Published -DocumentArchived-> Archived',
+    ], 'each state the rule names, a source');
+  });
+
+  check('what cannot be read is said, not drawn', () => {
+    const machine = lifecycleMachine(fromText(CASES), 'ThingStatus');
+    eq(arrows(machine), [
+      'Fresh -Opened-> Open (conventional)',
+      'Fresh -Closed-> Closed (conventional)',
+      'Closed -Reopened-> Open',
+      'Fresh -Forgotten-> Lost (conventional)',
+    ], 'a rule narrows where its command moves from; the rest is drawn from the start');
+    eq(machine.transitions.find((t) => t.event === 'Opened').unguarded, ['OpenThing'], 'nothing guards opening');
+    eq(machine.transitions.find((t) => t.event === 'Forgotten').unpublished, true, 'nobody records Forgotten');
+    eq(machine.opaque, ['Moved'], 'a state taken from event data has no arrow');
+    eq(machine.unplaced, [
+      { command: 'CloseExpected', reason: 'unreadable' },
+      { command: 'CloseBoth', reason: 'ambiguous' },
+    ], 'a guard against a parameter, and two things read at once');
+    eq(machine.terminal, [], 'and with any of that, no state is claimed to be the end');
+    eq(allowedIn(machine, 'Fresh'), ['OpenThing', 'MoveThing'], 'unguarded commands run anywhere');
+    eq(allowedIn(machine, 'Closed'), ['OpenThing', 'ReopenThing', 'MoveThing'], 'a rule narrows where one runs');
+    eq(machine.perState[0].commands.find((c) => c.command === 'MoveThing').unguarded, true, 'and is marked');
+  });
+
+  check('a state nothing sets is said to be never set', () => {
+    const machine = lifecycleMachine(fromText(swap(CASES, '  on Forgotten => set Lost\n', '')), 'ThingStatus');
+    eq(machine.neverSet, ['Lost'], 'declared but never reached');
+  });
+
+  check('a fan-out read cannot say which instance moves', () => {
+    const text = swap(CASES, 'command MoveThing(thingId: ThingId, status: Status) {\n',
+      'command MoveThing(thingId: ThingId, status: Status, others: ThingId[]) {\n'
+      + '  require ThingStatus(each others) == Open\n    else reject "Not all open"\n\n');
+    eq(lifecycleMachine(fromText(text), 'ThingStatus').unplaced.map((u) => u.command), ['CloseExpected', 'CloseBoth', 'MoveThing'],
+      'read through each');
+  });
+
+  check('a projection with no handlers yet is all states and no arrows', () => {
+    // The body is the draft's: the tab draws what is being edited.
+    const machine = lifecycleMachine(fromText(CASES), 'ThingStatus', {
+      tags: [{ name: 'thingId', tagType: 'ThingId' }],
+      valueType: 'Status', isList: false, initialValue: { enumMember: 'Fresh' }, handlers: [],
+    });
+    eq(machine.transitions, [], 'no arrows');
+    eq(machine.neverSet, ['Open', 'Closed', 'Lost'], 'and nothing but the start reached');
+  });
+
+  check('the Lifecycle tab is offered only where there is a lifecycle', () => {
+    const { id, model } = build('course-simple');
+    sandbox.setActiveModelId(id);
+    const tabsFor = (name) => {
+      const main = sandbox.document.createElement('div');
+      sandbox.state.view = 'projections';
+      sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+      sandbox.state.projTab = 'definition';
+      sandbox.renderProjections(model(), main);
+      return findAll(main, (n) => n.tag === 'button' && /\btab\b/.test(n.className || '')).map(textOf);
+    };
+    eq(tabsFor('CourseStatus').includes('Lifecycle'), true, 'on an enum projection');
+    eq(tabsFor('CourseCapacity').includes('Lifecycle'), true, 'and on a number');
+    sandbox.state.projTab = 'lifecycle';
+    sandbox.state.projDraft = { name: 'CourseStatus', body: projectionDraftFrom(model()['projection-definitions'].CourseStatus) };
+    const main = sandbox.document.createElement('div');
+    sandbox.renderProjections(model(), main);
+    const text = textOf(main);
+    eq(text.includes('Course defined') || text.includes('CourseDefined'), true, `the machine is drawn: ${text.slice(0, 200)}`);
+    eq(text.includes('terminal'), true, 'with its end marked');
+    sandbox.state.projDraft = { name: 'CourseCapacity', body: projectionDraftFrom(model()['projection-definitions'].CourseCapacity) };
+    const moves = sandbox.document.createElement('div');
+    sandbox.renderProjections(model(), moves);
+    const said = textOf(moves);
+    eq(said.includes('starts at') && said.includes('Read by rules'), true, `the movements are listed: ${said.slice(0, 300)}`);
+    sandbox.state.projDraft = null;
+    sandbox.state.projTab = 'definition';
+  });
+}
+
+// ---------------------------------------------------------------
+// Branched handlers (11.0): every page shows them, the Lifecycle tab
+// draws an arm as an arrow under its condition, and an edit on the
+// page never flattens or drops one.
+// ---------------------------------------------------------------
+{
+  const BRANCHES = `model "Branches"
+
+tag type AccountId = string
+enum State { Released, Booked }
+
+event MoneyTransferred { tag from: AccountId, tag to: AccountId, amount: integer }
+event SeatsMarked { tag accountId: AccountId, seats: integer }
+event AccountOpened { tag accountId: AccountId }
+
+projection Balance (tag accountId: AccountId): integer = 0 {
+  on MoneyTransferred {
+    if event.data.from == accountId => decrement event.data.amount
+    if event.data.to == accountId => increment event.data.amount
+  }
+  on AccountOpened => set 0
+}
+
+projection Reservation (tag accountId: AccountId): State = null {
+  on SeatsMarked {
+    if event.data.seats == 0 => set Released
+    else => set Booked
+  }
+}
+
+command Transfer(from: AccountId, to: AccountId, amount: integer) {
+  require Balance(from) >= amount
+    else reject "Not enough"
+
+  emit MoneyTransferred { from, to, amount }
+}
+
+command Mark(accountId: AccountId, seats: integer) {
+  emit SeatsMarked { accountId, seats }
+}
+
+command Open(accountId: AccountId) {
+  emit AccountOpened { accountId }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Branches');
+  sandbox.applyModelSource(id, BRANCHES);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+  const page = (name, tab = 'definition') => {
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+    sandbox.state.projTab = tab;
+    sandbox.renderProjections(model(), main);
+    return textOf(main);
+  };
+
+  check('the projection page edits a branched handler in place, each arm, and loses nothing', () => {
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    for (const name of ['Balance', 'Reservation']) {
+      const text = page(name);
+      eq(['if', '+ else if', '+ separate if', '⇒'].every((word) => text.includes(word)), true, text.slice(0, 600));
+      eq(text.includes('Edit in code'), false, name + ': edited here');
+      eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'][name].handlers,
+        name + ': painting it changed nothing');
+    }
+    eq(sandbox.state.projDraft.body.handlers[0].chains.length, 1, 'one chain');
+    sandbox.state.projDraft = null;
+  });
+
+  check('a handler is made conditional, joined, given an else and a second if, all on the page', () => {
+    const paintDraft = () => {
+      const main = sandbox.document.createElement('div');
+      sandbox.renderProjections(model(), main);
+      return main;
+    };
+    const original = sandbox.deepClone(model()['projection-definitions'].Reservation);
+    page('Reservation');
+    const draft = sandbox.state.projDraft.body;
+    // Start over from a plain handler: the arm's operation is the row's.
+    draft.handlers = [sandbox.draftFromOperand({ event: 'SeatsMarked', operation: 'set' }, 'value', { enumMember: 'Booked' })];
+    findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === '+ if')[0].onclick();
+    const handler = draft.handlers[0];
+    eq(handler.chains[0].arms[0].comparisons[0], { left: JSON.stringify({ eventProperty: 'accountId' }), negate: false,
+      right: JSON.stringify({ parameterName: 'accountId' }) }, 'proposed: the field of the tag\'s type, against the tag');
+    // Compare seats with 0 instead, and not equal.
+    Object.assign(handler.chains[0].arms[0].comparisons[0], { left: JSON.stringify({ eventProperty: 'seats' }), right: ' literal', rightText: '0', negate: true });
+    findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === '+ and')[0].onclick();
+    eq(handler.chains[0].arms[0].joiner, 'all', 'joined by and');
+    findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === '+ else')[0].onclick();
+    handler.chains[0].otherwise.value = JSON.stringify({ enumMember: 'Released' });
+    const stored = cleanProjectionBody(draft).handlers[0];
+    eq(stored, { event: 'SeatsMarked', steps: [{
+      branches: [{ condition: { all: [
+        { leftHandSide: { eventProperty: 'seats' }, predicate: 'equals', rightHandSide: 0, negate: true },
+        { leftHandSide: { eventProperty: 'accountId' }, predicate: 'equals', rightHandSide: { parameterName: 'accountId' } },
+      ] }, operation: 'set', value: { enumMember: 'Booked' } }],
+      otherwise: { operation: 'set', value: { enumMember: 'Released' } },
+    }] }, 'the handler as built');
+    findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === '+ separate if')[0].onclick();
+    eq(cleanProjectionBody(draft).handlers[0].steps.length, 2, 'a second if, a chain of its own');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', cleanProjectionBody(draft));
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('if event.data.seats != 0 and event.data.accountId == accountId => set Booked\n    else => set Released\n    if event.data.accountId == accountId => set Booked'),
+      true, text.slice(text.indexOf('projection Reservation'), text.indexOf('projection Reservation') + 400));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and it parses back');
+    eq(projectionDraftFrom(model()['projection-definitions'].Reservation).handlers[0].chains.length, 2, 'reopened as chains');
+    // Removing every arm takes the handler back to one operation.
+    const again = projectionDraftFrom(model()['projection-definitions'].Reservation);
+    sandbox.state.projDraft = { name: 'Reservation', body: again };
+    for (let k = 0; k < 2; k++) findAll(paintDraft(), (n) => n.tag === 'button' && n.attributes.title === 'Remove this if')[0].onclick();
+    eq(cleanProjectionBody(again).handlers, [{ event: 'SeatsMarked', operation: 'set', value: { enumMember: 'Booked' } }], 'plain again');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', original);
+    sandbox.state.projDraft = null;
+  });
+
+  check('a handler arm brackets a comparison with one joined the other way, and opens again whole', () => {
+    const paintDraft = () => {
+      const main = sandbox.document.createElement('div');
+      sandbox.renderProjections(model(), main);
+      return main;
+    };
+    const buttonOf = (label, nth = 0) => findAll(paintDraft(), (n) => n.tag === 'button' && textOf(n) === label)[nth];
+    const original = sandbox.deepClone(model()['projection-definitions'].Reservation);
+    page('Reservation');
+    const draft = sandbox.state.projDraft.body;
+    const arm = draft.handlers[0].chains[0].arms[0];
+    buttonOf('+ and').onclick();
+    buttonOf('+ (… or …)', 1).onclick();
+    eq(arm.comparisons.length === 2 && Array.isArray(arm.comparisons[1].comparisons), true, 'the second bracketed');
+    Object.assign(arm.comparisons[1].comparisons[1], { left: JSON.stringify({ eventProperty: 'seats' }), right: ' literal', rightText: '5', negate: false });
+    const seats = (n) => ({ leftHandSide: { eventProperty: 'seats' }, predicate: 'equals', rightHandSide: n });
+    const account = { leftHandSide: { eventProperty: 'accountId' }, predicate: 'equals', rightHandSide: { parameterName: 'accountId' } };
+    const stored = cleanProjectionBody(draft).handlers[0];
+    eq(stored.steps[0].branches[0].condition, { all: [seats(0), { any: [account, seats(5)] }] }, 'stored as a group in the and');
+    eq(textOf(paintDraft()).includes('Edit in code'), false, 'edited on the page');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', cleanProjectionBody(draft));
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('if event.data.seats == 0 and (event.data.accountId == accountId or event.data.seats == 5) => set Released'), true,
+      text.slice(text.indexOf('projection Reservation'), text.indexOf('projection Reservation') + 300));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and it parses back');
+    const again = projectionDraftFrom(model()['projection-definitions'].Reservation);
+    eq(!!again.handlers[0].chains, true, 'opens as chains again');
+    eq(cleanProjectionBody(again).handlers, model()['projection-definitions'].Reservation.handlers, 'no loss');
+    // Removing a comparison of the group leaves its other one in its place.
+    sandbox.state.projDraft = { name: 'Reservation', body: again };
+    findAll(paintDraft(), (n) => n.tag === 'button' && n.attributes.title === 'Remove this comparison')[1].onclick();
+    eq(cleanProjectionBody(again).handlers[0].steps[0].branches[0].condition, { all: [seats(0), seats(5)] }, 'the group of one is its comparison');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', original);
+    sandbox.state.projDraft = null;
+  });
+
+  check('a handler comparing by order stays as stored, and its row says why it is not edited', () => {
+    const original = sandbox.deepClone(model()['projection-definitions'].Reservation);
+    const ordered = sandbox.deepClone(original);
+    ordered.handlers[0].steps[0].branches[0].condition = { leftHandSide: { eventProperty: 'seats' }, predicate: 'lessThan', rightHandSide: 1 };
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', ordered);
+    eq(sandbox.modelAdvisories(model()).some((a) => /== or !=/.test(a.message)), true, 'an advisory, not a refusal');
+    const text = page('Reservation');
+    eq(text.includes('ordering in handler conditions is not part of the notation') && !text.includes('Edit in code'), true, text.slice(0, 600));
+    eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, ordered.handlers, 'kept as stored');
+    eq(sandbox.parseModelSource('model "M"\n\ntag type A = string\nevent E { tag a: A, n: integer }\nprojection P (tag a: A): integer = 0 {\n  on E {\n    if event.data.n < 1 => set 1\n  }\n}\n')
+      .diagnostics.some((d) => /== or !=/.test(d.message)), true, 'the notation refuses it');
+    sandbox.updateDefinition('projection-definition', id, 'Reservation', original);
+    sandbox.state.projDraft = null;
+  });
+
+  check('an unrelated edit on the page keeps the branches as they were', () => {
+    const before = model()['projection-definitions'].Balance.handlers;
+    const draft = projectionDraftFrom(model()['projection-definitions'].Balance);
+    draft.initialValue = 100;
+    draft.handlers.find((handler) => handler.event === 'AccountOpened').value = '5';
+    draft.handlers.find((handler) => handler.event === 'AccountOpened').valueText = '5';
+    sandbox.updateDefinition('projection-definition', id, 'Balance', cleanProjectionBody(draft));
+    const after = model()['projection-definitions'].Balance;
+    eq([after.initialValue, after.handlers[0]], [100, before[0]], 'the branched handler untouched');
+    eq(after.handlers.length, 2, 'nothing dropped');
+  });
+
+  check('the Lifecycle tab draws each arm as an arrow under its condition', () => {
+    const machine = sandbox.lifecycleMachine(model(), 'Reservation');
+    eq(machine.transitions.map((t) => [t.event, t.guard, t.target]),
+      [['SeatsMarked', 'if event.data.seats == 0', 'Released'], ['SeatsMarked', 'else', 'Booked']], 'one arrow per arm');
+    const moves = sandbox.lifecycleMovements(model(), 'Balance');
+    eq(moves.handlers.map((h) => [h.event, h.guard, h.operation]), [
+      ['MoneyTransferred', 'if event.data.from == accountId', 'decrement'],
+      ['MoneyTransferred', 'if event.data.to == accountId', 'increment'],
+      ['AccountOpened', '', 'set'],
+    ], 'one movement per arm');
+    eq(page('Reservation', 'lifecycle').includes('if event.data.seats == 0'), true, 'drawn with its condition');
+    eq(page('Balance', 'lifecycle').includes('if event.data.to == accountId'), true, 'listed with its condition');
+    sandbox.state.projDraft = null;
+    sandbox.state.projTab = 'definition';
+  });
+
+  check('the command page says what each arm of a handler does, and every view paints', () => {
+    sandbox.state.slice = 'Transfer';
+    const slice = sandbox.sliceOf(model(), 'Transfer');
+    const changes = textOf(sandbox.stepChanges(model(), slice));
+    eq(changes.includes('if event.data.from == accountId') && changes.includes('decrement'), true, changes);
+    eq(changes.includes('Edit in code'), false, 'edited on its projection, behind the pencil');
+    for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
+      sandbox[fn](model(), sandbox.document.createElement('div'));
+    }
+    eq(sandbox.modelToSource(model()).includes('on MoneyTransferred {'), true, 'the code view prints it');
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// Open reads, collection functions and record values (11.0): every
+// page shows them as written, read-only with the way to the code
+// view, and an edit on the page never drops one.
+// ---------------------------------------------------------------
+{
+  const SEATS = `model "Seats"
+
+tag type CourseId = string
+tag type ReservationId = string
+tag type CustomerId = string
+type Seats = integer
+record Address { street: string, city: string }
+
+event SeatsWereReserved { tag courseId: CourseId, tag reservationId: ReservationId, numberOfSeatsReserved: Seats }
+event SeatReservationWasCancelled { tag courseId: CourseId, tag reservationId: ReservationId }
+event CustomerMoved { tag customerId: CustomerId, address: Address }
+event CustomerRelocated { tag customerId: CustomerId, street: string, city: string }
+event ParcelSent { tag customerId: CustomerId, city: string }
+
+projection ReservationSeats (tag courseId: CourseId, tag reservationId: ReservationId): Seats = 0 {
+  on SeatsWereReserved => set event.data.numberOfSeatsReserved
+  on SeatReservationWasCancelled => set 0
+}
+
+derived projection CourseSeatsReserved (tag courseId: CourseId): integer {
+  sum(ReservationSeats(courseId, *))
+}
+
+projection CustomerAddress (tag customerId: CustomerId): Address = null {
+  on CustomerMoved => set event.data.address
+  on CustomerRelocated => set { street: event.data.street, city: event.data.city }
+}
+
+command ReserveSeats(courseId: CourseId, reservationId: ReservationId, seats: Seats) {
+  require count(ReservationSeats(courseId, *) where value > 2) < 3
+    else reject "Too many big reservations"
+  require seats > 0
+    else reject "No seats"
+
+  emit SeatsWereReserved { courseId, reservationId, numberOfSeatsReserved: seats }
+}
+
+command SendParcel(customerId: CustomerId, city: string) {
+  alias address = CustomerAddress(customerId)
+
+  require address.city == city
+    else reject "Wrong city"
+
+  emit ParcelSent { customerId, city: address.city }
+}
+
+command Cancel(courseId: CourseId, reservationId: ReservationId) {
+  emit SeatReservationWasCancelled { courseId, reservationId }
+}
+
+command Move(customerId: CustomerId, address: Address) {
+  emit CustomerMoved { customerId, address }
+}
+
+command Relocate(customerId: CustomerId, street: string, city: string) {
+  emit CustomerRelocated { customerId, street, city }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Seats');
+  sandbox.applyModelSource(id, SEATS);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+  const page = (name, tab = 'definition') => {
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+    sandbox.state.projTab = tab;
+    sandbox.renderProjections(model(), main);
+    return textOf(main);
+  };
+
+  check('the projection pages show a collection function and a record set whole, with the way to edit them', () => {
+    eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+    const derived = page('CourseSeatsReserved');
+    eq(derived.includes('sum(ReservationSeats(courseId, *))'), true, derived.slice(0, 400));
+    eq(derived.includes('Edit in code'), false, 'edited through the collection\'s questions');
+    const address = page('CustomerAddress');
+    eq(address.includes('a record from the event…') && address.includes('street:') && !address.includes('Edit in code'), true,
+      'a record built from the event\'s fields, field by field: ' + address.slice(0, 600));
+    eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'].CustomerAddress.handlers,
+      'painting it changed nothing');
+    eq(page('CustomerAddress', 'lifecycle').length > 0, true, 'the Lifecycle tab paints');
+    eq(page('ReservationSeats', 'lifecycle').length > 0, true, 'and for the projection an open read collects');
+    sandbox.state.projDraft = null;
+    sandbox.state.projTab = 'definition';
+  });
+
+  check('a handler sets a record built from the event, field by field, and a record\'s field one hop in', () => {
+    const stored = model()['projection-definitions'].CustomerAddress.handlers.find((h) => sandbox.operandSource(h.value) === 'record');
+    const draft = projectionDraftFrom(model()['projection-definitions'].CustomerAddress);
+    const row = draft.handlers.find((h) => h.event === stored.event);
+    eq(row.value, ' record', 'opens as a record from the event');
+    eq(sandbox.draftOperand(row, 'value'), stored.value, 'no loss');
+    row.valueRecord.city = JSON.stringify({ eventProperty: 'street' });
+    eq(cleanProjectionBody(draft).handlers.find((h) => h.event === stored.event).value.record.city, { eventProperty: 'street' }, 'a field re-picked');
+    const moved = model()['event-definitions'].CustomerMoved;
+    const rows = sandbox.handlerValueChoices(model(), { valueType: 'string', isList: false }, moved, 'set').map(([v]) => v);
+    eq(rows.includes(JSON.stringify({ eventProperty: 'address', property: 'city' })), true, 'event.data.address.city offered: ' + rows);
+  });
+
+  check('an unrelated edit on the projection page keeps a record set whole and a collection function', () => {
+    const before = model()['projection-definitions'].CustomerAddress.handlers;
+    const draft = projectionDraftFrom(model()['projection-definitions'].CustomerAddress);
+    draft.handlers = draft.handlers.filter((h) => h.event !== 'CustomerMoved');
+    sandbox.updateDefinition('projection-definition', id, 'CustomerAddress', cleanProjectionBody(draft));
+    eq(model()['projection-definitions'].CustomerAddress.handlers, [before[1]], 'the record kept whole');
+    const derived = model()['projection-definitions'].CourseSeatsReserved;
+    const kept = projectionDraftFrom(derived);
+    sandbox.updateDefinition('projection-definition', id, 'CourseSeatsReserved', cleanProjectionBody(kept));
+    eq(model()['projection-definitions'].CourseSeatsReserved, derived, 'the collection kept, and what it holds');
+    sandbox.addDefinition('projection-definition', id, 'CustomerCity', {
+      tags: [{ name: 'customerId', tagType: 'CustomerId' }], valueType: 'string', isList: false,
+      derived: { leftHandSide: { projection: 'CustomerAddress', tags: { customerId: { parameterName: 'customerId' } }, field: 'city' } },
+    });
+    const city = model()['projection-definitions'].CustomerCity;
+    sandbox.updateDefinition('projection-definition', id, 'CustomerCity', cleanProjectionBody(projectionDraftFrom(city)));
+    eq(model()['projection-definitions'].CustomerCity, city, 'a field kept');
+    sandbox.applyModelSource(id, SEATS);
+  });
+
+  // A derived projection holding a collection (11.0) is edited by the
+  // collection's questions in a card under its side, set whole – the
+  // emission field's treatment – and goes through the same command.
+  check('a derived projection holds, computes with and compares a collection built on its page', () => {
+    const paint = () => {
+      const main = sandbox.document.createElement('div');
+      sandbox.renderProjections(model(), main);
+      return main;
+    };
+    const open = (name) => {
+      sandbox.state.view = 'projections';
+      sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+      sandbox.state.projTab = 'definition';
+      return paint();
+    };
+    const buttons = (label) => findAll(paint(), (n) => n.tag === 'button' && textOf(n) === label);
+    const withOption = (value) => findAll(paint(), (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option').some((o) => o.value === value));
+    const choose = (value, at = 0) => withOption(value).slice(at)[0].onchange({ target: { value } });
+    const save = () => sandbox.autoSaveProjectionDraft();
+    const stored = () => model()['projection-definitions'].CourseSeatsReserved;
+    const roundTrip = () => {
+      const text = sandbox.modelToSource(model());
+      const parsed = sandbox.parseModelSource(text);
+      eq(parsed.diagnostics, [], 'parses back: ' + text.slice(text.indexOf('derived projection'), text.indexOf('derived projection') + 200));
+      eq(parsed.collections['projection-definition'].CourseSeatsReserved, stored(), 'identical');
+      eq(sandbox.modelAdvisories(model()), [], 'advisory-clean');
+      return text;
+    };
+    // Opened again and set: no loss.
+    const before = stored();
+    open('CourseSeatsReserved');
+    buttons('Edit')[0].onclick();
+    eq([sandbox.state.projDraft.body.derivedBuild.side, sandbox.state.projDraft.body.derivedBuild.collect.fn], ['leftHandSide', 'sum'], 'opens as its questions');
+    buttons('Set')[0].onclick();
+    save();
+    eq(stored(), before, 'no loss');
+    // Held as it is: an average where a value is over 2, offered once a
+    // type holds a number, and retyped one.
+    buttons('Edit')[0].onclick();
+    eq(withOption('average').length, 0, 'no type holds an average yet');
+    buttons('Cancel')[0].onclick();
+    sandbox.addDefinition('custom-type-definition', id, 'Ratio', { schema: { type: 'number' } });
+    open('CourseSeatsReserved');
+    buttons('Edit')[0].onclick();
+    choose('average');
+    buttons('+ where')[0].onclick();
+    const where = sandbox.state.projDraft.body.derivedBuild.collect.where[0];
+    choose('greaterThan');
+    Object.assign(where, { right: ' literal', rightText: '2' });
+    buttons('Set')[0].onclick();
+    save();
+    eq(stored().valueType, 'Ratio', 'an average is a number');
+    eq(stored().derived, { leftHandSide: { collect: 'average', read: { projection: 'ReservationSeats',
+      tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } } },
+    where: { leftHandSide: { instanceValue: true }, predicate: 'greaterThan', rightHandSide: 2 } } }, 'stored');
+    let text = roundTrip();
+    eq(text.includes('average(ReservationSeats(courseId, *) where value > 2)'), true, 'printed');
+    // Compared: `any(…) == true`, a collection on the left of a comparison.
+    open('CourseSeatsReserved');
+    choose('p:equals');
+    buttons('Edit')[0].onclick();
+    choose('any');
+    buttons('Set')[0].onclick();
+    findAll(paint(), (n) => n.tag === 'select' && findAll(n, (o) => o.tag === 'option').some((o) => o.value === ' literal')).slice(-1)[0]
+      .onchange({ target: { value: ' literal' } });
+    sandbox.state.projDraft.body.derived.rightHandSide = true;
+    save();
+    eq([stored().valueType, stored().derived.predicate, stored().derived.leftHandSide.collect, stored().derived.rightHandSide],
+      ['boolean', 'equals', 'any', true], 'a comparison of a collection');
+    roundTrip();
+    // Computed: a sum on the right of a subtraction, built afresh.
+    open('CourseSeatsReserved');
+    choose('o:subtract');
+    sandbox.state.projDraft.body.derived.leftHandSide = 100;
+    const right = withOption(' collect').slice(-1)[0];
+    right.onchange({ target: { value: ' collect' } });
+    eq(sandbox.state.projDraft.body.derivedBuild.side, 'rightHandSide', 'the right side built');
+    eq(withOption('any').length, 0, 'only what computes is offered');
+    choose('ReservationSeats', -1);
+    buttons('Set')[0].onclick();
+    save();
+    eq(stored().derived, { leftHandSide: 100, operator: 'subtract', rightHandSide: { collect: 'count',
+      read: { projection: 'ReservationSeats', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } } } } }, 'stored');
+    text = roundTrip();
+    eq(text.includes('100 - count(ReservationSeats(courseId, *))'), true, 'printed');
+    eq(textOf(open('CourseSeatsReserved')).includes('Edit in code'), false, 'and edited on its page');
+    // Unfinished, Set says so and nothing is written.
+    const kept = stored();
+    buttons('Edit')[0].onclick();
+    sandbox.state.projDraft.body.derivedBuild.collect.projection = '';
+    buttons('Set')[0].onclick();
+    save();
+    eq(stored(), kept, 'nothing written');
+    sandbox.state.projDraft = null;
+    sandbox.applyModelSource(id, SEATS);
+  });
+
+  // A where comparing the other way round has a spelling the questions
+  // do not write: it stays as the code view prints it.
+  check('a derived projection whose collection the questions do not ask stays with the way to the code view', () => {
+    sandbox.addDefinition('projection-definition', id, 'Odd', {
+      tags: [{ name: 'courseId', tagType: 'CourseId' }], valueType: 'integer', isList: false,
+      derived: { leftHandSide: { collect: 'count', read: { projection: 'ReservationSeats', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } } },
+        where: { leftHandSide: 3, predicate: 'lessThan', rightHandSide: { instanceValue: true } } } },
+    });
+    eq(page('Odd').includes('Edit in code'), true, 'with the way to the code view');
+    sandbox.state.projDraft = null;
+    sandbox.applyModelSource(id, SEATS);
+  });
+
+  check('the command page edits a collection function and a field, and every view paints', () => {
+    sandbox.state.slice = 'ReserveSeats';
+    const slice = sandbox.sliceOf(model(), 'ReserveSeats');
+    const decision = textOf(sandbox.stepDecision(model(), slice));
+    eq(decision.includes('count(ReservationSeats(courseId, *) where value > 2)'), true, decision.slice(0, 600));
+    eq(decision.includes('Edit in code'), false, 'edited through the rule\'s questions');
+    const parcel = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'SendParcel')));
+    eq(parcel.includes('address · city'), true, parcel.slice(0, 600));
+    sandbox.state.slice = 'SendParcel';
+    sandbox.state.openEvent = 'ParcelSent';
+    const emitsTree = sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'SendParcel'));
+    const emits = textOf(emitsTree);
+    eq(!emits.includes('Edit in code') && findAll(emitsTree, (n) => n.tag === 'option'
+      && n.value === JSON.stringify({ alias: 'address', field: 'city' })).length > 0, true,
+      'a record\'s field is a value the picker offers: ' + emits.slice(0, 600));
+    sandbox.state.openEvent = null;
+    sandbox.state.slice = 'ReserveSeats';
+    for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
+      sandbox[fn](model(), sandbox.document.createElement('div'));
+    }
+    const map = (() => { const main = sandbox.document.createElement('div'); sandbox.renderRuleMap(model(), main); return textOf(main); })();
+    eq(map.includes('ReservationSeats'), true, 'the rule map names the projection an open read reads');
+  });
+
+  check('the sandbox runs a command reading an open read, and every tab paints it', () => {
+    const session = sandbox.session;
+    session.reset();
+    sandbox.sessionRun(model(), 'ReserveSeats', { courseId: 'c1', reservationId: 'r1', seats: 3 });
+    sandbox.sessionRun(model(), 'ReserveSeats', { courseId: 'c1', reservationId: 'r2', seats: 4 });
+    eq(session.log.length, 2, 'both reserved');
+    const replay = sandbox.stepReplay(model(), session.stepAt(session.position()));
+    eq(replay.outcome.outcome, 'published', 'decided through the store');
+    const read = Object.values(replay.outcome.reads).find((r) => r.open);
+    eq([read && read.projection, read && read.value], ['ReservationSeats', [3]], 'the open read, reported with what it collected');
+    eq(Object.keys(replay.outcome.reads).includes('ReservationSeats(CourseId("c1"), *)'), true, Object.keys(replay.outcome.reads).join(', '));
+    for (const tab of ['watched', 'decision', 'store']) {
+      sandbox.state.sandboxTab = tab;
+      eq(textOf(sandbox.sandboxPanel(model())).length > 0, true, `the ${tab} tab paints`);
+    }
+    sandbox.state.sandboxTab = 'watched';
+    session.reset();
+  });
+
+  check('editing the rules on the command page keeps a collection function', () => {
+    sandbox.state.slice = 'ReserveSeats';
+    const before = model()['command-definitions'].ReserveSeats.steps[0];
+    sandbox.patch('command-definition', 'ReserveSeats', (b) => { b.conditions.splice(1, 1); });
+    const steps = model()['command-definitions'].ReserveSeats.steps;
+    eq(steps[0], before, 'the collection rule unchanged');
+    eq(steps.filter((step) => sandbox.stepKind(step) === 'rule').length, 1, 'the other rule gone');
+    sandbox.applyModelSource(id, SEATS);
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// Time (11.0): the type pickers offer datetime and duration, a payload
+// field refuses a datetime without its offset, and every page shows a
+// duration and arithmetic as written, read-only, keeping them through
+// an edit.
+// ---------------------------------------------------------------
+{
+  const TIME = `model "Time"
+
+tag type CourseId = string
+tag type ReservationId = string
+record ReservationInfo { seats: integer, expiresAt: datetime }
+
+event CourseDefined { tag courseId: CourseId, capacity: integer }
+event SeatsWereReserved { tag courseId: CourseId, tag reservationId: ReservationId, seats: integer, expiresAt: datetime }
+event HoldChanged { tag courseId: CourseId, hold: duration }
+
+projection CourseCapacity (tag courseId: CourseId): integer = 0 {
+  on CourseDefined => set event.data.capacity
+}
+
+projection Reservation (tag courseId: CourseId, tag reservationId: ReservationId): ReservationInfo = null {
+  on SeatsWereReserved => set { seats: event.data.seats, expiresAt: event.data.expiresAt }
+}
+
+projection LastExpiry (tag courseId: CourseId): datetime = null {
+  on SeatsWereReserved => set event.data.expiresAt
+}
+
+derived projection GraceEnds (tag courseId: CourseId): datetime {
+  LastExpiry(courseId) + 1h
+}
+
+command ReserveSeats(courseId: CourseId, reservationId: ReservationId, seats: integer, now: datetime) {
+  require CourseCapacity(courseId) - sum(Reservation(courseId, *).seats where value.expiresAt > now) >= seats
+    else reject "Not enough seats"
+  require seats > 0
+    else reject "No seats"
+
+  emit SeatsWereReserved { courseId, reservationId, seats, expiresAt: now + 15m }
+}
+
+command ChangeHold(courseId: CourseId, hold: duration) {
+  require hold <= 1h
+    else reject "Too long"
+
+  emit HoldChanged { courseId, hold }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Time');
+  sandbox.applyModelSource(id, TIME);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+
+  check('the type pickers offer datetime and duration among the built-ins', () => {
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    const rows = sandbox.typeOptions(model());
+    for (const type of ['datetime', 'duration']) {
+      const row = rows.find((r) => r[0] === type);
+      eq(!!row && row[3] && row[3].section, 'Built-in', type);
+    }
+  });
+
+  check('a payload field takes a datetime with its offset and a duration in ISO 8601, and nothing else', () => {
+    eq(sandbox.literalOfType(model(), 'datetime', ' 2026-01-01T10:00:00+02:00 '), '2026-01-01T10:00:00+02:00', 'with an offset');
+    eq(sandbox.literalOfType(model(), 'datetime', '2026-01-01T10:00:00'), undefined, 'without one');
+    eq(sandbox.literalOfType(model(), 'duration', 'PT15M'), 'PT15M', 'a duration');
+    eq(sandbox.literalOfType(model(), 'duration', '15m'), undefined, 'the notation\'s spelling is no stored value');
+  });
+
+  check('the pages show a duration and arithmetic as written, and edit them', () => {
+    sandbox.state.slice = 'ReserveSeats';
+    const slice = sandbox.sliceOf(model(), 'ReserveSeats');
+    const decision = textOf(sandbox.stepDecision(model(), slice));
+    eq(decision.includes('- sum(Reservation(courseId, *).seats where value.expiresAt > now)'), true, decision.slice(0, 600));
+    eq(decision.includes('Edit in code'), false, 'a sum holding a collection, edited on the page');
+    sandbox.state.openEvent = 'SeatsWereReserved';
+    const emits = textOf(sandbox.stepEmits(model(), slice));
+    eq(emits.includes('now + 15m') && emits.includes('Edit') && !emits.includes('Edit in code'), true, 'the arithmetic, edited beside the field: ' + emits.slice(0, 600));
+    sandbox.state.openEvent = null;
+    sandbox.state.slice = 'ChangeHold';
+    const hold = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ChangeHold')));
+    eq(hold.includes('1h'), true, hold.slice(0, 400));
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name: 'GraceEnds', body: projectionDraftFrom(model()['projection-definitions'].GraceEnds) };
+    sandbox.state.projTab = 'definition';
+    sandbox.renderProjections(model(), main);
+    eq(textOf(main).includes('1h'), true, textOf(main).slice(0, 400));
+    sandbox.state.projDraft = null;
+    sandbox.state.slice = 'ReserveSeats';
+    for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
+      sandbox[fn](model(), sandbox.document.createElement('div'));
+    }
+  });
+
+  check('a collection function is written through the rule’s questions, where and all, and opens again whole', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.adder = 'rule';
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    const selects = () => findAll(paint(), (n) => n.tag === 'select');
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const targets = findAll(selects()[0], (n) => n.tag === 'option').map((n) => n.value);
+    eq(targets.includes('collect:sum') && targets.includes('collect:count') && !targets.includes('collect:list'), true, targets.join());
+    selects()[0].onchange({ target: { value: 'collect:sum' } });
+    const collect = sandbox.state.ruleDraft.leftCollect;
+    const projectionPicker = selects().find((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'Reservation'));
+    projectionPicker.onchange({ target: { value: 'Reservation' } });
+    paint();
+    eq(collect.tags, { courseId: JSON.stringify({ parameterName: 'courseId' }), reservationId: '*' }, 'the course bound, every reservation');
+    eq(collect.field, 'seats', 'a sum over a record sums one of its fields');
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === '+ where')[0].onclick();
+    Object.assign(collect.where[0], { left: JSON.stringify({ instanceValue: true, field: 'expiresAt' }), predicate: 'greaterThan',
+      right: JSON.stringify({ parameterName: 'now' }) });
+    eq(/What must be true of it\?/.test(textOf(paint())), true, 'complete: on to the test');
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'lessThan', right: ' literal', rightText: '20', rejection: 'Too many held' });
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    const steps = model()['command-definitions'].ReserveSeats.steps;
+    const rule = steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    eq(rule.condition, {
+      leftHandSide: { collect: 'sum', read: { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } }, field: 'seats' },
+        where: { leftHandSide: { instanceValue: true, field: 'expiresAt' }, predicate: 'greaterThan', rightHandSide: { parameterName: 'now' } } },
+      predicate: 'lessThan', rightHandSide: 20,
+    }, 'stored as the code view reads it');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('require sum(Reservation(courseId, *).seats where value.expiresAt > now) < 20'), true, text.slice(text.indexOf('command ReserveSeats'), text.indexOf('command ReserveSeats') + 500));
+    // Opened again: the collection's questions, answered.
+    const draft = sandbox.draftFromCondition(rule.condition);
+    eq(draft.left, ' collect', 'opens as a collection');
+    eq(sandbox.collectionFromDraft(draft.leftCollect), rule.condition.leftHandSide, 'no loss');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a where brackets a comparison with one joined the other way, and opens again whole', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    const selects = () => findAll(paint(), (n) => n.tag === 'select');
+    const wizard = () => findAll(paint(), (n) => /rule-wizard/.test(n.className || ''))[0];
+    const buttonOf = (label, nth = 0) => findAll(wizard(), (n) => n.tag === 'button' && textOf(n) === label)[nth];
+    selects()[0].onchange({ target: { value: 'collect:count' } });
+    const collect = sandbox.state.ruleDraft.leftCollect;
+    selects().find((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'Reservation')).onchange({ target: { value: 'Reservation' } });
+    buttonOf('+ where').onclick();
+    Object.assign(collect.where[0], { left: JSON.stringify({ instanceValue: true, field: 'expiresAt' }), predicate: 'greaterThan', right: JSON.stringify({ parameterName: 'now' }) });
+    buttonOf('+ and').onclick();
+    Object.assign(collect.where[1], { left: JSON.stringify({ instanceValue: true, field: 'seats' }), predicate: 'greaterThan', right: ' literal', rightText: '2' });
+    buttonOf('+ (… or …)', 1).onclick();
+    Object.assign(collect.where[1].where[1], { left: JSON.stringify({ instanceValue: true, field: 'seats' }), predicate: 'lessThan', right: ' literal', rightText: '1' });
+    Object.assign(sandbox.state.ruleDraft, { predicate: 'lessThan', right: ' literal', rightText: '3', rejection: 'Too many' });
+    buttonOf('Add rule').onclick();
+    const rule = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    const field = (name, predicate, right) => ({ leftHandSide: { instanceValue: true, field: name }, predicate, rightHandSide: right });
+    eq(rule.condition.leftHandSide.where, { all: [field('expiresAt', 'greaterThan', { parameterName: 'now' }),
+      { any: [field('seats', 'greaterThan', 2), field('seats', 'lessThan', 1)] }] }, 'a group in the where');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('require count(Reservation(courseId, *) where value.expiresAt > now and (value.seats > 2 or value.seats < 1)) < 3'), true,
+      text.slice(text.indexOf('command ReserveSeats'), text.indexOf('command ReserveSeats') + 600));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and it parses back');
+    const draft = sandbox.draftFromCondition(rule.condition);
+    eq(draft.left, ' collect', 'opens as a collection');
+    eq(sandbox.collectionFromDraft(draft.leftCollect), rule.condition.leftHandSide, 'no loss');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a sum on the left opens with each of its terms, a collection among them, and loses nothing', () => {
+    const rule = model()['command-definitions'].ReserveSeats.steps[0];
+    const draft = sandbox.draftFromCondition(rule.condition);
+    eq(draft.left, ' arith', 'opens as a sum');
+    eq(draft.leftArith.right, ' collect', 'its second term a collection');
+    eq(sandbox.draftOperand(draft, 'left'), rule.condition.leftHandSide, 'no loss');
+    const three = { operator: 'add', leftHandSide: rule.condition.leftHandSide, rightHandSide: { duration: 'PT1H' } };
+    eq(sandbox.arithmeticFromDraft(sandbox.arithmeticDraftFrom(three)), three, 'three terms, left to right');
+    eq(sandbox.arithmeticDraftFrom(three).more, [{ operator: 'add', value: ' literal', valueText: '1h' }], 'the third in more');
+  });
+
+  check('a rule about a sum is written through the questions: a read minus a collection minus a typed value', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    const wizard = () => findAll(paint(), (n) => /rule-wizard/.test(n.className || ''))[0];
+    const selects = () => findAll(wizard(), (n) => n.tag === 'select');
+    const buttonOf = (label, nth = 0) => {
+      const found = findAll(wizard(), (n) => n.tag === 'button' && textOf(n) === label)[nth];
+      if (!found) throw new Error(`no "${label}" in ${textOf(wizard())}`);
+      return found;
+    };
+    const withOption = (value, nth = 0) => selects().filter((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === value))[nth];
+    selects()[0].onchange({ target: { value: 'projection:CourseCapacity' } });
+    buttonOf('+ / − a value').onclick();
+    const draft = sandbox.state.ruleDraft;
+    eq(draft.left, ' arith', 'the value is the sum\'s first term');
+    // Its second term a collection: the sum of the reservations' seats.
+    withOption(' collect', 1).onchange({ target: { value: ' collect' } });
+    const collect = draft.leftArith.rightCollect;
+    eq(collect.fn, 'sum', 'a sum proposed');
+    withOption('Reservation').onchange({ target: { value: 'Reservation' } });
+    paint();
+    eq([collect.tags.reservationId, collect.field], ['*', 'seats'], 'every reservation, its seats');
+    buttonOf('+ / − more').onclick();
+    Object.assign(draft.leftArith.more[0], { operator: 'subtract', value: ' literal', valueText: '1' });
+    draft.leftArith.operator = 'subtract';
+    eq(/What must be true of it\?/.test(textOf(wizard())), true, 'complete: on to the test');
+    Object.assign(draft, { predicate: 'greaterThanOrEquals', right: JSON.stringify({ parameterName: 'seats' }), rejection: 'Full' });
+    buttonOf('Add rule').onclick();
+    const added = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    const course = { projection: 'CourseCapacity', tags: { courseId: { parameterName: 'courseId' } } };
+    const seats = { collect: 'sum', read: { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } }, field: 'seats' } };
+    eq(added.condition.leftHandSide, { operator: 'subtract', leftHandSide: { operator: 'subtract', leftHandSide: course, rightHandSide: seats }, rightHandSide: 1 },
+      'the read in place, then the collection, then the number');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('require CourseCapacity(courseId) - sum(Reservation(courseId, *).seats) - 1 >= seats'), true,
+      text.slice(text.indexOf('command ReserveSeats'), text.indexOf('command ReserveSeats') + 600));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and parses back');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a rule compares with a collection, and with a sum holding one', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    const wizard = () => findAll(paint(), (n) => /rule-wizard/.test(n.className || ''))[0];
+    const selects = () => findAll(wizard(), (n) => n.tag === 'select');
+    const withOption = (value, nth = 0) => selects().filter((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === value))[nth];
+    const add = () => findAll(wizard(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    const course = { projection: 'CourseCapacity', tags: { courseId: { parameterName: 'courseId' } } };
+    const seats = { collect: 'sum', read: { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { open: true } }, field: 'seats' } };
+    // A collection alone on the right.
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    selects()[0].onchange({ target: { value: 'projection:CourseCapacity' } });
+    sandbox.state.ruleDraft.predicate = 'greaterThanOrEquals';
+    withOption(' collect').onchange({ target: { value: ' collect' } });
+    eq(sandbox.state.ruleDraft.right, ' collect', 'a collection picked on the right');
+    withOption('Reservation').onchange({ target: { value: 'Reservation' } });
+    sandbox.state.ruleDraft.rejection = 'Overbooked';
+    add();
+    let added = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    eq(added.condition, { leftHandSide: course, predicate: 'greaterThanOrEquals', rightHandSide: seats }, 'stored');
+    eq(sandbox.modelToSource(model()).includes('require CourseCapacity(courseId) >= sum(Reservation(courseId, *).seats)'), true, 'printed');
+    eq(textOf(paint()).includes('Edit in code'), false, 'edited on the page');
+    // A sum of three on the right, a collection its middle term.
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    selects()[0].onchange({ target: { value: 'projection:CourseCapacity' } });
+    sandbox.state.ruleDraft.predicate = 'greaterThanOrEquals';
+    withOption(' arith').onchange({ target: { value: ' arith' } });
+    paint();
+    const arith = sandbox.state.ruleDraft.rightArith;
+    arith.left = JSON.stringify({ parameterName: 'seats' });
+    // The pickers offering a collection: the right side's, then the sum's two terms.
+    withOption(' collect', 2).onchange({ target: { value: ' collect' } });
+    withOption('Reservation').onchange({ target: { value: 'Reservation' } });
+    findAll(wizard(), (n) => n.tag === 'button' && textOf(n) === '+ / − more')[0].onclick();
+    Object.assign(arith.more[0], { value: ' literal', valueText: '2' });
+    sandbox.state.ruleDraft.rejection = 'No room';
+    add();
+    added = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    eq(added.condition.rightHandSide, { operator: 'add', leftHandSide: { operator: 'add', leftHandSide: { parameterName: 'seats' }, rightHandSide: seats }, rightHandSide: 2 }, 'stored');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('require CourseCapacity(courseId) >= seats + sum(Reservation(courseId, *).seats) + 2'), true, 'printed');
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and parses back');
+    eq(sandbox.draftOperand(sandbox.draftFromCondition(added.condition), 'right'), added.condition.rightHandSide, 'opens again, no loss');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a rule compares with a sum or a difference, a duration typed as one', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ChangeHold';
+    const rule = model()['command-definitions'].ChangeHold.steps[0];
+    eq(sandbox.draftOperand(sandbox.draftFromCondition(rule.condition), 'right'), { duration: 'PT1H' }, 'a duration opens as its literal and back');
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.adder = 'rule';
+    sandbox.state.ruleDraft = { predicate: 'equals', negate: false, left: '', right: '' };
+    const paint = () => sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    findAll(paint(), (n) => n.tag === 'select')[0].onchange({ target: { value: 'projection:LastExpiry' } });
+    sandbox.state.ruleDraft.predicate = 'lessThan';
+    const right = findAll(paint(), (n) => n.tag === 'select').find((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === ' arith'));
+    eq(!!right, true, 'a datetime is compared with a sum or a difference');
+    right.onchange({ target: { value: ' arith' } });
+    paint();
+    Object.assign(sandbox.state.ruleDraft.rightArith, { left: JSON.stringify({ parameterName: 'now' }), operator: 'add', right: ' literal', rightText: '15m' });
+    sandbox.state.ruleDraft.rejection = 'Held too long';
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Add rule')[0].onclick();
+    const added = model()['command-definitions'].ReserveSeats.steps.filter((s) => sandbox.stepKind(s) === 'rule').pop();
+    eq(added.condition.rightHandSide, { operator: 'add', leftHandSide: { parameterName: 'now' }, rightHandSide: { duration: 'PT15M' } }, 'stored');
+    eq(sandbox.modelToSource(model()).includes('require LastExpiry(courseId) < now + 15m'), true, 'printed');
+    eq(sandbox.parseModelSource(sandbox.modelToSource(model())).diagnostics, [], 'and parses back');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('an emission field is set to a sum, and a stored one opens with its sides', () => {
+    sandbox.closeForms();
+    sandbox.state.slice = 'ReserveSeats';
+    sandbox.state.openEvent = 'SeatsWereReserved';
+    const paint = () => sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'ReserveSeats'));
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Edit')[0].onclick();
+    eq(sandbox.state.fieldArith.draft, { left: JSON.stringify({ parameterName: 'now' }), operator: 'add', right: ' literal', rightText: '15m' }, 'now + 15m opened');
+    sandbox.state.fieldArith.draft.rightText = '30m';
+    findAll(paint(), (n) => n.tag === 'button' && textOf(n) === 'Set')[0].onclick();
+    const emission = model()['command-definitions'].ReserveSeats.steps.find((s) => s.name === 'SeatsWereReserved');
+    eq(emission.parameters.expiresAt, { operator: 'add', leftHandSide: { parameterName: 'now' }, rightHandSide: { duration: 'PT30M' } }, 'set');
+    sandbox.state.openEvent = null;
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  check('a record value’s field and a list’s count are values the pickers offer', () => {
+    const slice = { ...sandbox.sliceOf(model(), 'ReserveSeats') };
+    const rows = sandbox.valueRowsBeyondReads(model(), [
+      [JSON.stringify({ projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { parameterName: 'reservationId' } } }), 'r'],
+      [JSON.stringify({ parameterName: 'ids' }), 'ids'],
+    ], { boundary: [], commandProperties: [{ name: 'ids', propertyType: 'ReservationId', isOptional: false, isList: true }], model: model() });
+    eq(rows.map(([v]) => JSON.parse(v)), [
+      { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { parameterName: 'reservationId' } }, field: 'seats' },
+      { projection: 'Reservation', tags: { courseId: { parameterName: 'courseId' }, reservationId: { parameterName: 'reservationId' } }, field: 'expiresAt' },
+      { count: { parameterName: 'ids' } },
+    ], 'each field, the count');
+    eq(!!slice, true, 'slice');
+  });
+
+  check('editing on the pages keeps a duration and arithmetic', () => {
+    sandbox.state.slice = 'ReserveSeats';
+    const before = model()['command-definitions'].ReserveSeats.steps;
+    sandbox.patch('command-definition', 'ReserveSeats', (b) => { b.conditions.splice(1, 1); });
+    const steps = model()['command-definitions'].ReserveSeats.steps;
+    eq([steps[0], steps[steps.length - 1]], [before[0], before[before.length - 1]], 'the arithmetic rule and emission unchanged');
+    const derived = model()['projection-definitions'].GraceEnds;
+    sandbox.updateDefinition('projection-definition', id, 'GraceEnds', cleanProjectionBody(projectionDraftFrom(derived)));
+    eq(model()['projection-definitions'].GraceEnds, derived, 'the derived computation kept');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  // A derived computation over a datetime parameter and a duration
+  // parameter has no literal to give it away: it is edited as `+` /
+  // `-`, and its type survives the edit – retyping it a number was the
+  // bug that once made it read-only.
+  check('a derived time computation from parameters is edited and keeps its type', () => {
+    sandbox.applyModelSource(id, swap(TIME, 'command ReserveSeats',
+      'derived projection Ends (tag courseId: CourseId, start: datetime, hold: duration): datetime {\n  start + hold\n}\n\ncommand ReserveSeats'));
+    const derived = model()['projection-definitions'].Ends;
+    eq(derived.valueType, 'datetime', 'parsed as a datetime');
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name: 'Ends', body: projectionDraftFrom(derived) };
+    sandbox.state.projTab = 'definition';
+    sandbox.renderProjections(model(), main);
+    const text = textOf(main);
+    eq(!text.includes('Edit in code'), true, text.slice(0, 600));
+    const operator = findAll(main, (n) => n.tag === 'select').find((n) => findAll(n, (o) => o.tag === 'option').some((o) => o.value === 'o:subtract'));
+    eq(findAll(operator, (o) => o.tag === 'option').some((o) => o.value === 'o:multiply'), false, 'a time is only added to or taken from');
+    operator.onchange({ target: { value: 'o:subtract' } });
+    const body = cleanProjectionBody(sandbox.state.projDraft.body);
+    eq([body.valueType, body.derived.operator], ['datetime', 'subtract'], 'still a datetime');
+    sandbox.state.projDraft = null;
+    sandbox.updateDefinition('projection-definition', id, 'Ends', cleanProjectionBody(projectionDraftFrom(derived)));
+    eq(model()['projection-definitions'].Ends, derived, 'kept whole');
+    eq(sandbox.modelToSource(model()).includes('start + hold'), true, 'printed');
+    sandbox.applyModelSource(id, TIME);
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// Descriptions and notes (11.0): every page shows a definition's
+// description, its notes and its markers; a description is edited as
+// plain text; and an edit on a page keeps them all.
+// ---------------------------------------------------------------
+{
+  const NOTED = `/// The portal.
+model "Noted"
+
+@sensitive
+tag type EmailAddress = string
+
+tag type CustomerId = string
+
+/// A sign-up.
+event CustomerSignedUp { tag customerId: CustomerId, tag email: EmailAddress }
+
+/// Stored before 2024.
+@deprecated
+event EmailRegistered { tag customerId: CustomerId, tag email: EmailAddress }
+
+/// About a customer.
+group Customer (tag customerId: CustomerId) {
+  /// Whether the customer exists.
+  @unresolved("Does deletion end it?")
+  projection exists: boolean = false {
+    on CustomerSignedUp => set true
+  }
+}
+
+/// Whether an email address is taken.
+@assumption("Case does not matter")
+projection EmailTaken (tag email: EmailAddress): boolean = false {
+  on CustomerSignedUp => set true
+}
+
+/// A customer signs up.
+@external("The domain is not blocked")
+@unresolved("Sign-up after deletion?")
+command SignUp(customerId: CustomerId, email: EmailAddress) {
+  require EmailTaken(email) is false
+    else reject "Taken"
+
+  emit CustomerSignedUp { customerId, email }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Noted');
+  sandbox.applyModelSource(id, NOTED);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+  const page = (view, prepare = () => {}) => {
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = view;
+    prepare();
+    sandbox.paintView(model(), main);
+    return main;
+  };
+
+  check('every page shows a definition\'s description, notes and markers', () => {
+    const commandPage = page('slice', () => { sandbox.state.slice = 'SignUp'; sandbox.state.tab = 'definition'; });
+    const noteValues = findAll(commandPage, (n) => n.tag === 'input' && n.attributes.title === 'Empty it to remove the note').map((n) => n.value);
+    eq(noteValues, ['The domain is not blocked', 'Sign-up after deletion?'], 'each note, a field of its own');
+    const events = textOf(page('events', () => { sandbox.state.openEvent = null; }));
+    for (const text of ['A sign-up.', 'Stored before 2024.', 'deprecated']) eq(events.includes(text), true, text);
+    const types = textOf(page('types'));
+    eq(types.includes('sensitive'), true, types.slice(0, 400));
+    const withFields = (tree) => textOf(tree) + ' ' + findAll(tree, (n) => n.tag === 'input').map((n) => n.value).join(' ');
+    const projections = withFields(page('projections', () => {
+      sandbox.state.projDraft = { name: 'EmailTaken', body: projectionDraftFrom(sandbox.projectionsOf(model()).EmailTaken) };
+      sandbox.state.projTab = 'definition';
+    }));
+    eq(projections.includes('Case does not matter'), true, projections.slice(0, 500));
+    const grouped = withFields(page('projections', () => {
+      sandbox.state.groupOpen = { Customer: true };
+      sandbox.state.projDraft = { name: 'Customer.exists', body: projectionDraftFrom(sandbox.projectionsOf(model())['Customer.exists']) };
+    }));
+    eq(grouped.includes('Does deletion end it?'), true, 'a grouped projection\'s note');
+    sandbox.state.projDraft = null;
+    const described = findAll(page('overview'), (n) => n.tag === 'textarea' && n.className === 'note-description');
+    eq(described.map((n) => n.value), ['The portal.'], 'the model\'s description, editable');
+    const onCommand = findAll(page('slice', () => { sandbox.state.slice = 'SignUp'; }), (n) => n.tag === 'textarea' && n.className === 'note-description');
+    eq(onCommand.map((n) => n.value), ['A customer signs up.'], 'a command\'s, editable');
+    onCommand[0].onchange({ target: { value: 'Signs a customer up.' } });
+    eq(model()['command-definitions'].SignUp.description, 'Signs a customer up.', 'edited from the page');
+    sandbox.applyModelSource(id, NOTED);
+  });
+
+  check('notes and markers are edited in place, one append each', () => {
+    const notesOf = () => findAll(page('slice', () => { sandbox.state.slice = 'SignUp'; sandbox.state.tab = 'definition'; }),
+      (n) => n.tag === 'input' && n.attributes.title === 'Empty it to remove the note');
+    notesOf()[0].onchange({ target: { value: 'The domain is not on the block list' } });
+    eq(model()['command-definitions'].SignUp.externalRules, ['The domain is not on the block list'], 'edited');
+    notesOf()[1].onchange({ target: { value: '' } });
+    eq(model()['command-definitions'].SignUp.unresolved, undefined, 'emptied, removed');
+    const adder = findAll(page('slice', () => { sandbox.state.slice = 'SignUp'; }), (n) => /note-adder/.test(n.className || ''))[0];
+    findAll(adder, (n) => n.tag === 'select')[0].onchange({ target: { value: 'unresolved' } });
+    findAll(adder, (n) => n.tag === 'input')[0].oninput({ target: { value: 'What if the email changes?' } });
+    findAll(adder, (n) => n.tag === 'button' && textOf(n) === '+ note')[0].onclick();
+    eq(model()['command-definitions'].SignUp.unresolved, ['What if the email changes?'], 'added');
+    eq(sandbox.modelToSource(model()).includes('@unresolved("What if the email changes?")\ncommand SignUp'), true, 'the code view writes it');
+    const events = page('events', () => { sandbox.state.openEvent = 'EmailRegistered'; });
+    const deprecated = findAll(events, (n) => /note-toggle/.test(n.className || '') && textOf(n).includes('@deprecated'))
+      .map((label) => findAll(label, (n) => n.tag === 'input')[0]);
+    eq(deprecated.length, 1, 'the open event offers @deprecated');
+    deprecated[0].onchange({ target: { checked: false } });
+    eq(model()['event-definitions'].EmailRegistered.isDeprecated, undefined, 'unmarked');
+    sandbox.state.openEvent = null;
+    sandbox.applyModelSource(id, NOTED);
+  });
+
+  check('a description is edited as plain text, and empty takes it away', () => {
+    sandbox.describeDefinition('command-definition', 'SignUp', 'A customer signs up, once.\nThen confirms.');
+    eq(model()['command-definitions'].SignUp.description, 'A customer signs up, once.\nThen confirms.', 'set');
+    sandbox.describeDefinition('event-definition', 'EmailRegistered', '   ');
+    eq(model()['event-definitions'].EmailRegistered.description, undefined, 'removed');
+    sandbox.describeDefinition('projection-definition', 'Customer.exists', 'Exists.');
+    eq(model()['group-definitions'].Customer.projections[0].description, 'Exists.', 'a grouped projection');
+    sandbox.describeDcbModel(id, 'The whole portal.');
+    eq(model().description, 'The whole portal.', 'the model');
+    sandbox.applyModelSource(id, NOTED);
+    eq(model().description, 'The portal.', 'the text says it again');
+  });
+
+  check('editing on the pages keeps descriptions and notes', () => {
+    for (const name of ['EmailTaken', 'Customer.exists']) {
+      const body = sandbox.projectionsOf(model())[name];
+      sandbox.updateDefinition('projection-definition', id, name, cleanProjectionBody(projectionDraftFrom(body)));
+      eq(sandbox.projectionsOf(model())[name], body, name);
+    }
+    const before = model()['command-definitions'].SignUp;
+    sandbox.state.slice = 'SignUp';
+    sandbox.patch('command-definition', 'SignUp', (b) => { b.conditions[0].rejection = 'Already taken'; });
+    const after = model()['command-definitions'].SignUp;
+    eq([after.description, after.externalRules, after.unresolved], [before.description, before.externalRules, before.unresolved], 'a command');
+    sandbox.applyModelSource(id, NOTED);
+  });
+
+  sandbox.clearActiveModelId();
+}
+
+// ---------------------------------------------------------------
+// The acceptance additions on the pages: a handler taking a record's
+// field (G2), list(…) (G1) and count(…) as a value (G3) are shown as
+// written, read-only with the way to the code view, kept through an
+// unrelated edit, and run in the sandbox.
+// ---------------------------------------------------------------
+{
+  const LISTS = `model "Lists"
+
+tag type MemberId = string
+tag type BookId = string
+record Shelf { room: string, row: integer }
+
+event BookLent { tag memberId: MemberId, tag bookId: BookId }
+event BookReturned { tag memberId: MemberId, tag bookId: BookId }
+event MemberLeft { tag memberId: MemberId, tag bookIds: BookId[], lent: integer }
+event BookMoved { tag bookId: BookId, shelf: Shelf }
+
+projection Lent (tag memberId: MemberId, tag bookId: BookId): boolean = false {
+  on BookLent => set true
+  on BookReturned => set false
+}
+
+projection BookRoom (tag bookId: BookId): string = null {
+  on BookMoved => set event.data.shelf.room
+}
+
+derived projection LentCount (tag memberId: MemberId): integer {
+  count(list(Lent(memberId, *)))
+}
+
+command Lend(memberId: MemberId, bookIds: BookId[]) {
+  require count(Lent(memberId, *)) + count(bookIds) <= 3
+    else reject "Too many books"
+
+  for each bookId in bookIds => emit BookLent { memberId, bookId }
+}
+
+command Leave(memberId: MemberId) {
+  emit MemberLeft { memberId, bookIds: list(Lent(memberId, *)), lent: count(list(Lent(memberId, *))) }
+}
+
+command Move(bookId: BookId, shelf: Shelf) {
+  emit BookMoved { bookId, shelf }
+}
+
+command Return(memberId: MemberId, bookId: BookId) {
+  emit BookReturned { memberId, bookId }
+}
+`;
+  store.clear();
+  sandbox.bumpLogRevision();
+  const id = sandbox.createDcbModel('Lists');
+  sandbox.applyModelSource(id, LISTS);
+  const model = () => projectState()[id];
+  sandbox.setActiveModelId(id);
+  const page = (name) => {
+    const main = sandbox.document.createElement('div');
+    sandbox.state.view = 'projections';
+    sandbox.state.projDraft = { name, body: projectionDraftFrom(model()['projection-definitions'][name]) };
+    sandbox.state.projTab = 'definition';
+    sandbox.renderProjections(model(), main);
+    return textOf(main);
+  };
+
+  check('the pages show list, count and a record\'s field from the event, with the way to edit them', () => {
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    const room = page('BookRoom');
+    eq(room.includes('shelf.room') && !room.includes('Edit in code'), true, 'a record\'s field one hop in, picked in the row: ' + room.slice(0, 600));
+    eq(cleanProjectionBody(sandbox.state.projDraft.body).handlers, model()['projection-definitions'].BookRoom.handlers, 'painting it changed nothing');
+    const derived = page('LentCount');
+    eq(derived.includes('count(list(Lent(memberId, *)))') && !derived.includes('Edit in code'), true, derived.slice(0, 600));
+    sandbox.state.projDraft = null;
+    const decision = textOf(sandbox.stepDecision(model(), sandbox.sliceOf(model(), 'Lend')));
+    eq(decision.includes('count(Lent(memberId, *)) + count(bookIds)') && !decision.includes('Edit in code'), true,
+      'a sum of a collection and a count, edited through the rule\'s questions: ' + decision.slice(0, 600));
+    const lend = model()['command-definitions'].Lend.steps[0].condition;
+    eq(sandbox.draftOperand(sandbox.draftFromCondition(lend), 'left'), lend.leftHandSide, 'opens as a sum, no loss');
+    sandbox.state.slice = 'Leave';
+    sandbox.state.openEvent = 'MemberLeft';
+    const emits = textOf(sandbox.stepEmits(model(), sandbox.sliceOf(model(), 'Leave')));
+    eq(emits.includes('list(Lent(memberId, *))') && emits.includes('count(list(Lent(memberId, *)))') && !emits.includes('Edit in code'), true,
+      'a list and a count of one, edited beside the field: ' + emits.slice(0, 600));
+    sandbox.state.openEvent = null;
+    for (const fn of ['renderEvents', 'renderOverview', 'renderCoupling', 'renderRuleMap', 'renderEventModel', 'renderMetro']) {
+      sandbox[fn](model(), sandbox.document.createElement('div'));
+    }
+  });
+
+  check('an emission field is set to a collection, a count or a record built here', () => {
+    sandbox.closeForms();
+    const paint = (name) => sandbox.stepEmits(model(), sandbox.sliceOf(model(), name));
+    const buttons = (name, label) => findAll(paint(name), (n) => n.tag === 'button' && textOf(n) === label);
+    const withOption = (name, value) => findAll(paint(name), (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option').some((o) => o.value === value))[0];
+    const emitted = (name, event) => model()['command-definitions'][name].steps.find((s) => s.name === event).parameters;
+    sandbox.state.slice = 'Leave';
+    sandbox.state.openEvent = 'MemberLeft';
+    // Opened again and set, each keeps what it was.
+    const before = emitted('Leave', 'MemberLeft');
+    buttons('Leave', 'Edit')[0].onclick();
+    eq([sandbox.state.fieldArith.kind, sandbox.state.fieldArith.draft.fn], ['collect', 'list'], 'a list opens as a collection');
+    buttons('Leave', 'Set')[0].onclick();
+    buttons('Leave', 'Edit')[1].onclick();
+    eq(sandbox.state.fieldArith.counted, true, 'a count of a list opens as its list, counted');
+    buttons('Leave', 'Set')[0].onclick();
+    eq(emitted('Leave', 'MemberLeft'), before, 'no loss');
+    // A count built afresh.
+    sandbox.patch('command-definition', 'Leave', (b) => { delete b.publishes[0].parameters.lent; });
+    withOption('Leave', ' collect').onchange({ target: { value: ' collect' } });
+    eq(sandbox.state.fieldArith.draft.fn, 'count', 'an integer is counted');
+    withOption('Leave', 'Lent').onchange({ target: { value: 'Lent' } });
+    paint('Leave');
+    buttons('Leave', 'Set')[0].onclick();
+    eq(emitted('Leave', 'MemberLeft').lent, { collect: 'count', read: { projection: 'Lent', tags: { memberId: { parameterName: 'memberId' }, bookId: { open: true } } } }, 'stored');
+    let text = sandbox.modelToSource(model());
+    eq(text.includes('lent: count(Lent(memberId, *))'), true, text.slice(text.indexOf('command Leave'), text.indexOf('command Leave') + 300));
+    eq(sandbox.parseModelSource(text).diagnostics, [], 'and parses back');
+    // A record built here (#5): offered for a record-typed field, its
+    // fields each picked from what is in scope.
+    sandbox.state.slice = 'Move';
+    sandbox.state.openEvent = 'BookMoved';
+    sandbox.patch('command-definition', 'Move', (b) => { b.properties.push({ name: 'room', propertyType: 'string' }); });
+    withOption('Move', ' record').onchange({ target: { value: ' record' } });
+    eq(emitted('Move', 'BookMoved').shelf, { record: { room: { parameterName: 'room' } } }, 'built, a parameter of a field\'s name taken');
+    const row = findAll(paint('Move'), (n) => n.tag === 'select'
+      && findAll(n, (o) => o.tag === 'option').some((o) => o.value === JSON.stringify({ parameterName: 'shelf', property: 'row' })))[0];
+    row.onchange({ target: { value: JSON.stringify({ parameterName: 'shelf', property: 'row' }) } });
+    eq(emitted('Move', 'BookMoved').shelf, { record: { room: { parameterName: 'room' }, row: { parameterName: 'shelf', property: 'row' } } }, 'a field picked');
+    let printed = sandbox.modelToSource(model());
+    eq(printed.includes('emit BookMoved { bookId, shelf: { room, row: shelf.row } }'), true, printed.slice(printed.indexOf('command Move'), printed.indexOf('command Move') + 200));
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    sandbox.patch('command-definition', 'Move', (b) => { b.publishes[0].parameters.shelf = { record: { room: 'Hall', row: 2 } }; });
+    const moved = textOf(paint('Move'));
+    eq(moved.includes('a record, built here') && moved.includes('Edit in code'), true, 'a literal field is edited in the code view: ' + moved.slice(0, 500));
+    sandbox.state.openEvent = null;
+    sandbox.applyModelSource(id, LISTS);
+  });
+
+  check('a derived count of a list opens as its list, counted, and a list held as it is is typed one', () => {
+    const paint = () => {
+      const main = sandbox.document.createElement('div');
+      sandbox.renderProjections(model(), main);
+      return main;
+    };
+    const buttons = (label) => findAll(paint(), (n) => n.tag === 'button' && textOf(n) === label);
+    const before = model()['projection-definitions'].LentCount;
+    page('LentCount');
+    buttons('Edit')[0].onclick();
+    const build = sandbox.state.projDraft.body.derivedBuild;
+    eq([build.counted, build.collect.fn], [true, 'list'], 'counted');
+    eq(textOf(paint()).includes('count(…) of the list below'), true, 'said');
+    buttons('Set')[0].onclick();
+    sandbox.autoSaveProjectionDraft();
+    eq(model()['projection-definitions'].LentCount, before, 'no loss');
+    // A list held as it is: the open tag's type, a list.
+    buttons('Edit')[0].onclick();
+    delete sandbox.state.projDraft.body.derivedBuild.counted;
+    buttons('Set')[0].onclick();
+    sandbox.autoSaveProjectionDraft();
+    const body = model()['projection-definitions'].LentCount;
+    eq([body.valueType, body.isList, body.derived.leftHandSide.collect], ['BookId', true, 'list'], 'a list of book ids');
+    const text = sandbox.modelToSource(model());
+    eq(text.includes('derived projection LentCount (tag memberId: MemberId): BookId[] {\n  list(Lent(memberId, *))'), true, text.slice(text.indexOf('derived projection'), text.indexOf('derived projection') + 120));
+    const parsed = sandbox.parseModelSource(text);
+    eq(parsed.diagnostics, [], 'parses back');
+    eq(parsed.collections['projection-definition'].LentCount, body, 'identical');
+    eq(advisedOtherwise(model()), [], 'advisory-clean');
+    // A count of a list compared by == is the count predicate, the
+    // notation's one spelling of it.
+    const draft = projectionDraftFrom(before);
+    Object.assign(draft.derived, { predicate: 'equals', rightHandSide: 2 });
+    draft.valueType = 'boolean';
+    const compared = cleanProjectionBody(draft);
+    eq([compared.derived.predicate, compared.derived.leftHandSide.collect], ['countEquals', 'list'], 'the count predicate');
+    sandbox.state.projDraft = null;
+    sandbox.applyModelSource(id, LISTS);
+  });
+
+  check('an unrelated edit on the pages keeps list, count and a record\'s field', () => {
+    for (const name of ['BookRoom', 'LentCount']) {
+      const body = model()['projection-definitions'][name];
+      sandbox.updateDefinition('projection-definition', id, name, cleanProjectionBody(projectionDraftFrom(body)));
+      eq(model()['projection-definitions'][name], body, name);
+    }
+    const before = model()['command-definitions'].Lend.steps[0];
+    sandbox.state.slice = 'Lend';
+    sandbox.patch('command-definition', 'Lend', (b) => { b.conditions[0].rejection = 'Three books at most'; });
+    eq(model()['command-definitions'].Lend.steps[0].condition, before.condition, 'the count kept');
+    const leave = model()['command-definitions'].Leave;
+    sandbox.state.slice = 'Leave';
+    sandbox.patch('command-definition', 'Leave', () => {});
+    eq(model()['command-definitions'].Leave, leave, 'list and count in an emission kept');
+    sandbox.applyModelSource(id, LISTS);
+  });
+
+  check('the sandbox runs list and count', () => {
+    const session = sandbox.session;
+    session.reset();
+    sandbox.sessionRun(model(), 'Lend', { memberId: 'm1', bookIds: ['b1', 'b2'] });
+    sandbox.sessionRun(model(), 'Lend', { memberId: 'm1', bookIds: ['b3', 'b4'] });
+    sandbox.sessionRun(model(), 'Leave', { memberId: 'm1' });
+    eq(session.log.map((e) => e.type), ['BookLent', 'BookLent', 'MemberLeft'], 'the second refused');
+    eq(session.log[2].data, { memberId: 'm1', bookIds: ['b1', 'b2'], lent: 2 }, 'the list and its count');
+    session.reset();
+  });
+
+  sandbox.clearActiveModelId();
+}
 
 // A share link or a fetched file is unpacked under a cap: a few hundred
 // kilobytes of gzip can stand for gigabytes of whitespace, and the

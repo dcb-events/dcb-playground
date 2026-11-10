@@ -9,17 +9,14 @@ and prune what no longer holds.
 
 ## Shipped models
 
-- **The shipped models are stated without entities** (8.0): the seed
-  builders still build the course and content models with entities —
-  the record of how they were designed — and a last layer,
-  `seedWithoutEntities` (model.js), restates them as reads in place
-  through the ordinary commands — each projection already tagged by
-  the identifier the entity read it by (`seedEntityTag`), so a
-  course's and a student's subscription counts stay the two folds they
-  are. The entity forms live on as the experimental
-  `course-entities` and `course-schedules` (which needs `excluding`).
-  Entity tests build those, or a model from seed layers alone
-  (`seeded(...)` in ui.test.js). A `PREDEFINED_MODELS` entry's
+- **The shipped models use no groups**: the examples on dcb.events
+  read projections in place, and a group is a naming device they do
+  not need. The suites build their grouped course models from code
+  view text (`FIXTURE_TEXTS` in ui.test.js: `course-groups`, and
+  `course-schedules` with a chain of three reads) or by moving a
+  shipped model's projections into a group (`grouped(...)`) — what
+  the retired `course-entities` and `course-schedules` became (11.0).
+  A model from seed layers alone is `seeded(...)`. A `PREDEFINED_MODELS` entry's
   `experimental` mark says whether it uses anything experimental, and
   a test holds the mark to the built model's `experimentalFeatures`.
 - **The playground ships no examples.** The examples live on
@@ -36,12 +33,14 @@ and prune what no longer holds.
   (`experimental()`, shared.js; it replaced the simple/advanced mode).
   What DCB is made of — types, events, projections, commands, the
   derived boundary — is always on screen; what the examples on
-  dcb.events do not need is behind the flag: entities and lifecycles,
-  scripted projections, guarded
-  emissions, optional reads, `excluding`, `currentValue`, and the
-  Coupling /
-  Rule map / Event model / Lifecycles / Metro map views. A model that uses any of
-  it still loads, renders and evaluates whole; `experimentalFeatures`
+  dcb.events do not need is behind the flag: the Coupling / Rule map /
+  Event model / Metro map views. Groups are not on the list: a naming
+  device with no consistency meaning has nothing to hide. Entities,
+  lifecycles and `excluding` were on it until 11.0 removed them, and so
+  were scripted projections, guarded emissions, optional reads and
+  `currentValue` (issues #104 and #111) — since then no construct of the
+  language is, and the flag stays as the way to stage the next one. A
+  model that uses a staged construct still loads, renders and evaluates whole; `experimentalFeatures`
   (model.js) names what it uses and `experimentalNotice` says so on
   every page. Gate an *offer* (an adder, a picker row, a tab), never
   the display of something stored. The code view does the same: with
@@ -56,17 +55,11 @@ and prune what no longer holds.
   projections left the flag when they learned to compute — they are
   data, analysable, and they cover the case that most often sent an
   author to a script (a value worked out from two others, e.g. a weekly
-  budget less that week's allocations). Scripts took their place: the
-  escape hatch stays for what neither the operations nor a derivation
-  can say, and stays readable and editable on a model that has one —
-  but it is no longer offered, to authors without the flag or to
-  agents at all. `content-decisions-scripted` ships on as the
-  experimental baseline of the 2026-09-19 comparison; its script-free
-  variants (`-derived`, `-guarded`) already ship beside it, and it is
-  not rewritten — its five-state status needs a case expression, which
-  no real model has asked for yet.
-- **WebMCP offers nothing experimental, flag or no flag.** No entity
-  tools, no experimental member in a tool schema (cut by
+  budget less that week's allocations). Scripts took their place behind
+  the flag until 11.0 removed them, and `content-decisions-scripted`,
+  the baseline of the 2026-09-19 comparison, went with them.
+- **WebMCP offers nothing experimental, flag or no flag.** No
+  experimental member in a tool schema (cut by
   `generate-webmcp-schemas.js`), nothing experimental in the language
   reference (`sourceLanguageReference`), and an agent's edit that would
   introduce a use is refused (`introducedExperimentalFeatures`). Following
@@ -81,7 +74,7 @@ and prune what no longer holds.
 
 - **A read is never authored** — the merged step ("Rules")
   is one step where there were two, because a boundary binding is not a
-  thing anyone wants to declare: it is what a rule, a guard, an emission
+  thing anyone wants to declare: it is what a rule, an emission
   field, an emitted tag or another read *needs*. Since 8.0 a projection
   read need not be a binding at all: an operand may be a read in place
   (`{projection, tags, arguments}`, `require CourseStatus(courseId)
@@ -91,14 +84,14 @@ and prune what no longer holds.
   a name field in the middle of the first question was one more thing
   to answer before the rule existed, and since the right side reads
   projections in place too, a name is rarely needed. A read is named
-  afterwards instead: a selected rule or guard offers "Add alias" (one
+  afterwards instead: a selected rule offers "Add alias" (one
   button per read in place it names, labelled with the read when there
   are two), which swaps the read's name in the sentence for a field
   (`state.aliasing`); Enter binds the read under the name and points
   every spelling of it in the command at the alias (`aliasInlineRead`,
   model.js), since those are one read already. The read card's "Remove
   alias" goes back (`inlineAliasedRead`), offered only while every use
-  is the read's whole value in a rule, guard or emission field
+  is the read's whole value in a rule or emission field
   (`aliasInlinable`). The pages never pick an alias for a projection
   themselves. A name the command already uses for a read or an input
   is refused in the field (`aliasNameProblem`), not left to an
@@ -107,8 +100,10 @@ and prune what no longer holds.
   seniority (developer)`: the name in the projection colour, the
   brackets muted, and each value an `opRef` of its own, so a tag lights
   the input it came from (`projectionReadRef`). It replaced "Developer
-  seniority tagged developer", which was too long to scan in a rule. Entity reads
-  are still bindings. Inline reads are walked by `forEachCommandOperand`
+  seniority tagged developer", which was too long to scan in a rule. A
+  grouped projection is read the same way, `Course(courseId).capacity`,
+  or through a group alias (`alias course = Course(courseId)`, then
+  `course.capacity`), which is a binding. Inline reads are walked by `forEachCommandOperand`
   (it descends into their tags), counted once per spelling
   (`inlineReads`), placed in the query their tags wait for
   (`operandDepth`), and folded once per evaluation (`scope.inline`). So the rule adder
@@ -121,15 +116,15 @@ and prune what no longer holds.
   (`projectionReadChoices`): with no bindings to put a second projection
   in scope, two projections could otherwise never be compared
   (`DeveloperSeniority(developerId) >= RequiredSeniority(projectId)`).
-  `bindingReferences` / `unreferencedBindings` (model.js) name the six
-  reasons a read is consulted — rule, guard, emission, coverage, chain,
-  serialisation —
+  `bindingReferences` / `unreferencedBindings` (model.js) name the four
+  reasons a read is consulted — rule, emission, chain, serialisation
+  (a guard was a fifth until 11.0) —
   and `updateDefinitions` prunes what nothing consults, transitively, in
   the same append: deleting the last rule about `theirs` takes the
   `students` hop with it. Pruning is deliberately *not* in
   `addDefinition`: a body arriving whole, from a file or a WebMCP tool,
   keeps what it came with and earns an advisory instead, and the next
-  edit to that command is what drops it. All six reasons are
+  edit to that command is what drops it. All four reasons are
   load-bearing in the shipped models, and a test holds them free of
   unreferenced reads. Serialisation is the one that names no alias: a
   binding to a projection that takes no tags reads every event that
@@ -144,15 +139,14 @@ and prune what no longer holds.
   The rule adder is itself staged (`ruleEditor`): what it is about,
   which of that thing's values, what must be true of it — because a
   rule now spans what used to be two steps, and asking it all at once
-  put five pickers in a row nobody could read as a sentence. Every
-  guard starts at the second question; a rule opened for editing opens
-  whole. There is no Next
+  put five pickers in a row nobody could read as a sentence. A rule
+  opened for editing opens whole. There is no Next
   button: **which questions are on screen is derived from what has been
   answered**, never accumulated by the act of answering. That is the
   row's correctness, not a style choice — gate a question on a change
   event and any pre-filled picker deadlocks, because a `<select>`
   already showing the value you want fires nothing when you pick it,
-  which is what stranded an entity whose single property was filled in
+  which is what stranded a group whose single projection was filled in
   for you. The first question is deliberately *not* pre-answered, or the
   row would answer itself and put every control on screen at once.
   Its picker lists the reads the command already makes first, by
@@ -165,21 +159,22 @@ and prune what no longer holds.
   rule's message trails it, muted, as ` — else "…"`. A test authors
   `SubscribeStudentToCourse` through the three questions and compares
   the result to the shipped definition. Its first question offers only
-  what the command can reach — entities some operand already in scope
-  could identify, and every projection, with a picker per tag it
-  declares beside it — values in scope of that tag's type, `each` of a
-  list of them, and `+ new input …`, the only offer when nothing in
-  scope has the type: committing adds a command property named after
-  the tag (`newReadInputs`). Inventing an entity there likewise gives
-  the command the input that says *which* one, since a fresh
-  identifier type is reachable from nothing. A projection an entity property
-  binds is not offered: it is read through the entity
-  (`course.capacity`), and offering it bare too would make one fact
-  reachable as two different reads. The others are what lets a model
-  without entities or lifecycles state its rules on the pages, not
-  only in the code view (`require Label(documentId) == …`).
+  what the command can reach — groups (`group:Course`, read through a
+  new alias, the group's tag a picker beside it), and every top-level
+  projection, with a picker per tag it declares beside it — values in
+  scope of that tag's type, `each` of a list of them, and `+ new input
+  …`, the only offer when nothing in scope has the type: committing
+  adds a command property named after the tag (`newReadInputs`). A
+  grouped projection is not offered on its own: it is read through
+  its group (`course.capacity`), and offering it bare too would make
+  one fact reachable as two different reads. A rule never creates a
+  group. The top-level projections are what lets a model without
+  groups state its rules on the pages, not only in the code view
+  (`require Label(documentId) == …`). Existence rows ("the student
+  exists" as one pick) went with lifecycles: `student.exists is true`
+  is an ordinary rule about a boolean.
 - **Reads split by their reason** (`decisionAliases`, model.js): a read
-  a rule or guard names, and every hop it was reached through, belongs
+  a rule names, and every hop it was reached through, belongs
   to the decide step; everything else is read in order to *record*
   something — a projection whose value becomes an id, an instance whose
   tag the event writes — and is shown under the emission instead. So
@@ -188,23 +183,122 @@ and prune what no longer holds.
   never tests where the tag that demands it is. The split is
   presentation only: both halves are one `boundary`, and the derived
   DCB is their union. Reads stay removable, and removing one takes the
-  rules and guards about it while leaving reads further down the chain
+  rules about it while leaving reads further down the chain
   to dangle with an advisory — narrowing the boundary is never silent.
-- **Write coverage is narrow, and advice only** (`emittedTagRequirements`,
-  model.js): it flags a tag whose value this command *derived* — read
-  off some instance it bound — and is silent for one taken straight
-  from a command property, which the caller asserted. The reason is
-  that an uncovered tag is not unsound: the append condition is the
-  union of the bindings' queries, so the tag this command writes is
-  what makes every *other* command that read that instance conflict
-  with it, read or not. What an uncovered tag gives up is only this
-  command's own protection against concurrent change, and where the
-  decision never depended on that instance there was nothing to
-  protect. One walk decides both what the advisory says and which reads
-  a tag keeps alive, so pruning and the advisory cannot disagree about
-  what a read is for. `UnsubscribeStudentFromCourse` therefore binds
-  the course only: which student is asserted by the caller, and whether
-  they are in the course is answered off the course.
+- **Commands run top-down (11.0).** A body is one ordered list,
+  `steps`: rules, emissions, branches (`if … else if … else`, first
+  arm that holds) and, inside a branch, `reject`. Any rejection aborts
+  with no events; the emissions reached are one append, and none is
+  `then nothing`. `require c else reject "m"` stays a step of its own
+  – the shorthand for `if not c => reject "m"`, and the common case.
+  It replaced `conditions` (all checked first) and `publishes` (all
+  published after) because branch-only rejections and per-case emits
+  were what the migrations could not merge without a guard; guarded
+  emissions and optional reads, which tried, went in package 2. Every
+  walker of a command goes through the step helpers (`forEachStep`,
+  `commandRules`, `commandEmissions`, `commandConditionLeaves`,
+  model.js) and so into every branch: operands, reference reasons
+  (a branch condition is a `rule` reason), pruning, renames,
+  derivation, the slice, the rule map, the lifecycle tab, the code
+  view. Conditions join with `and` / `or` (`{all}` / `{any}`, the leaf
+  the predicate it always was); quantifying, zipping and the one fan
+  root apply per comparison.
+- **Reads are lazy (11.0).** An alias or a read in place is folded
+  the first time a step reached needs it (`evBound`, evaluate.js), so
+  a read behind a rule that refused, or in an arm not taken, never
+  happens – `alias b = Q(a)` with `a` unset no longer errors behind
+  `require a is not empty`. A read reached with a null tag still does.
+  The one read made up front is the one nothing consults
+  (serialisation): it is there for its boundary. `and` / `or` stop as
+  soon as the answer is known, for the same reason.
+- **Two boundaries, said apart.** At runtime the append condition
+  covers the reads the run made (`reads` and, through a port, `query`)
+  – a read not made decided nothing, and the reads that chose the way
+  through are still covered. The static boundary, every read any run
+  might make (`deriveDcb`, `boundarySummary`), is what the command page,
+  `check` and `conflicts` describe. The sandbox's Reads and Store
+  columns show the run's; Store says so when the condition is narrower
+  than what the dry runs fetched.
+- **Narrowing optional parameters (11.0).** Inside `if x is not empty`
+  and after `require x is not empty`, an optional `x` counts as
+  present (`walkPresence`, `conditionPresence`, model.js): emitting it
+  into a required field, or reading by it, is no advisory there. An
+  alias is judged at every place it is used, its chain included, since
+  that is where it is read.
+- **Scenarios owed (11.0).** One per rejection message (rules and
+  `reject`s, `commandRejections`) and one per way to succeed
+  (`commandSuccessesOwed`): plain success without branches, else each
+  arm that emits. A scenario shows an arm when it holds and its run
+  took it (`arms`, `commandCoverageGaps`, evaluate.js) – the command
+  page's gaps card and the skill's `check` both read that one function.
+- **Branches and loops are edited where they sit.** The pages edit
+  the top-level rules and emissions as two lists (`commandLists`) and
+  put them back into the slots they came from (`withCommandLists`,
+  through `patch` in index.html), so an edit never flattens or drops a
+  branch. Everything inside a branch or a loop is edited by *path*
+  (`stepListAt`, `insertStepAt`, `moveStepAt`, `addBranchArm`,
+  `removeBranchArm`, `setBranchOtherwise`, model.js – `[2, 0, 1]` is
+  step 1 of the first arm of step 2, the same paths `forEachStep`
+  gives), each changing that one place in the body `patch` cloned;
+  the write is the one `updateDefinition` append. **A condition is the
+  rule adder pointed elsewhere** (`ruleEditor`'s `target`: the
+  comparison edited, whether a message is asked, the loop it sits in,
+  and where the result is written), not a second widget: an arm's
+  `if`, a `+ and` / `+ or`, a `require` inside a block arm and a new
+  branch's first arm all ask the same three questions, staged the same
+  way, and a read the condition brings lands in the same append. A
+  condition is edited as a tree of comparisons, a line each
+  (`conditionLines`, index.html): the first led by `if` / `else if` /
+  `require`, the rest by the `and` or `or` that joins them, a bracketed
+  group opening on its first comparison's line and closing on its last,
+  indented a step per group it sits in – the code view's brackets,
+  not a nested widget. Each line has Edit and ×, and a comparison is
+  named by its path of member indices (`conditionNodeAt`,
+  `withConditionNode`, `withConditionJoined`, model.js – `[1, 0]` is the
+  first member of the second). Joining has three gestures, all the
+  rule adder's questions: `+ and` / `+ or` on the last line join the
+  whole (added when it is joined that way, else the whole bracketed,
+  `(a or b) and c`); `+ (… or …)` beside a comparison of a joined
+  condition brackets it with a new one joined the other way (`a and (b
+  or c)`); `+ or in (…)` on a group's last line adds to that group. So
+  any depth the wire format holds is reached a comparison at a time.
+  `×` on a comparison removes it, a group left with one member becoming
+  that member (`(b)` is unprintable, and says nothing `b` does not);
+  on the last comparison it removes the arm (the last arm the branch).
+  Nothing is normalised otherwise: a group stays the group it was
+  written as. A top-level rule takes the same lines. A group inside a
+  group was the code view's at first; the lines cost less than feared
+  once a line is a path. The handler row and a collection's `where`
+  are one row of pickers rather than lines, and draft the same tree
+  inline (`draftTreeControls`, `joinDraftTree`, `draftTreeFrom`,
+  index.html): the same three gestures, brackets as text between the
+  pickers. **Arms hold steps**: `emit` (the emission's own field editor,
+  `eventFields` given where to write), `reject` with its message, and
+  outside a loop `require` and a nested `if`; `↑` / `↓` order steps,
+  arms and branches. `+ branch` (Rules) starts one by its first
+  condition and puts it after the rules, before what is recorded
+  (`newStepIndex`); `+ else` adds an empty `else`. **A step moves in
+  and out**: a top-level rule or emission offers `Move into…`, then a
+  picker of the arms of the command's branches outside loops, by their
+  conditions (`armTargets`, `moveStepIntoArm`); a step in an arm offers
+  `Move out`, beside its branch (`moveStepOutOfArm`) – where the list
+  the branch is in takes it: a loop's body only emits, a `reject`
+  stays inside some arm. The step itself moves, never a copy, the
+  lists found before it leaves its own. Order is kept both ways: into
+  an arm, a step from before the branch goes first and one from after
+  it last; out of one, the arm's first step goes just before the branch
+  and any other just after (a lone one by its kind, a rule before), so
+  in and back out lands a step where it was. A drag between lists was
+  the other candidate; it would need a drop target per arm, and a
+  phone has no drag.
+- **No write coverage** (gone with entities, 11.0). It flagged an
+  emitted tag whose value was read off an entity instance the command
+  had not bound; a group names no instance an event writes, so there is
+  nothing to cover. An uncovered tag was never unsound anyway — the
+  append condition is the union of the reads' queries, and the tag this
+  command writes is what makes every *other* command that read that
+  instance conflict with it. `UnsubscribeStudentFromCourse` binds the
+  course only: which student is asserted by the caller.
 
 - **An editor offers what the held type admits.** `operationsFor` and
   `hasSuccessor` (model.js) are the two rules, and both the change adder
@@ -224,15 +318,168 @@ and prune what no longer holds.
   Handler values are narrower still than validation: `successor` is
   offered only to `set` an integer or a named scalar value type
   (`offersSuccessor` — a numbering, never a plain string, never beside
-  another verb), and `currentValue` is not offered at all (`set` to it
-  is a no-op, `increment` by it doubles). Both stay in the wire format
-  and still run when stored.
+  another verb); it stays in the wire format and still runs when
+  stored. `currentValue` was never offered (`set` to it is a no-op,
+  `increment` by it doubles) and 11.0 removed it: a document that uses
+  it is refused on import, naming the projection.
   A plain scalar value type counts as what it wraps, for predicates as
   for operations (`underlyingScalarType`, `predicatesForType` given the
   model): `Hours` over an integer is ordered and decremented like one.
   Predicates used to go by the type's name alone, so wrapping an
   integer in a named type left it only `equals`. An identifier (a tag
   type) and an enum stay identity-only, whatever they are spelled in.
+- **A collection function is a value, and the pages show it**
+  (11.0, dcb-events.github.io#102). `count`, `sum`, `min`, `max`,
+  `average`, `any` and `all` over an open read stand wherever a value
+  does – a rule, a branch's condition, an emission's field, a derived
+  projection – as `{collect, read, where?}`. Walkers see its `read` as
+  an ordinary read in place (`forEachCommandOperand` descends into it,
+  then into its `where`), so the query, references, renames, the rule
+  map and the metro treat it as a read of that projection with no
+  case of their own; `operandRead` gives it to those that ask one
+  operand. **The pages write them**: a rule's first
+  question offers `count(…, *)`, `sum(…, *)` and the rest beside the
+  reads, and answering one asks which instances – the projection, `*`
+  or a value in scope per tag (the first one in scope bound, the rest
+  open), the numeric field of a record – and `+ where`, comparisons of
+  `value` / `value.field` with a parameter, an alias's value, a member
+  or a typed value, joined and bracketed as a command's condition is
+  (`collectionStages`, index.html).
+  The draft holds it beside the side's picker under a sentinel
+  (`COLLECT`; `ARITH` for a sum) that `draftOperand`
+  reads through, so every reader of a draft side sees the operand
+  built, or nothing while it is unfinished, and no stage needs a Next.
+  **Either side may be a collection or a sum.** The right side's
+  picker offers `a collection…` and `a sum or difference…`; the left
+  side's value becomes the first term of a sum by `+ / − a value`
+  (`no sum` goes back to it alone) – `CourseCapacity(c) -
+  sum(Reservation(c, *).seats where …) >= seats`. A sum is a chain, left
+  to right, the code view's only reading (`arithmeticChain`, shared.js):
+  its first two terms `left` / `right`, the rest in `more`, each a draft
+  side of its own – a value in scope that computes, a typed number or
+  duration, or a collection whose questions follow as stages named by
+  its place (`arithmeticCollectionStages`); `+ / − more` adds a term.
+  The read a rule brought is swapped in place inside a sum too.
+  **An emission field** takes `a sum or difference…` and `a
+  collection…` the same way, built in a card under the field and set
+  whole (`fieldValueEditor`, index.html): the functions offered are
+  the ones whose result the field holds (`fieldCollectionFunctions` –
+  `list` for a list, `count` / `sum` / … for a number, `any` / `all`
+  for a boolean), and a stored `count(list(P(x, *)))` opens as its list
+  with the count kept around it. A record-typed field also takes `a
+  record built here…` (#5, `2026-11-09-migration-feedback.md`): a
+  picker per field of the record, each offering what is in scope of
+  that field's type – a record parameter's fields among them – and a
+  parameter named as the field taken at once. A field holding
+  anything else, a literal or a read in place, is edited in the code
+  view.
+  **A derived projection's side** offers `a collection…` beside the
+  reads, its parameters and a typed value, built in a card under the
+  side and set whole (`derivedCollectionCard`, index.html), its own
+  parameters the values in scope: any function held as it is or
+  compared, the numeric ones in a computation. Held as it is, it takes
+  the type the collection yields (`derivedOperandType`, model.js)
+  unless its own already holds that – a write would refuse it
+  otherwise. `average` yields a number no built-in type holds, so it is
+  offered once the model declares a type of number. A stored
+  `count(list(P(x, *)))` opens as its list, counted; compared by `==`,
+  `<` or `>` it is stored as the count predicate, the notation's one
+  spelling of it.
+  A record value's field and a list's count are rows of the pickers
+  beside the value (`valueRowsBeyondReads`), rules and emission fields
+  alike. What the editors cannot say – a sum on the right of `+` / `-`,
+  which the code view cannot spell either, a term no picker offers –
+  is shown as the code view writes it with *Edit in code*
+  (`collectionEditable`, `arithmeticEditable`, `conditionBeyondEditors`,
+  shared.js) and kept through every other edit.
+  **Over nothing**: `count` and `sum` 0, `min` / `max` / `average`
+  null, `any` false, `all` true. **Without a `where`**, `any` asks
+  whether an instance is present and `all` holds – every present
+  instance is one; the readings that test the values' truthiness were
+  dropped as a second meaning of the same word. A null value holds no
+  number, and the numeric ones skip it rather than erroring.
+  **`where` reads no projection** – `value`, `value.field`, the names
+  in scope and literals (`collectionProblem`) – so a collection's
+  query is its read's, and one fold per instance answers it. **An
+  alias already bound is a name in scope there** (the 11.0
+  acceptance, D3): `where value == partner` compares with the value
+  that alias read – a value, no read made inside the `where` – and
+  counts as consulting it, so pruning keeps it (`operandAliases`
+  walks a `where`). Refusing it cost the portal a projection tagged by
+  both parties, and the "unused" advisory threatened to drop the read
+  on the next edit. A group's projection through its alias stays
+  refused: that one would be a read.
+- **`list(P(x, *))` and `count(xs)` as a value** (the 11.0
+  acceptance, G1 and G3). `list` is one more collection function,
+  `{collect: 'list'}`: the one open tag's values, in the order of each
+  instance's first event, typed a list of that tag's type
+  (`collectionResultType`) – which is all a list needs to go where
+  lists go: an emission, `contains`, `count`, a loop's source. Two open
+  tags would make a list of pairs, which no type here says, so it is
+  refused. It closed the portal's last unresolved item: an event that
+  stores the ids it unassigned as a list. `count(xs)` of a list became
+  `{count: operand}` (`CountValue`), an integer wherever a value goes;
+  the rule `count(xs) == 3` (and `!=`, `<`, `>`) keeps its stored
+  predicate, so nothing stored changes and no import converts – the
+  parser reads that one position as the predicate, and a `{count}`
+  stored there prints as JSON. Walkers see what it counts in its place
+  (`forEachCommandOperand`, `uncounted` for a derived side).
+- **A fan-out emit is a step: `for each`** (11.0,
+  dcb-events.github.io#103). `{forEach: [names], in, steps}` runs its
+  steps once per element of an open read (present instances, in the
+  order of each one's first event), a list projection or a list
+  parameter (list order), inside the command's one append. It is what
+  a cascade was missing – deleting a customer ends each of its shares
+  – which otherwise became a reaction chain or one command per element
+  with a rejection where a skip was meant. **The element is a name in
+  scope, stored as `{parameterName}`**: a new operand kind would have
+  needed a case in every operand walker, and one forgotten would have
+  read the reference as a literal object; as a parameter, every reader
+  already reads it – a record element's field (`item.price`) too – and
+  `commandScopeProperties` adds the loop's names, typed by the open
+  tag's tag type or the list's element type (`loopVariables`), where
+  an operand is typed. A name is the loop's own: one shadowing a
+  payload property or an alias is advised (`loopProblem`). Over an open
+  read `value` is the instance's (`{instanceValue}`, the `where`'s
+  operand), typed by `loopValueType`. **The body only emits**: emissions,
+  and branches whose arms are one emission or one `reject`; a `reject`
+  reached refuses the whole command, as everywhere. A rule, a block
+  arm or a nested loop inside is an advisory (`loopStepProblem`) and a
+  positioned parse error; nesting is refused on the write path too,
+  being structure. No `where` on a loop: skipping is an `if`, one
+  condition vocabulary. **Zero elements emit nothing**, never a
+  refusal. **Reads per element**: a read naming an element is made once
+  per element (`evInlineKey` adds the element's values to the read's
+  spelling), so the run's reads and append condition hold each one,
+  and the static boundary shows it per element – `ShareId:{each
+  shareId}`, `fannedOut` (`readsPerElement`). A read that names no
+  element is made once however many there are. **Walkers see a loop's
+  steps as an arm keyed `each`** (`forEachStep`, `[2, 'each', 0]`,
+  arm keys `2/each/0/1`), so every emission, rule map, coupling, event
+  model, metro and Lifecycle reading `commandEmissions` counts what a
+  loop emits as the command's. **Scenarios**: a loop's emitting arms
+  are owed one each, like a command's (`commandSuccessesOwed`); a loop
+  without arms is part of plain success. `then A and B and C` lists the
+  events in order and is compared in that order – no construct for "a
+  variable number of events". **Pages**: a loop is a card in the
+  Append step, where what a command records is (`branchCard`),
+  added by `+ for each` (`loopAdder`): what it runs over – a list in
+  scope or an open read of a projection tagged by several, a picker per
+  tag with `*` beside the values in scope, the first one in scope bound
+  and the rest open – then its names, proposed from the open tags or
+  the list made singular. The questions follow the rule adder's:
+  derived from what is answered, no Next. Its body takes `emit` and
+  `if`; an arm inside it is one `emit` or one `reject`, so its adders
+  go once it has one, and a condition there has the loop's names first
+  in scope. **A loop's head is edited where it is**: Edit opens the
+  same questions answered (`loopDraftFrom`), and Save writes the new
+  source and names (`setLoopHead`, model.js). An element is stored as a
+  parameter reference, so a rename is the command property's rename
+  held to the loop – every reference its steps make follows, a payload
+  property of the same name read outside stays – and a new source
+  proposes its names afresh, the uses following by position. A source
+  giving fewer names than the steps read is refused in the editor
+  (`loopNamesRead`): the uses would be left naming nothing.
 
 ## Tags: events, projections, handlers
 
@@ -272,19 +519,19 @@ and prune what no longer holds.
   and arguments; brackets were rejected as reading like a stored
   table. What a projection is kept per is its own to say, so a count
   per course and per student are two projections — the reuse the
-  tagless draft allowed was dropped for the coupling it caused. An
-  entity property binds a projection tagged by exactly the entity's
-  identifier (`entityTagParam`); a derived operand gives its target's
+  tagless draft allowed was dropped for the coupling it caused. A
+  grouped projection declares no tags: it is read by its group's one
+  (`projectionsOf` gives it its effective body, `tags: [group.tag]`).
+  A derived operand gives its target's
   tags by name, each one of the owner's own (`{parameterName}`) or a
-  literal. Scripts see `tags.<name>` and `args.<name>`, and have no
-  `tagFilter`. Evaluation takes a *read* —
+  literal. Evaluation takes a *read* —
   `foldProjection(model, events, name, { tags: { courseId: 'c1' }, args })`.
   Renaming a projection's tag is a member rename
   (`MEMBER_REWRITES['projection-definition:tag']`) that moves every read
   keyed by it. A read fans out where it says so, `each` on the value
   (`{each: operand}`): it is made once per element, and a rule over it
   holds for every one, paired by index with values read from the same
-  list (`fanRootOf` / `isZipped`). An entity read fans out the same way,
+  list (`fanRootOf` / `isZipped`). A group read fans out the same way,
   `Course(each …)`, and a list read without `each` is an advisory and
   an error. An emission cannot take a fanned read.
 - **A projection's parameters are its tags, then its arguments**
@@ -292,7 +539,7 @@ and prune what no longer holds.
   a read gives besides its tags — after them, positionally, in the
   text — and it narrows nothing: the store returns the same events
   either way. Until 10.0 only a script had them (`script.arguments`);
-  now any projection does, and a derived one is what they are for
+  then any projection did, and a derived one is what they are for
   (below). A declared projection's handlers see only the event, so an
   argument there is an advisory, never a refusal. **Tag-ness is
   declared, not read off the type**: the editor shows one `parameters`
@@ -308,17 +555,111 @@ and prune what no longer holds.
   the lists and every read's value with it, a literal respelled
   (`setProjectionParameterIsTag`); renaming one is a member rename
   (`projection-definition:argument` beside `:tag`), and a tag and an
-  argument share one namespace. An entity binding supplies the
-  arguments of any property it reads that takes some
-  (`argumentsExpected`), not only a scripted one's.
+  argument share one namespace. Through a group, arguments go on the
+  member read, never the group call: `course.seatsOn(slot: s)`.
 - **One handler per event type, per projection** — and it is a real
   constraint, not a convenience: tag matching is by _value_, whichever
   listed property carries it, so an event listing one identifier type
-  in two properties reaches both reads by that type and a handler fires
-  for both. A declarative handler cannot tell them apart; the fix is to
-  list only one, split the event (one fact each) or script the
-  projection, and an advisory on the projection points at the ambiguity
-  (`projectionTagProblem`). The editors offer only unhandled events.
+  in two properties (a transfer's `from` and `to`, an owner and an
+  invitee) reaches both reads by that type and an unconditional
+  handler fires for both. Since 11.0 the handler itself tells them
+  apart: it branches on the event (`on E { if event.data.from ==
+  accountId => decrement …  if event.data.to == accountId => increment
+  … }`, dcb-events.github.io#99), and the advisory on the projection
+  (`projectionTagProblem`) clears when every chain of that handler
+  compares a carrying field with the tag (`handlerTellsCarriersApart`)
+  — simple and safe: an `else` counts only inside a chain that names
+  one. Its message suggests the condition first, then splitting the
+  event or listing one tag. Role tag types and split events are no
+  longer needed for this; they remain the way to a *narrower
+  boundary*, since a condition filters the fold and never the query —
+  a read of `Balance(a1)` still conflicts with every transfer naming
+  `a1`, either side. The editors offer only unhandled events.
+- **What a handler writes is nominal** (11.0, dcb-events.github.io#105).
+  `set`, `append` and `remove` take an event field only of the type the
+  projection holds – a list its element type, a record's field its
+  declared one – exactly as an emission and a read's tag do; a literal
+  fits any type of its base (`nominalProblem` in `validateHandlers`, an
+  advisory like every semantic finding). Until 11.0 a handler could
+  copy a `CustomerId` into a projection typed `ShareInviteeId`: the
+  loophole existed only for role-casting projections, which
+  conditional handlers made unnecessary. No cast (should one ever be
+  needed, `T(value)` is its spelling), no tag conversions, no `ref`:
+  an event property of a tag type stays a tag, and a migration
+  backfills the tag (`@untagged` is the revisit, if more migrations hit
+  it). `increment` / `decrement` are arithmetic and mix number types,
+  as a command's `+` and `-` do.
+- **A branched handler's conditions read the event and the
+  projection's own tags, nothing else** (11.0). A leaf is an event
+  field — a record's field one hop in, `event.data.address.city`,
+  as a parameter's is — `==` or `!=` a tag by name
+  (`{parameterName}`) or a literal, joined with `and` / `or`
+  (`all` / `any`, package 3's combinators). Not another projection
+  and not the state: a fold stays self-contained, its query is its
+  handled types, and evaluation needs nothing but the read's tag
+  values (`evCompileBranchedHandler`). Separate `if`s all apply in
+  written order, so a self-transfer nets 0; a chain applies its first
+  match. One operation per arm, because a second would act on the
+  same value — it is a second `if`. Two separate `if`s that both `set`
+  on one event are advised (`handlerAdvisories`): both may match, and
+  the last one wins. Everything that reads a handler's operations goes
+  through `handlerArms` (model.js), so renames, enum members, the
+  Lifecycle tab and the command page see every arm. `<` / `>` wait
+  for a case. The projection editor writes them too (_The projection
+  editor_).
+- **A handler's value may be a record's field one hop in** (the 11.0
+  acceptance, G2): `set event.data.signUp.emailAddress`, stored as
+  the condition's shape, `{eventProperty, property}`, for `set`,
+  `append`, `remove` and a record's fields. The same path was already
+  a tag and a condition, so refusing it only forced a record
+  projection read as `.emailAddress`. Held to nominal types by the
+  field's declared type (`handlerFieldType`); one hop, like every other
+  path here. The handler row offers it beside the event's own fields
+  (`handlerValueChoices`), and a record set whole from the event's
+  fields is `a record from the event…`, one picker per field of the
+  record (`RECORD`, `recordOfEventFields`); a record built of anything
+  else stays the code view's (`handlerInCode`).
+- **An open tag reads every present instance** (11.0, #102). `P(x,
+  *)` – `{open: true}` in the read's `tags` – leaves a tag of a
+  multi-tag projection open, and is read only as a collection
+  function's `read` (`openReadProblem`; elsewhere an advisory, a
+  positioned parse error and an evaluation error). Keyed state comes
+  from open tags rather than a `map<K, V>` type, because the same
+  projection still gives the narrow single-instance read: with a map,
+  "does r1 exist?" would conflict with every reservation of the
+  course. **Present** means at a value other than the projection's
+  initial one (`evOpenRead`), so setting the initial value deletes;
+  where "ever existed" matters the value never returns to it.
+  **The query is the bound tags'**: the handled types by the bound
+  tags alone (`readTagTexts` skips an open tag), the same on a store
+  as in the derivation, and the fold groups what comes back by the
+  open tags' values – an event without one belongs to no instance,
+  one carrying two values of the type (a transfer's sides) belongs to
+  each, and each instance's handler conditions see its own tag values.
+  **At least one tag stays bound**: with every tag open, all writers
+  would serialise, which an untagged projection says outright. A
+  group's one tag never opens – a group's projections have no other to
+  bind. An open tag is of a scalar tag type: a record tag type would
+  make an instance of several values, and waits for a case. A command
+  folds one open read once per spelling (`scope.inline`, keyed by
+  `readKey`), like any read in place. A `for each` (package 6) runs
+  over the same reads, `evOpenRead` its source, and is the other place
+  `*` may stand (`openReadProblem`'s `inLoop`).
+- **A projection may hold a record, replaced whole** (11.0, #102).
+  Every handler sets it from an event field of its type, or from a
+  record of event fields and literals naming every field it requires
+  (`{record: {…}}`, `set { street: event.data.street, … }`), or to
+  null; anything else is advised with the two ways that work
+  (`recordValueProblem` in `validateHandlers`), and the text has no
+  `set x.field = …` – its error says why. Setting fields one at a time
+  is composite state: it merges independent facts into one value and
+  widens every reader's boundary, so it stays refused – several
+  projections, one per fact, say the same. A read takes one field,
+  `field` on the read or the alias (`P(x).city`, `address.city`,
+  `course.address.city`): the same read as the whole value
+  (`readKey` drops the field), only what is taken from it differs, and
+  null before the record is set. A list of records stays refused: no
+  operation keeps an element whole.
   The opposite case is zero carriers: a handled event listing no tag of
   a type the projection is tagged by never reaches it. That is an
   advisory on the *projection* too (`projectionTagProblem`, via
@@ -351,130 +692,179 @@ and prune what no longer holds.
   10.0 moved `arguments` from a script onto the projection and let a
   derived operand be one of its owner's parameters (`{parameterName}`,
   below): a moved field and a new operand member. The one 9.x shape
-  that moved is lifted on import (`liftScriptArguments`), so this build
-  reads 8.x to 10.x; the stored shape moved, so `EVENT_LOG_KEY` did.
+  that moved was lifted on import, until 11.0 refused scripts; this
+  build reads 8.x to 10.x; the stored shape moved, so `EVENT_LOG_KEY` did.
   10.1 accepts names in any alphabet (dcb-events.github.io#92): every
   name rule tests Unicode letters (`\p{Lu}`, `\p{Ll}`, `\p{L}`, marks,
   digits) where it tested ASCII, casing unchanged – so a script without
   case (CJK) still cannot write a PascalCase name. A minor: a 10.0
   reader skips such a definition with a reason and misreads nothing.
-  **6.1 is the contrast worth knowing**: entity `lifecycle` is additive
+  11.0 removed entities (and `lifecycle`, `excluding`) and added
+  `groupDefinitions`, which own their projections. This build reads
+  8.x to 11.x: an entity is converted on import
+  (`groupsFromEntities`, see _Groups_), and the import's toast says
+  what became of each. 11.0 also removed scripted projections,
+  `currentValue`, guarded emissions and optional reads; a document
+  saying one is read only as far as it reads correctly
+  (`refuseRemovedConstructs`): a script or `currentValue` refuses it
+  whole, naming the projection — its value decides rules and has no
+  other spelling to read — and a command with a guard or an optional
+  read is left out, the toast saying why, as one with `excluding` is.
+  The write path refuses the same constructs (`assertStorableBody`),
+  so a JSON body or an agent's edit cannot bring one back.
+  11.0 also made a command's body one list of `steps` in place of
+  `conditions` and `publishes`, with branches, `reject` and `all` /
+  `any` conditions (_Reads, rules and the rule adder_). The importer
+  lifts the two lists – 8.x to 10.x, and 11.0 documents exported
+  before the change – into steps, the rules then the emissions
+  (`liftCommandSteps`), which is how they evaluated; the write path
+  refuses them. Part of the same major, so `EVENT_LOG_KEY` waits for
+  the one bump at the merge to `main`.
+  11.0 also lets a handler branch: `{event, steps}` in place of
+  `{event, operation, value}`, each step an `if` chain
+  (`HandlerBranchStep`: `branches` of `{condition, operation, value}`,
+  `otherwise` one `{operation, value}`) — the command's branch step
+  with one operation where a command's arm holds steps, and one handler
+  entry per `on E` block. A reader without it finds a handler with no
+  operation, so it is part of the major; no older document has one,
+  so nothing is converted (schema revision 11.0.4).
+  11.0 also reads by open tags and holds records (#102): `{open:
+  true}` as a read's tag value (`OpenTag`), `{collect, read, where?}`
+  as a command or derived operand (`CollectionValue`), its `where` a
+  condition over `{instanceValue: true, field?}` (`InstanceValue`),
+  parameters and literals, `field` on a read or an alias,
+  `{record: {…}}` as a handler's value (`RecordValue`), and a
+  `DerivedValue` of `leftHandSide` alone. All new members of closed
+  vocabularies, so part of the major; no older document says any of
+  it (schema revision 11.0.5). The tool schemas write a collection
+  function compactly, as they do a read in place – inlined, it tripled
+  them.
+  11.0 also fans an emission out (#103): `{forEach, in, steps}` as a
+  step (`LoopStep`), its steps emissions and `LoopBranchStep`s whose
+  arms each hold one emission or `reject`; `InstanceValue` as a command
+  operand inside a loop over an open read; a `{parameterName}` naming a
+  loop's element. A new step and operand members, so part of the major
+  (schema revision 11.0.6). The tool schemas write a loop compactly –
+  inlined, every step shape nested again under each step and grew them
+  by a third.
+  11.0 also makes time data (#106): `datetime` and `duration` join
+  the built-in type names, `{duration: "PT15M"}` (`DurationValue`) is
+  a literal operand – of a command, a derived projection, a `where`
+  and a handler's condition – and `{operator, leftHandSide,
+  rightHandSide}` (`ArithmeticValue`, `add` or `subtract`) a command
+  operand. The derived computation's shape, reused: an operand that
+  computes reads as the derived value that does. A collection's read
+  may take a record's `field` to compute over. New members of closed
+  vocabularies, so part of the major; no stored shape an older
+  document says moved, so `EVENT_LOG_KEY` waits (schema revision
+  11.0.7). The tool schemas write arithmetic compactly.
+  The 11.0 acceptance added three: a `where`'s `AliasPropertyValue`
+  (11.0.11), a handler's `EventPropertyValue.property`, one hop into
+  a record (11.0.12), and `collect: "list"` with `CountValue`
+  (11.0.13). Each a member an older 11.0 reader lacks, inside the
+  major; no stored shape moved – `count(xs) == 3` keeps its predicate
+  – so nothing converts and `EVENT_LOG_KEY` waits. The tool schemas
+  write a count compactly, as they do arithmetic.
+  **6.1 is the contrast worth knowing**: entity `lifecycle` was additive
   in shape *and* a minor, because a 6.0 reader that ignores it loses a
   derived diagram and misreads nothing — where 4.0's equally additive
   flag made the old reader error on the case it declared expected.
 
-## Entity lifecycles
+## Groups
 
-- **A lifecycle is designated, not named** (6.1): an entity carries
-  `lifecycle`, naming one of its *own* property bindings — a local name
-  like a command's alias, so it is not a reference slot and
-  `MEMBER_REWRITES['entity-definition:property']` is what moves it on a
-  rename. Nothing keys off the property's spelling any more: `exists` is
-  what the one-click lifecycle types, `course-simple`'s Course calls its
-  `status`, and both read the same.
-  **No entity gets one unasked** (reversed 2026-10-01): `createEntity`
-  makes a bare entity, from every place one is created, and a lifecycle
-  is added only from the Identity block's `+ lifecycle` (`lifecycleAdder`)
-  — *Exists (boolean)* in one click (`addExistenceLifecycle`, which
-  re-designates a leftover usable `exists` rather than adding a second,
-  and is withdrawn when `exists` is taken: `existenceLifecycleOffer`),
-  *Named states (enum)* (the promotion form in `scratch` mode, where two
-  states suffice), or an existing property. Since the existence wording
-  keys off the designation, an entity without one never says "exists"
-  anywhere. **Remove lifecycle** (`⋮`, `removeLifecycle`) drops only the
-  designation; the property stays. Don't reintroduce a lifecycle from
-  the change adder or the rule wizard — that is the scaffold back
-  through another door. Pointing at a *projection* instead was
-  rejected because a condition reads `{alias, property}`, so a lifecycle
-  not bound as a property could never be guarded — which is the one
-  thing a lifecycle is for.
-  **The two-state case is a `boolean`**, not a two-member enum: no
-  custom type, no vocabulary, nothing to learn before writing "the
-  course must exist". `lifecycleOf` (model.js) flattens both spellings
-  into one `states` list of strings (`['false','true']` for a boolean),
-  so the machine, the constraint reader and the diagram never ask which
-  they got; `isBoolean` is for the one thing that differs, how a
-  condition names a state. A third state is a **promotion**
-  (`promoteLifecycle`, index.html): it must invent an enum and name its
-  members, so it is a form, never inferred, and it runs in one `run` —
-  a model whose conditions still say `isTrue` while the projection has
-  become an enum is the incoherent state the log has no migration for.
-  Existence conditions are stored as ordinary `isTrue`/`isFalse` over an
-  ordinary property and only *read* as "course exists"
-  (`existenceRead` / `conditionParts`, shared.js) — no new predicate,
-  and `evaluate.js` did not change. The rule wizard *writes* them the
-  same way: its value picker offers `exists` / `does not exist` in
-  place of the bare property, and that one pick stores `isTrue` /
-  `isFalse` (never a negated `isTrue`) and skips the predicate
-  question. The bare row comes back only for a rule opened with
-  another spelling, so editing never silently rewrites one. A **dangling** designation is an
-  advisory; scripted, derived, list or stateless ones are not — they are
-  legitimate models (`content-decisions-scripted` ships one) whose
-  machine cannot be drawn, which is the Lifecycles page's business to
-  say (`lifecycleRefusal`). That page now shows every entity, compact
-  for existence-only and the full band for three states or more,
-  because the unguarded dot matters most in the simplest machine.
-  The offer to promote is made in **two places, never in Problems**: the
-  rule wizard, at the moment a rule brings two of them together, and the
-  entity's own Identity block, where an author who just added two
-  booleans is actually looking and no command need exist yet
-  (`lifecycleMergeSuggestion` / `entityMergeCandidates`). It fires for
-  **two or more monotone booleans of one entity** — whether one is the
-  designation is irrelevant and requiring it was a bug: `registered` and
-  `expelled` added by hand are exactly the shape, and neither is
-  designated. **Monotonicity is the gate that matters**
-  (`isMonotoneBoolean`): `registered`/`expelled` are stages,
-  `registered`/`isPublic` are not, and collapsing the second pair
-  destroys a dimension.
-  `mergeIntoLifecycle` absorbs *n* booleans into one enum, and the
-  condition translation is the subtle part: a boolean absorbed at step
-  *i* held in **every state from *i* onward**, so `exists isTrue` becomes
-  `equalsAny [Existent, Graduated]` — narrowing it to `equals Existent`
-  silently strengthens the rule, which an earlier cut did.
-  `statesWhereHeld` is that translation. Two guards fall out of it: two
-  booleans moved by one event cannot merge (the merged fold would need
-  two handlers for that event), and a non-monotone boolean is refused as
-  a stage even when asked for directly.
-  **Which property is the lifecycle is author-settable** from the
-  Identity row (`designationPicker` / `lifecycleCandidates`) — offering
-  only single-valued boolean and enum properties, plus "none". This
-  reverses an earlier "no picker" decision: it left an author who builds
-  a state property by hand unable to say so, and the promotion is no
-  door to that, since it invents an enum rather than adopting one. A
-  designation is never inferred — imports from before it existed did
-  that once, at the gate, until 7.0 stopped reading them. The
-  decisions and what was rejected are in
-  `docs/research/2026-09-30-entity-lifecycle-as-boolean-existence.md`.
-  **The Identity row is folded, not hidden**: with no lifecycle there
-  is no row and no `not designated` — the identifier line carries
-  `+ lifecycle` and nothing else. A lifecycle that exists was asked
-  for, so it always shows, even unmoved (`set by —` is the next step);
-  the old "quiet" case hid a boolean nobody had requested. The row draws
-  the machine rather than describing it (`lifecycleTrack`, off
-  `lifecycleMachines`, so the row and the Lifecycles band cannot
-  disagree about what moves what). That row **starts folded**
-  (`lifecycleFold`, `state.lcOpen`, session-only): folded, it rides on
-  the identifier line — `state exists · set by …`, or `state status ·
-  3 states` for an enum — and the `⋮` lives on that line in both
-  states, so unfolding moves nothing. A refused lifecycle never folds;
-  a fault is not hidden.
-  The track is drawable only as a
-  *chain* — up to three states, short names, every transition the step
-  from one state to the next — and gives up to `lifecycleShapeWords`
-  rather than wrapping; a jump or a way back is a machine, and a machine
-  belongs on the Lifecycles page. The chip is the **property** in every
-  branch: it used to be the setters when there were any and the property
-  when there were none, which is why the empty case read worst, naming
-  itself twice beside a label saying `exists once`. The actions sit
-  behind one `⋮` (`lifecycleMenu`, faded not hidden, so it keeps its
-  place in the tab order); `+ lifecycle` opens the same kind of panel
-  (`lifecyclePanel`) but is never faded — with nothing designated it is
-  the only lifecycle control on the page.
+- **A group names projections that share one partition tag** (11.0).
+  `group Course (tag courseId: CourseId) { … }` owns its projections:
+  they are declared inside it, carry no tag of their own, inherit its
+  one, and have lowercase local names — `Course.capacity` outside,
+  `Course(courseId).capacity` or `alias course = Course(courseId)` then
+  `course.capacity` in a command. It means nothing for consistency
+  (reading `course.capacity` queries only `capacity`'s events), so it
+  is not experimental and nothing about it is gated. It replaced
+  entities, which kept being read as aggregates, and their lifecycles;
+  the decision and what was rejected are in
+  `docs/research/2026-10-28-groups-replace-entities.md`.
+- **Everything reads the flattened view** (`projectionsOf`, model.js):
+  top-level projections and every group's under its qualified name,
+  with effective bodies. The interface asks it for any projection by
+  name, so a grouped one opens the ordinary projection editor
+  (`state.projDraft.name` is `Course.capacity`), autosaves into its
+  group (`updateDefinition` takes the qualified name), and is renamed
+  by its local name.
+- **On Projections a group is a section, not a page** (`groupSection`,
+  index.html): a heading with its mark, name, one tag chip and size,
+  over a ledger of what it owns — the top-level rows minus the tag
+  column, named locally. **Folded by default** (`state.groupOpen`,
+  session-only): a model with several groups reads as their headings
+  first. The heading's actions — its own `+ projection`, Icon, Rename,
+  Remove — show only once it is open; folded, it is only the way in.
+  Anything that goes to a group (a chip, a problem, the code view)
+  unfolds it and lands on its heading (`goToGroup`).
+- **Making one.** `+ group` beside `+ projection` (`newGroupForm`) asks
+  a name, the one tag — a tag the model already reads by
+  (`groupTagChoices`) or a new name and type — and an optional mark;
+  the group is made empty (an advisory says so) and shown open. A
+  group's own `+ projection` makes one inside it, whose wizard skips
+  the partition step. A projection made from a command's modal may go
+  into an existing group (`newProjectionQuestion`'s `in` picker), but
+  nothing on a command page creates a group.
+- **Moving in and out are refactorings, one append each.** A
+  projection with exactly one tag offers "Move into group…"
+  (`projectionMoveChoices`): every group whose tag it matches
+  (`groupsAccepting`), and "New group…", which prefills that tag and
+  suggests the name from its type (`suggestGroupName`, `CourseId` →
+  `Course`), then moves it in. Offering "New group…" even when no group
+  accepts it is what makes the first group reachable from a
+  projection. A grouped projection offers "Move out of group". Both
+  rewrite every read (`moveProjectionIntoGroup` /
+  `moveProjectionOutOfGroup`) and keep the row open under the new name.
+  **A command's reads move in through an alias** (`aliasGroupReads`,
+  shared with the import of 10.x entities): `CourseExists(courseId)`
+  becomes `course.exists` beside `alias course = Course(courseId)`,
+  not `Course(courseId).exists` repeated in every rule. An alias bound
+  to the projection itself folds into the group's. An alias of the group
+  with the same tags is reused, so moving several in gathers them under
+  one. A new alias is named off its value (`aliasBaseFor`: `courseId` →
+  `course`, `each subscribedCourseIds` → `subscribedCourses`) and
+  numbered past the command's names. Derived projections and scenarios
+  have no aliases and keep the read in place. Moving out goes back to a
+  read in place, and drops an alias nothing reads any more.
+- **Agents get groups too** (webmcp.js). `group-definition` is one of
+  the generic definition kinds (`add_`/`update_group_definition`,
+  `remove_definition`, `rename_definition`, `rename_member` with
+  memberKind `projection`), and the projection tools take a qualified
+  `Course.capacity` the way `addDefinition` / `updateDefinition` do —
+  so the generator widens the projection kinds' `name` pattern to a
+  qualified name and requires `tags` only in words (top-level only).
+  The page's gestures are tools of their own, on the same functions:
+  `create_group` (`createGroup`, tag type made alongside),
+  `add_group_projection` (`addGroupProjection`, its schema the group's
+  inner projection shape) and `move_projection_into_group` /
+  `move_projection_out_of_group`. A scripted grouped projection is
+  refused like any other since 11.0.
+- **A grouped read shows the group, then the member**: `Course (course
+  id) · capacity` with the group's mark, wherever a read is shown
+  (`projectionReadRef`, `operandWords`); a group alias reads as
+  `course · capacity`. The event model's read columns are per group.
+- **Old files convert on import** (`groupsFromEntities`): an entity
+  becomes a group when every projection it binds is tagged by exactly
+  its identifier and bound by no other entity, under its binding names,
+  with direct reads rewritten to go through the group; any other is
+  restated as plain reads. `importModelFromEnvelope` reports each as
+  `converted`, and `finishImport` says so in the import toast, as news
+  rather than an error — nothing was lost.
+- **No designated lifecycle replaces the old one.** A lifecycle is an
+  ordinary boolean or enum projection that conditions read; the
+  Lifecycles view, the Identity row, the designation and the
+  promote/merge offers went with entities. What came back is the
+  drawing, for every enum projection and with nothing designated (see
+  _The projection editor_, the Lifecycle tab). The event model orders commands by feature and, within
+  one, as they were written (`eventModel`, shared.js), which puts the
+  creating command first in practice; it used to follow the lifecycles.
 
 ## The projection editor
 
 `projectionFields` (index.html) is the one editor for a projection —
-on Projections, on an entity's page, and in the definition modals.
+on Projections, inside a group's section, and in the definition modals.
 
 - **Sections, with what it works out to beside them.** On the left:
   `partition` (its tags, then its arguments – `tags` until 10.0),
@@ -496,18 +886,16 @@ on Projections, on an entity's page, and in the definition modals.
   says the same, and `null` still never hides behind an empty box.
 - **The Advanced switch** (`projectionAdvanced`, remembered per
   browser) holds what most projections never need: making it derived
-  (`derived projection`) or scripted (`scripted projection`, behind the
-  experimental flag too), and the `read by` / `bound as` facts. It hides
-  offers, never what is stored — a scripted or derived projection shows
-  its section with the switch off, the way the experimental flag
-  works.
+  (`derived projection`), and the `read by` / `bound as` facts. It
+  hides offers, never what is stored — a derived projection shows its
+  section with the switch off, the way the experimental flag works.
 
 - **A new projection is a name, then a wizard**
   (`PROJECTION_WIZARD_STEPS`), the command wizard's treatment: the name
   is stored at once, and its editor is revealed one section at a time –
-  what produces its value (three answers, `From events` / `From other
-  projections` / `From code`, the last behind the experimental flag;
-  the Advanced switches once the wizard is over), its partition, its
+  what produces its value (two answers, `From events` / `From other
+  projections` – a third, `From code`, went with scripts in 11.0; the
+  Advanced switch once the wizard is over), its partition, its
   initial state (not for a derived projection), what moves it, and a
   proposed first check. Partition comes before the initial state
   because it decides which events can reach it; kind comes first
@@ -531,9 +919,8 @@ on Projections, on an entity's page, and in the definition modals.
   left out rather than made badly. The check folds the *first* handled
   event – one of each would let a subscribe and an unsubscribe cancel
   out. Asked from a command (the definition modal), a name that says no
-  partition takes the command's one tag-typed input. The entity page
-  still adds a property as a name and a type: its partition is the
-  entity's, and it is not a wizard yet.
+  partition takes the command's one tag-typed input. A projection made
+  inside a group skips the partition step: its tag is the group's.
 - **A handler is one line** however long the event's name: the pickers
   give way and end in an ellipsis, the event's first, then the value's
   (the end of `event.data.…` is the part that says anything); the
@@ -545,18 +932,84 @@ on Projections, on an entity's page, and in the definition modals.
 - **`+ handler` sits under the handlers**, not in the section's
   heading: with a few rows the heading's button read as belonging to
   none of them, and the next handler goes at the bottom anyway.
+- **A branched handler is edited in its row** (11.0). `+ if` on a
+  handler row makes it one `if` whose arm is the row's operation, under
+  a proposed comparison – the event's field of a tag's type against
+  that tag, `if event.data.from == accountId`, the common case. The
+  draft holds it as `chains` (`handlerChainsDraft`, `handlerFromChains`):
+  one per separate `if`, each its arms and its `else`, every arm a
+  handler row's draft with its comparisons and what joins them. A
+  comparison is three pickers – a field (or a record's field one hop
+  in), `==` / `!=`, a tag of the projection, a member of the field's
+  enum or a typed value – which is everything the code view's
+  `handlerComparison` reads, so there is nothing to stage and the rule
+  adder's questions would only ask what has one answer. `+ and` / `+
+  or`, `+ else if`, `+ else` and `+ separate if` add; × on the last
+  arm of the last `if` takes the handler back to one operation. A
+  comparison may be bracketed with another at any depth, drafted as a
+  tree in the row (`draftTreeControls`). A comparison by order
+  (`<`, `>`) is no handler condition the notation has – `==` / `!=`
+  only, ordering waiting for a case; the parser refuses it, a stored one
+  is an advisory and prints as JSON – so the page offers none and a
+  stored one stays as it is, its row saying that "ordering in handler
+  conditions is not part of the notation" instead of pointing at the
+  code view (`handlerOrders`). An arm that cannot be said
+  this way – a value the row's pickers do not offer – keeps the
+  handler as it is stored,
+  shown with `Edit in code` (`branchedHandlerRow`), and
+  `cleanProjectionBody` writes it back untouched, so an edit elsewhere
+  never flattens or drops it. Buttons are no change event, so they ask
+  for the save themselves (`scheduleProjectionAutosave`). The command
+  page's change rows say each arm and leave editing to the projection's
+  pencil; the change adder still does not offer a projection whose
+  handler for that event branches – writing one operation would
+  replace the branches.
+- **A projection with handlers has a Lifecycle tab** (`projectionLifecycle`
+  and `projectionMovements`, index.html; `lifecycleOf`, shared.js),
+  beside Definition and Checks: how its value moves. Nothing is stored
+  or designated; it is worked out from the draft, so an edit shows the
+  moment the tab is switched. A derived projection has none. A single-valued enum or boolean is a machine
+  (`lifecycleMachine`); anything else – a number, a string, a list – is
+  its movements (`lifecycleMovements`): where it starts, each handler
+  with the commands appending its event and their rules over the value,
+  then the commands that only read it. No states are invented for
+  those, and no command is marked unguarded there: a counter is guarded
+  through other projections as a rule. In the machine, states are the
+  members or `false`/`true` (`null` first when it starts or can be set
+  there); a handler setting
+  a member is an arrow – each arm of a branched one its own, labelled
+  with what it is applied under (`if event.data.seats == 0`, `else`),
+  and the movements list arms the same way – starting where its publishers' rules allow
+  (`require`, read as a direct read or a group alias alike). A command nothing guards gets the pink dot, and
+  its arrow starts at the initial state, dashed – or, when it leads
+  back there, at every other state reached. What cannot be read
+  is said under the machine, not drawn: a state taken from event data,
+  a rule comparing with a parameter, a command reading two instances
+  or `each`. While any of that is there no state is called terminal.
+  A tab, not a section of Definition: it answers a different question
+  from what the projection is, the way Checks does. Decided in
+  docs/research/2026-10-28-lifecycles-for-enum-projections.md.
+- **The mindmap where it fits, a list where it does not.** Both views
+  are built and a container query on the tab's width shows one: the
+  mindmap of design/lifecycles/Main.dc.html when its computed width
+  fits, else the states down a spine with the arrows leaving each one
+  as rows (`lifecycleList`). The detail is never wider than about
+  700px, so a machine of five states is a list on any screen. Curves
+  were tried for the narrow view and dropped: a few transitions back
+  and forth piled their labels onto each other. The commands allowed
+  in a state open on hover, focus or a tap that pins them, and close
+  on Escape or a press anywhere else. Nothing in it navigates – events
+  and commands are kept free to become draggable.
 
 ## Guarded emissions, rejection messages, derived projections
 
-- **Guarded emissions (6.0)**: a `publishes` entry may carry
-  `when: [conditions]` — same operand and predicate vocabulary as
-  `conditions`, evaluated in the same scope. A failing guard _skips_
-  its emission, never rejects the command; every guard failing
-  publishes nothing, which is still a `published` outcome. Guard reads
-  count toward the derived DCB like condition reads (both flow through
-  `forEachCommandOperand` — anything walking a command's conditions
-  must walk each emission's `when` too, see `allConditions` in
-  `validateCommandBody`).
+- **Guarded emissions are gone (11.0).** From 6.0 a `publishes` entry
+  could carry `when: [conditions]`, under which it was published or
+  silently skipped. 11.0 removed them (issue #104): an emission is
+  published whenever its command is. An imported command that
+  guards an emission is left out, and said (`refuseRemovedConstructs`,
+  model.js): publishing it every time would change what it decides.
+  The `content-decisions-guarded` model went with them.
 - **Every rule says what it is refused with (7.0)**: a command's
   conditions carry `rejection`, static one-line text (`rejectionProblem`,
   model.js), and a refusal is known by it and nothing else — a
@@ -570,8 +1023,7 @@ on Projections, on an entity's page, and in the definition modals.
   there) and `then rejected "…"`. A rule without one is an *advisory*, not a
   write-path refusal: it still evaluates — a run reports its condition
   text instead — but a scenario cannot name its refusal, so `deriveThen`
-  reports it broken, and the printer falls back to JSON. A guard never
-  rejects, so a message on one is an advisory too. The set of a
+  reports it broken, and the printer falls back to JSON. The set of a
   command's messages is derived (`commandRejections`), never declared;
   scenario coverage counts by it (`uncoveredRejections`). The Rules
   step used to list the set as well ("Can be refused with"); it was
@@ -593,10 +1045,8 @@ on Projections, on an entity's page, and in the definition modals.
   no initial value, one declared predicate over other projections
   (`derived`), always a single boolean. Its query is its operands'
   union (`projectionHandledTypes` / `projectionReadTags`); a cycle is
-  an advisory and an evaluation _error_; a body carrying both `script`
-  and `derived` reads as scripted (`derivedOf` is null then) and the
-  advisory says so. Derived is data, not code: it never trips the
-  script import gate. The exploration that produced both blocks, and
+  an advisory and an evaluation _error_. Derived is data, not code. The
+  exploration that produced both blocks, and
   the case for keeping or dropping them, lives in
   `docs/research/2026-09-19-content-decisions-variant-comparison.md`.
 - **Derived computations (9.0)**: a derived projection may compute
@@ -609,8 +1059,8 @@ on Projections, on an entity's page, and in the definition modals.
   watch and an editor needs no expression tree. **No `divide`**: an
   integer stays an integer and there is no division by zero to define.
   **No internal/external split**: a derived projection keeps no state,
-  so the "private bookkeeping, public value" shape a script gets from
-  `exposes` is composition here — the operands are the bookkeeping.
+  so the "private bookkeeping, public value" shape a script once got
+  from `exposes` is composition here — the operands are the bookkeeping.
   **Null in, null out** (`evApplyOperator`): an unknown side is not
   zero, and a rule ordering against the null is an evaluation error as
   any null ordering is; the advisory says so ahead of time when a side
@@ -618,9 +1068,9 @@ on Projections, on an entity's page, and in the definition modals.
   null, or a computation over one), which is why `developer-hours`
   starts the weekly budget at 0. Picking an operator in the editor
   sets the type from the operands; a comparison is always `boolean`.
-  No case/conditional expression: it is the one thing that would turn
-  `content-decisions-scripted` into data, and no real model has needed
-  it yet.
+  No case/conditional expression: it was the one thing that would have
+  turned the retired `content-decisions-scripted` into data, and no
+  real model has needed it yet.
 - **Derived projections compare and compute with their parameters
   (10.0)**: a side may be one of the owner's own parameters, by name
   (`{parameterName}`; `Free(courseId) >= seats` in the text), and so
@@ -636,6 +1086,19 @@ on Projections, on an entity's page, and in the definition modals.
   a parameter is never assumed null, since a reader's null is the
   reader's advisory to raise. At least one side still reads a
   projection: a predicate over parameters alone reads nothing.
+- **A derived projection may hold one operand as it is** (11.0):
+  `{leftHandSide}` alone (`derivedHolds`), for a collection function's
+  result – `derived projection CourseSeatsReserved (tag courseId:
+  CourseId): integer { sum(ReservationSeats(courseId, *)) }` – or a
+  record value's field. It holds the type its operand yields
+  (`derivedOperandType`, `sameValueKind`: an integer may be held as
+  any number). A collection is a computation's side too, `10 -
+  sum(…)`: `count` and `sum` are never null, `min`, `max` and
+  `average` may be (`derivedInputOf`). This retires the running total
+  kept beside the per-instance value – a `CourseSeatsReserved`
+  counter that every cancellation had to subtract from again, which is
+  what put `numberOfSeatsReserved` onto the cancellation event and
+  needed a backfill of every old one.
 - **A derived read is its operands' queries, each under its own tags**
   (`foldedReads` / `readItems`, model.js). Until 9.0 a derived read was
   one query item: the derived projection's own tags ANDed with the
@@ -657,7 +1120,7 @@ on Projections, on an entity's page, and in the definition modals.
   developers who know what an event log is, so the page names things the
   way the wire format does and does not narrate. `null`, `""` and `[]`
   each keep their own spelling (`initialValueWords`); operand kinds read
-  as their schema tokens (`currentValue`, `successor(x)`); step headings
+  as their schema tokens (`successor(x)`, `event.data.x`); step headings
   are `Payload` / `Rules` / `Append` / `State changes` /
   `Consistency boundary` / `Scenarios` — `Rules` and not the wire's
   `conditions`, because "rule" is the item word on every page (`+ rule`,
@@ -671,7 +1134,7 @@ on Projections, on an entity's page, and in the definition modals.
   typed; the stored spelling rides beside it in a `.tech` span.
   The one exception is a value an event carried: it reads as the path
   `event.data.capacity` (stored name, monospace) in pickers and
-  sentences alike, because it is a path — the one a scripted handler
+  sentences alike, because it is a path — the one the code view
   writes — and a humanized name inside a dotted path reads as a typo.
   In the open list it is short under an `event` heading; once picked it
   is whole (`pick`'s token options, `.ctx` spans).
@@ -703,9 +1166,9 @@ on Projections, on an entity's page, and in the definition modals.
   Explanations live in `hint(...)` — one `ⓘ` per section, never one per
   row, in both modes, linking dcb.events only where a page exists.
   Inline field hints are deleted; *derived facts* stay on the page,
-  terse (`not designated`, `scripted fold`, `appended by: —`), because
+  terse (`untagged`, `derived`, `appended by: —`), because
   hiding a fact about the model behind a popover is the opposite of what
-  the register is for. An entity carries a mark only if one was
+  the register is for. A group carries a mark only if one was
   authored — there is no hashed fallback, and `iconPrefix` is what
   keeps an unmarked name from rendering behind a stray space. A command
   or event does carry one either way: unmarked, it shows its kind's
@@ -745,11 +1208,11 @@ A use case is designed on its command's page, start to finish. The
 custom type an input needs and the projection a rule or a change reads
 are created, and corrected, from the picker that noticed they were
 missing: "+ New custom type…" in the payload's type pickers, "+ New
-projection…" in a rule's (or guard's) first question and in the change
+projection…" in a rule's first question and in the change
 adder, a pencil beside every referenced projection a command page
 shows, and "Edit the type …" in an input's (or an event field's) edit
-mode (`openDefinitionModal`, index.html). Events and entities keep the
-inline forms they already had.
+mode (`openDefinitionModal`, index.html). Events keep the inline forms
+they already had.
 
 - **A modal, not a page or an inline form.** Naming a new command is a
   page because nothing is half-built yet; here something is — the rule
@@ -781,10 +1244,9 @@ inline forms they already had.
   value is so often a type not yet written, and its header names what
   is underneath ("‹ Back to …"). Nothing deeper is offered.
 - **What the modal leaves out.** Removal — the command behind it may be
-  using the definition; it stays on the page. Navigation off to an
-  owning entity. Projections an entity binds: the modal creates and
-  edits only free-standing ones, so it never touches the experimental
-  flag. "Open its page" is the one way out to the definition's page,
+  using the definition; it stays on the page. Groups: a new projection
+  may go into one the model has, picked beside its name, but the modal
+  never makes a group or moves a projection in or out. "Open its page" is the one way out to the definition's page,
   and it goes through ordinary navigation, which commits or drops the
   command's pending forms as any other move does.
 - **A member's type is edited from the member's edit mode, not its
@@ -802,8 +1264,7 @@ inline forms they already had.
   before — so it is first and the primary button. A single value's card (`singleValueEditor`) shows
   its base type, picked (string, integer, number, boolean) — or an
   enum's members — and, for a tag type, the tag it writes. The JSON
-  Schema, the tag schema and the form (single value | tag type, pinned
-  for an entity's identifier) sit behind an Advanced switch — per card
+  Schema, the tag schema and the form (single value | tag type) sit behind an Advanced switch — per card
   and session-only, unlike the projection editor's: every card opens
   collapsed, and opening one opens no other. The form replaced a
   "represented as a tag" checkbox on every card, which asked a question
@@ -812,7 +1273,7 @@ inline forms they already had.
   Advanced`), so a keyword never hides under a picker that cannot
   show it.
 - **Other dialogs win.** Help, Problems, Settings, Import & export,
-  the models dialog, quick open and the import gate close the
+  the models dialog and quick open close the
   definition modal (its edits are stored already) and give the page
   its forms back, rather than stacking over it. A modal whose page
   went away underneath it is dropped.
@@ -847,7 +1308,7 @@ One breakpoint, 760px (shared.css, _narrow screens_), and a floor of
   nothing to show through — the setting most worth watching land, the
   theme, is in ⋯.
 - **Pages are not given phone layouts.** A strip that is wider than the
-  window (the overview table, Coupling's matrix, a lifecycle band)
+  window (the overview table, Coupling's matrix, an event-model band)
   scrolls inside itself, as on desktop; only overflow of the page
   itself is a bug.
 
@@ -950,9 +1411,9 @@ Watched, Decision, Store. Only the panel scrolls.
   An identifier field offers every value of its type the run has
   used so far (`sessionIdentifiers`), read from the events' payloads
   and the commands' arguments. These are keyed by tag type, not by
-  entity: keyed by entity, a model without entities (every shipped one
-  but the experimental ones) was offered nothing. Scenarios use the
-  same keying (`identifiersInUse`).
+  group: keyed by group, a model without groups (every shipped one)
+  would be offered nothing — as it was when they were keyed by entity.
+  Scenarios use the same keying (`identifiersInUse`).
 - **The playhead can sit inside a step.** `session.stepAt` is the step
   the last visible event belongs to, even when only some of its events
   are visible. The Decision tab shows those; the rest are faint.
@@ -966,7 +1427,7 @@ Watched, Decision, Store. Only the panel scrolls.
 ## The surface switch
 
 - **It sits in the header of the pages the code follows** — command,
-  entity, events, projections, types (`CODE_FOLLOWS`) — on the right,
+  events, projections, types (`CODE_FOLLOWS`) — on the right,
   and nowhere else. It used to be in the bar, which said every page had
   a code form; the Overview, the sandbox and the cross-cutting pages
   showed it muted, doing nothing. A strip of its own above the content
@@ -1019,6 +1480,16 @@ Watched, Decision, Store. Only the panel scrolls.
 
 ## The code view's language
 
+- **A duration is one token** (11.0): a number straight followed by a
+  letter is lexed as a duration, `15m`, `1h30m`, and anything else so
+  written – `15x`, `1mo`, `1.5h`, `-15m` – is an error at that token,
+  never a number and a name. It stores the ISO 8601 duration with the
+  units as written, `PT24H` for `24h`, so it prints back as typed;
+  normalising (`P1D`) would have turned `24h` into `1d` on the next
+  print. A command's rule and emission add and subtract left to right,
+  `a - b + c`, without brackets – a bracket opens a condition group
+  there, and a sum on the right has no spelling, so a stored one prints
+  as JSON. The Monarch grammar colours a duration as `number.duration`.
 - **The code view's language is a spelling of the wire format** (`dsl.js`,
   research in `docs/research/2026-10-03-code-view-language.md`): every
   construct is one schema shape, so print and parse are each other's
@@ -1032,6 +1503,37 @@ Watched, Decision, Store. Only the panel scrolls.
   A command is declared with `command`. Spelling it `handler` was
   tried and reverted the same day
   (`docs/research/2026-10-07-handler-keyword.md`).
+  A command's steps (11.0) print in written order, a blank line
+  between a run of rules, of emissions and of branches:
+  `if c => emit E { … }` / `else if c => { … }` / `else => reject "…"`,
+  an arm one `emit` or `reject` after its arrow and a block otherwise.
+  `and` binds tighter than `or`; a bracketed group is kept as a group,
+  so the printer brackets an `or` inside an `and` and a group inside
+  one of its own kind, and nothing else. `not` negates a comparison,
+  never a group – a group says its opposite instead.
+  A handler's branches (11.0) print the same way inside `on E { … }`,
+  one line per arm and one operation each, every `if` opening a chain
+  of its own: `if event.data.from == accountId => decrement
+  event.data.amount`. The parser reads a comparison of its own there
+  (`handlerComparison`): an event field on the left, `==` / `!=`, a tag
+  of the projection or a literal on the right, so a read of another
+  projection, `state`, an unknown name, an ordering, a second operation
+  or a block is an error at the token that says it. Completion offers
+  `if` / `else`, `event.data` (and a record field's own fields one hop
+  in), the tags and the field's enum members after `==`, and the
+  operations there.
+  **Completion knows 11.0's values** (`sourceCompletions`): inside a
+  collection function the projections tagged by several first, read
+  with their last tag `*`, `*` for a tag, `.field` of a record value,
+  `where`, then `value` / `value.field`, the names in scope and `and` /
+  `or`; after `for each … in` the lists in scope, list and open-read
+  projections and `list(…)`; in a loop's block only `emit` and `if`,
+  and `value` in a loop over an open read; collection functions
+  wherever a value fits (a comparison's right side, an emission's
+  number or boolean); a duration's units after a whole number added or
+  taken away (`now + 15` → `15m`); and a grouped projection's notes
+  after `@` in a group. Each is read off the frames of brackets still
+  open (`collection` is one), as the rest is.
   Printing is **lossless by contract**:
   each definition is printed, parsed back and compared
   (`sameDefinition`), and one that does not survive is written as its
@@ -1066,6 +1568,31 @@ Watched, Decision, Store. Only the panel scrolls.
   whose fix is `and`. `when C and D` was weighed and left out: a
   scenario runs one command in the wire format, and several would be a
   major — earlier commands are written as given events.
+  **A scenario leaves out what it does not depend on** (11.0,
+  dcb-events.github.io#108). A given event, a when and a then event
+  may omit any property but a tag – tags decide which reads see an
+  event, so an omitted one is a broken run, an omitted optional one
+  its null. An omitted property is *unspecified*, not null: the
+  payload carries the omitted names under a symbol (`EV_UNSPECIFIED`,
+  evaluate.js, set by `evScenarioPayload`), and `evOwn` – the one way
+  evaluation reads a field or an argument – fails on one, naming it.
+  So the failure is the read itself, wherever it happens (fold,
+  rule, branch, `where`, emission, loop), and since reads are lazy
+  (package 3) a field nobody needs may stay out. A then compares the
+  fields it lists (`evThenHolds`) – into a record's value too, by the
+  model's types (the acceptance's D5), while an opaque `object` and a
+  list compare whole; one recorded from a run lists them all. The text stores what it says (`canonicalScenario`'s `partial`);
+  the page's save still spells out null for what a draft left unset,
+  since its editors show every field. The values a scenario does give
+  are held to their types' constraints (`payloadValueProblems`, the
+  one check `replay` applies to stored events too, since the
+  acceptance found the two had drifted apart: `typeof` called every
+  array "no array", D1) – a scenario showing a value no type admits
+  shows what cannot happen. A projection's initial value is held to
+  them as well (`validateInitialValue`, D6), as an advisory. An optional list is
+  allowed since 11.0, its null its absence. Fixtures (shared givens)
+  were deferred: partial events removed most of the repetition, and if
+  they come they are scoped per `scenarios` block.
   **Scenarios sit in one `scenarios { … }` group**, the block's last
   statement (at the top level too, for those whose subject is gone).
   The group is syntax only, not wire format, and it is required
@@ -1090,7 +1617,7 @@ Watched, Decision, Store. Only the panel scrolls.
   rename all read that, never the bare word, which is what keeps
   `Existent` apart from `NonExistent` and the projection CourseStatus
   apart from the enum. Rename refuses rather than guesses (a name a
-  script or json body may hide, a member whose enum cannot be told) and
+  json body may hide, a member whose enum cannot be told) and
   proves itself by re-reading the result. *Introduce alias*, a
   refactor offered on a read in place (`sourceIntroduceAlias`), proves
   itself the same way: an inline read and an alias derive the same
@@ -1119,77 +1646,84 @@ Watched, Decision, Store. Only the panel scrolls.
   don't add syntax that lists them, that is a derived fact authored
   twice. Fold arms stay **keywords, not expressions** (`set`,
   `increment`, …): the vocabulary is closed because it is analysed,
-  arithmetic between values is a derived projection's, a script is the
-  door for the rest, and the reasoning is in the `dsl.js` header — read
-  it before adding `=> state + 1`.
+  arithmetic between values is a derived projection's, and the
+  reasoning is in the `dsl.js` header — read it before adding
+  `=> state + 1`.
 - **A projection's kind is said in front** (9.0): `derived projection
-  X (…): T { <expression> }` and `scripted projection X (…): T {
-  initialState … }`, after `untagged` when both apply. The inner
-  `derived …` line and `script` line are gone; the old spellings are
-  errors naming the new one. In front, the header knows what the
-  block may hold before reading it, and a derived projection, whose body
+  X (…): T { <expression> }`, after `untagged` when both apply. The
+  inner `derived …` line is gone; the old spelling is an error naming
+  the new one. `scripted projection` was the other kind until 11.0; it
+  is an error now that says scripts are gone, and so are a ```code```
+  handler, `currentValue`, `emit … when …` and `alias x? = …`. In
+  front, the header knows what the block may hold before reading it, and a derived projection, whose body
   is one expression and its scenarios, prints with a block like
   every other one. The operators are `+`, `-`, `*` and the calls
   `min(a, b)` / `max(a, b)`; a `-` straight after a value (`)`, `]`, a
   number) subtracts, anywhere else it starts a negative number
   (`endsValue`).
+- **Collection functions, open tags and record values** (11.0). `*`
+  is a read's value only inside the read a collection function
+  collects – anywhere else it is a positioned error naming where it
+  goes – so an open read is never a value of its own in the text
+  either. `count(…)` over a list is a count – the count predicate in
+  `count(xs) == 3`, a `{count}` value anywhere else (G3) – and
+  `min(a, b)` / `max(a, b)` a computation: which one it is shows inside
+  the parentheses – a `*` in the read directly inside, or a `where`,
+  makes it a collection (`collectionAhead`; directly, so
+  `count(list(P(x, *)))` counts a list); `sum`, `average`, `any`, `all`
+  and `list` always are. `any(…)` and `all(…)` are booleans like any other, so a
+  rule says `any(…) is true`: a bare value as a condition would be
+  the one place the text infers a predicate. Inside a `where`, `value`
+  is the instance's value – a name in scope called `value` cannot be
+  read there, and prints as JSON. `address.city` is a group member or
+  a record's field depending on what `address` binds, settled once the
+  bindings are (`aliasFields`), the way an alias and a payload
+  property are. A record set whole is `{ field: …, … }`; `set x.f =
+  …` is an error that says a record is replaced whole.
+- **`for each`** (11.0). `for each x in source => emit E { … }`, or a
+  block of `emit`s and `if`s; `for each (a, b) in P(c, *, *)` for two
+  open tags, in the projection's order. `in` was already a word (`x in
+  xs`); `for` joins the keywords and the statement words. The source
+  is the one other place `*` parses (`openAllowed`), and `value` is a
+  word only inside a loop over an open read – elsewhere it is a name.
+  The names resolve as payload properties do (`resolveCommandNames`),
+  which is how they are stored; a name shadowing a payload property or
+  an alias is an error where it is written. A nested loop, a `require`
+  inside one, a bare `reject` and a block arm are positioned errors – a
+  stored loop holding one prints as JSON. A `=> emit` body prints on
+  the head's line, anything else as a block; each loop is a printed
+  group of its own. The language service names a loop's names
+  `loopVariable`, renamed in one namespace with aliases and payload
+  properties.
 
 ## Scripts and the origin
 
-- **What a script can reach.** A scripted handler is compiled with
-  `new Function` and runs on the main thread, in the page's own
-  origin (`evCompileHandler`, evaluate.js). It can read and rewrite
-  all of localStorage, call the registered WebMCP tools, call
-  `window.DCB_PLAYGROUND_HOST.theme`, and fetch anywhere. On
-  dcb.events the playground is served at `/playground/` of the
-  website's origin, so its storage, and its quota, are the website's
-  too. What stands between an imported model and that is the import
-  gate and `?safe` (AGENTS.md); there is no sandbox.
+- **Nothing a model holds runs** (11.0). Until then a scripted
+  handler was compiled with `new Function` and ran on the main thread,
+  in the page's own origin – able to read and rewrite all of
+  localStorage, call the registered WebMCP tools and the host's theme
+  hook, and fetch anywhere; on dcb.events that origin, its storage and
+  its quota are the website's. What stood between an imported model and
+  that was an import gate listing the code (`envelopeScripts`) and
+  `?safe`, a mode that compiled every script to a thrower, taken
+  unasked after a load that never finished. A Worker sandbox was
+  weighed and shelved (2026-10): evaluation would have become
+  asynchronous across some seventeen render paths. 11.0 removed scripts
+  instead (issue #111), and the gate, safe mode and the shelved sandbox
+  went with them. A construct that ran authored code would need all of
+  that back – the reason not to add one lightly.
 - **No Content-Security-Policy, for now.** One was weighed and
-  dropped (2026-10). Scripts need `'unsafe-eval'`, so a CSP does not
-  stop one from running. The one restriction worth having,
-  `connect-src 'self'` (no sending data elsewhere), would break
-  "From a URL" and `#url=` links, which fetch whatever URL the reader
-  types or the link names. The page
-  also needs `style-src 'unsafe-inline'` (inline `style` attributes,
+  dropped (2026-10), when scripts needed `'unsafe-eval'` anyway. The
+  one restriction still worth having, `connect-src 'self'` (no sending
+  data elsewhere), would break "From a URL" and `#url=` links, which
+  fetch whatever URL the reader types or the link names. The page also
+  needs `style-src 'unsafe-inline'` (inline `style` attributes,
   Monaco's runtime `<style>`). And the host's theme hook is an inline
   `<script>` whose content depends on the site's configuration
   (`hooks/playground.py` in the website), so it cannot be hashed; it
   would only run because a `<meta>` CSP does not reach back to
   content before it. What would be left — `object-src`, `base-uri`,
   `form-action` — guards nothing this page does.
-- **The real fix is a sandbox, not a policy.** Compile and run
-  handlers in a Worker, or in an iframe sandboxed without
-  `allow-same-origin`, posting plain JSON in and out: a handler's
-  inputs (state, a frozen event, arguments, tags) and its output are
-  JSON already. The cost is that evaluation becomes asynchronous,
-  and every render path that evaluates — the scenario runners, the
-  sandbox's decision card, the watches — calls it synchronously
-  today. That is a change of the evaluation seam, not a patch.
-- **Not now (2026-10).** Weighed and shelved. A Worker is
-  feasible: `evaluate.js` is pure, and a data:-URL worker's opaque
-  origin would shut out storage, WebMCP and the host hook, and could
-  be terminated on a hang (it would still have `fetch`). But handlers
-  cannot be sent over one at a time — a fold calls them in sequence —
-  so a whole evaluation moves, and with it some seventeen synchronous
-  render paths and the code view's apply. If reopened, the shape
-  settled on was one evaluation API that answers at once for a
-  declared-only model and through the worker for a scripted one, with
-  render drawing from a cache ("running…" until the answer, then an
-  ordinary repaint; stale answers dropped in that one place), and a
-  switch to force the worker everywhere so its path stays exercised.
-  Against that cost the exposure is small: authoring a script is
-  experimental, and no external script loads without the gate.
-  Reopen when scripts leave the experimental flag, or on a real
-  report of a hang or of abuse.
-- **What stands in for it.** The gate lists every scripted
-  projection with its handlers' code (`envelopeScripts`, model.js),
-  so the reader consents to something they can read, and names
-  `?safe`. And a load that never finished turns safe mode on for the
-  next one by itself (`boot`, index.html): a flag in sessionStorage
-  is set before the first render and cleared after it, and found still
-  set means the last load hung. One load only, so a reload that merely
-  interrupted a slow page costs a reload.
 
 ## DCB queries, shown
 
@@ -1287,8 +1821,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   the round before – which `deriveDcb` describes but does not compute.
   Computing it beside the evaluator would be a second copy of its
   operand semantics, so the evaluator answers it itself: a dry run
-  (`evDecide` collecting) reads through every rule, instance, guard
-  and emission without stopping at a refusal, records what nothing
+  (`evDecide` collecting) reads through every rule, instance and
+  emission without stopping at a refusal, records what nothing
   fetched yet answers, and gets nothing back for it. The records,
   merged by tag set (types are ORed within an item, so that is
   exact), are one call; the next dry run sees the round they unlock.
@@ -1308,7 +1842,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   dry runs showing in a profile.
 - **Synchronous, deliberately.** An asynchronous port would make the
   whole fold asynchronous, and every render path that evaluates with
-  it (see _Scripts and the origin_). A WebAssembly host import is a
+  it – the same cost that shelved a Worker sandbox for scripts (see
+  _Scripts and the origin_). A WebAssembly host import is a
   blocking call anyway; a host over an asynchronous client blocks.
 - **A log passes every type; the port asks for the handled ones.**
   Over a log, filtering by type would be a pass for nothing – the fold
@@ -1323,6 +1858,19 @@ Artboards: `design/dcb-queries/` (2026-10).
   leaves `types` out rather than writing it empty. A test holds every
   plan, read and append condition of the shipped models and fixtures
   to it.
+- **The query follows the reads made (11.0).** Reads are lazy, so the
+  deciding run asks only for what its way through the steps needed,
+  and `query` – the append condition – is that. The dry runs still
+  walk every step and every arm, past every refusal, so they fetch
+  what any way might read: more bandwidth for a branching command,
+  never a second round for the arm that was taken.
+- **A loop's reads are each element's (11.0).** A read inside a `for
+  each` that names the element is asked once per element – the dry
+  runs walk every element too – so the append condition holds
+  `ShareId:s2`, `ShareId:s3`, … for the shares the decision read, and
+  the loop's open read itself by its bound tags alone. Elements come
+  from the round before: an open read's instances are a round, and the
+  reads by them the next.
 - **Held by a test.** Every command scenario of the shipped models
   and the fixtures decides the same through a port as over the log,
   and the call counts above are asserted (evaluate.test.js).
@@ -1348,12 +1896,141 @@ Artboards: `design/dcb-queries/` (2026-10).
   silent null. A command may leave an optional argument out or send
   null; an event payload always spells it out, as the evaluator
   publishes it.
+- **A time is a string of its format** (11.0): a `datetime` is `{type:
+  'string', format: 'date-time'}`, a `duration` `{format: 'duration'}`,
+  each with its `pattern` too, since a validator need not assert
+  formats – the pattern is what holds the offset and the units this
+  notation has. A custom type over one carries the same `format`.
+- **A record value is no new schema** (11.0). A projection holding
+  a record holds one value of its composite type, whose schema is the
+  composite's; nothing here describes projections.
 - **Not in WebMCP.** Its tool schemas are fixed when the tools
   register; a command's arguments depend on the command named in the
   call, so a tool cannot declare them.
 - **Held by a test.** Every scenario's arguments, and every event the
   evaluator publishes for it, validate against these schemas
   (evaluate.test.js, with a validator for the keywords in use).
+
+## Time
+
+- **Time is data** (11.0, #106). No event carries a recorded time –
+  the DCB spec has none, and nothing here reads one – so time that
+  matters to the domain is an event field the command writes, and the
+  clock is an ordinary parameter, `now: datetime`, given by the layer
+  around the commands as a decider is given it. A scenario passes `now`
+  like any value and needs no clock. Expiring something at a time is a
+  job outside the model calling a command, never a construct.
+- **`datetime` has an offset and is compared as an instant.** RFC 3339
+  with `Z` or `±hh:mm`: `11:30+02:00` is before `10:00Z`, which a
+  string comparison – the portal's `DateAndTime = string` – got wrong.
+  One without an offset names no instant and is no value: an
+  evaluation error where a command or a Given gets one, an advisory
+  where a model writes one (an initial value, a literal compared with
+  a datetime), a finding of `replay`.
+- **`duration` is a length**, ISO 8601 in whole days, hours, minutes
+  and seconds; `d` is exactly 24 hours. No years, months or weeks –
+  they have no fixed length – no fractions and no sign. Stored as the
+  ISO string rather than seconds, so a payload reads (`PT15M`) and a
+  JSON Schema `format` names it. Two are equal when they are as long.
+- **Arithmetic**: `datetime ± duration` is a datetime, written in UTC
+  (`…Z`, milliseconds only when there are some) – one form, so a
+  scenario's Then names it one way; `duration ± duration` a duration in
+  its largest units; numbers as before. A duration below zero is an
+  evaluation error, and one datetime minus another is not offered: no
+  evidence needed it, and it would have needed the negative durations
+  just refused. In a command only `+` and `-`, in rules, branch
+  conditions and emissions – a derived projection keeps `*`, `min` and
+  `max`, and its `add` and `subtract` compute times the same way. A null
+  side yields null; a computed time may start at null without the
+  advisory a computed number gets, since a time has nothing else to
+  start at.
+- **Known by value, typed by name.** The evaluator carries no types, so
+  it recognises a time by its value: two values that both read as
+  datetimes are ordered as instants, two durations by length, and
+  anything else compares as before. The advisories are nominal, as
+  everywhere: an emission of `now + 15m` is a `datetime`, a datetime is
+  compared with a datetime, a duration with a duration, and a string
+  opposite a datetime must be one. `type Deadline = datetime` – a
+  string of format `date-time` – is a datetime to both.
+- **A collection may compute over a record's field** (11.0, here for
+  the decided example): `sum(Reservation(courseId, *).seats where
+  value.expiresAt > now)` sums `seats` while its `where` sees the whole
+  record. Only the numeric functions take one; `count`, `any` and
+  `all` keep whole instances.
+- **On the pages**: the type pickers list both among the built-ins; a
+  payload field takes a datetime with its offset or an ISO duration
+  and says why it refuses anything else. A typed value that reads as a
+  duration literal (`15m`, `1h30m`) is one (`draftOperand`), in a rule
+  and in a derived projection's side. A rule compared with a time or a
+  number, and an emission field of one, take `a sum or difference…` –
+  terms from scope, typed or collections, `+` / `-` left to right
+  (`arithmeticControls`, `fieldValueEditor`). A derived projection computing a time
+  offers `+` and `-` only and keeps its time type when the operator
+  changes: retyping it a number was the bug that once made it
+  read-only. A derived projection may also hold one read's value
+  (`holds`), one field of a record it reads, or a collection – typed
+  as what it holds, not as a comparison's boolean.
+
+## Descriptions and notes
+
+- **A description is a `///` doc comment** (11.0,
+  dcb-events.github.io#109): above a definition – a type, an event, a
+  group, a projection grouped or derived, a command – or above the
+  `model "…"` line, it is stored as `description`, several lines one
+  text. `//` stays an ordinary comment, and so does a `///` anywhere
+  else: the lexer hangs doc lines on the next token
+  (`token.doc`), and only a declaration's first token is read for
+  one. The model's own is a log event of its own,
+  `dcb-model-described` (`describeDcbModel`), as its name is – a new
+  event type, so no `EVENT_LOG_KEY` bump: an old log simply has none.
+- **Notes are annotations, documentation only**: `@assumption("…")`
+  (a reading taken where the brief was silent), `@external("…")` (a
+  rule the layer around the commands checks before it dispatches –
+  never a `require`, so it cannot be mistaken for an executable rule)
+  and `@unresolved("…")` (a known gap), repeatable, stored as
+  `assumptions`, `externalRules` and `unresolved`; `@deprecated` on an
+  event (`isDeprecated`), still stored and no longer emitted, which
+  replaced the proposed `@legacy` since long-lived greenfield systems
+  have such events too. They go on definitions, never on a rule or a
+  statement: a note about a rule names it in its text. Nothing
+  evaluates them and no boundary changes – a test holds a command's
+  derivation equal with and without them. `SOURCE_ANNOTATIONS` (dsl.js)
+  is the one table for every annotation – kinds, field, flag or
+  repeat – which the parser, the printer and completion read. A
+  grouped projection carries a description and notes, never a mark.
+- **`check`**: "Model is incomplete: N unresolved" is informational
+  (exit 0) and `--strict` makes it fail; each command's `@assumption`
+  and `@external` notes are listed for the hand-over. Two advisories:
+  a command emitting a `@deprecated` event, and – listed in language.md
+  long before it was reported – an event no command emits, which
+  `@deprecated` silences. The shipped models emit every event they
+  declare. Many test fixtures record events by hand that none of their
+  commands emit; their checks leave that one advisory out
+  (`advisedOtherwise`), while the predefined models and the reference
+  tour are held to it whole. Excluding events a scenario gives was
+  weighed and dropped: a scenario's given always holds events other
+  commands should emit, so it would hide exactly the gap.
+- **`@sensitive` goes on a type**, a tag type or a value type
+  (`isSensitive`, dcb-events.github.io#101) – never on a property: a
+  value is personal data because of what it is. On a tag type the
+  store must not render the plain value as a tag; the adapter hashes
+  it or uses an HMAC with a deployment secret, so the algorithm is not
+  in the model, and equal values still match. There are no hash or
+  normalisation functions: normalising changes what matches, so it is
+  the outer layer's, and the model states the contract as a `pattern`.
+  `replay` masks a sensitive value it prints; protection beyond that
+  is the store's and the outer layers'.
+- **The pages show them** (`definitionNotes`, index.html): the markers,
+  the description – edited in place as plain text on the command page,
+  an event, a type, a group, the projection editor's draft and the
+  Overview for the model – and each note, a field of its own edited
+  the same way: emptied it is removed, `+ note` adds one of a kind
+  (`@assumption`, `@external`, `@unresolved`). The markers a kind takes
+  are checkboxes: `@deprecated` on an open event, `@sensitive` on a
+  scalar type – never a record or an enum, since a value is personal
+  data because of what it is. The model's own carries a description
+  only, as the language does. An editor that rebuilds a body carries them over
+  (`DEFINITION_NOTE_FIELDS`, `cleanProjectionBody`).
 
 ## The metro map
 
@@ -1425,13 +2102,10 @@ Artboards: `design/dcb-queries/` (2026-10).
   picker opens first, *As you opened it* highlighted, so the common
   question is one click and nothing is chosen unasked.
 - **A file is built by the import, in a scratch log.** Re-deriving an
-  envelope → model step beside the import would drift from it (entity
-  identifier types, retries, custom-type order); `inScratchLog` runs
+  envelope → model step beside the import would drift from it
+  (converted entities, retries, custom-type order); `inScratchLog` runs
   the real import against an array instead – no append listener, no
   compaction, no revision bump, so no cache of the real log moves.
-- **No import gate for a file.** The gate exists because scripts run
-  unprompted; Compare prints a script and derives boundaries from
-  declared tags, and compiles nothing.
 - **Read-only, and the open model is the one you go to.** "Open" leads
   to the definition's page in the open model, only when it has it; the
   other side is often not in the log, so it is read on this page only.
@@ -1563,9 +2237,8 @@ Artboards: `design/dcb-queries/` (2026-10).
   the real consumers – the OpenAPI builder, the slice view, the
   runtime's adapter, the sandbox – call, documented in the file
   headers. A resolved-model format comes only when a generator misses
-  something the functions do not give. A model with scripted handlers
-  is refused by any generator (`envelopeHasScript`): translating
-  JavaScript is not on offer.
+  something the functions do not give. Since 11.0 no model holds
+  JavaScript to translate: a scripted one does not import.
 - **The phases.** Each leaves both repositories green, and the
   runtime's conformance test guards the first three as they happen.
   1. `modelFromEnvelope` (the import inside `inScratchLog`) and
@@ -1594,6 +2267,14 @@ Artboards: `design/dcb-queries/` (2026-10).
      core can shed the log and the editing commands. Held by a test
      that every fixture and shipped model reads the same both ways –
      editing commands and the reader are two routes to one model.
+- **What a consumer reads off a command changed with 11.0.** Its
+  rules and emissions are `steps`, walked through `forEachStep` and
+  its siblings (model.js) – a runtime reading `conditions` or
+  `publishes` finds nothing. A decision reports the arms it took
+  (`arms`) beside its reads, and its `failedRule` names the refusing
+  step by `path` as well as its index among the rules; a `reject`
+  has no index. The append condition is the reads the run made
+  (_The read port_), so a runtime keeps taking `query` as it is.
 - **One attempt; the retry is the caller's (2026-10).** A lost race
   comes back as `conflict` rather than being decided again in here.
   Retrying well means waiting – a backoff, jitter – and this layer is

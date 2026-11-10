@@ -2,13 +2,13 @@
 
 An in-browser modeling tool for designing and testing event-sourced systems
 built on Dynamic Consistency Boundaries (DCB, see https://dcb.events). Authors
-build _DCB Models_ — collections of custom-type, event, entity, projection and
+build _DCB Models_ — collections of custom-type, event, group, projection and
 command definitions — drive commands against a hypothetical event log, and see
 which consistency boundary each command derives.
 
 No build step, no framework, and one vendored dependency: Monaco, pinned and
-checked in under `app/vendor/monaco/`, lazy-loaded only when a scripted
-handler's editor is on screen. The app runs from any static server —
+checked in under `app/vendor/monaco/`, lazy-loaded only when the code view's
+editor is on screen. The app runs from any static server —
 `npx serve app` locally; it never fetches anything at runtime — except the
 help's demo video, from youtube-nocookie.com, once someone presses play,
 and a model someone asked for by address: Import's URL field or a
@@ -18,7 +18,7 @@ and a model someone asked for by address: Import's URL field or a
 
 - `app/` — the application. Everything that runs.
 - `dcb-model.schema.json` — canonical JSON Schema for the interchange format
-  (`https://dcb.events/schemas/model/v10.json`). Source of truth for what a
+  (`https://dcb.events/schemas/model/v11.json`). Source of truth for what a
   DCB Model file contains; `app/webmcp-schemas.js` is generated from it.
 - `fixtures/` — test data only: models carrying scenarios authored in
   the playground, which no seed builder produces; `dsl.test.js` reads
@@ -52,9 +52,7 @@ documentation; read it before editing the file:
   as the difference (`replaceDefinitions`, model.js — one append). Also the
   Monaco grammar, as data. No DOM. The Code view in index.html is its UI.
 - `shared.js` — DOM helpers (`h(...)`), the experimental flag, the links
-  into the documentation, the scripted-
-  handler editor (Monaco behind a synthesized per-handler TypeScript preamble
-  — the synthesis is pure and tested, the widget is not), and the _slice_
+  into the documentation, the lazy Monaco loader, and the _slice_
   view (everything one command touches, derived from the definitions — the
   idea the page is built around). `shared.css` is its stylesheet.
 - `index.html` — the entire UI, one page. Renders from the projected state and
@@ -122,10 +120,11 @@ was decided, why, and what was tried and reverted:
 - event or projection tags, projection reads, handlers per event —
   _Tags: events, projections, handlers_
 - the wire format's version — _Wire format versions_
-- entity lifecycles or their UI — _Entity lifecycles_
+- groups, the projections list's sections, moving in and out — _Groups_
 - the projection editor's layout, its Advanced switch, the new-projection
-  wizard — _The projection editor_
-- guards, rejection messages, derived projections — _Guarded emissions…_
+  wizard, the Lifecycle tab — _The projection editor_
+- rejection messages, derived projections, what became of guards —
+  _Guarded emissions…_
 - creating or editing a definition from a command page, the definition
   modals — _Inline definitions from a command_
 - wording on any page — _The interface register_
@@ -135,12 +134,14 @@ was decided, why, and what was tried and reverted:
   view's language_, and the `dsl.js` header
 - the Visual · Split · Code switch, the split, what follows the code —
   _The surface switch_
-- what a script can reach, a CSP, sandboxing scripts — _Scripts and the
-  origin_
+- a CSP, what the page lets in — _Scripts and the origin_
 - how a DCB query is drawn, the sandbox's Store column — _DCB queries,
   shown_
 - how evaluation gets its events, the read port — _The read port_
 - JSON Schemas of arguments and payloads — _Value schemas_
+- `datetime`, `duration`, a command's arithmetic — _Time_
+- descriptions, `@assumption` / `@external` / `@unresolved`, `@deprecated`,
+  `@sensitive` — _Descriptions and notes_
 - the Metro map view, the command map, `metroLayout` — _The metro map_
 - comparing two models, the Compare view — _Comparing models_
 - undo, redo, the per-model history — _History and undo_
@@ -165,31 +166,28 @@ was decided, why, and what was tried and reverted:
   (`experimental()`, shared.js): gate an *offer* — an adder, a picker
   row, a tab, a completion — never the display of something stored. A
   model that uses a gated construct still loads, renders and evaluates
-  whole. WebMCP offers nothing experimental, flag or no flag: no entity
+  whole. WebMCP offers nothing experimental, flag or no flag: no experimental
   tools or schema members, and an agent's edit that would introduce a
   use is refused — a model already using one stays editable.
 - **Storage versioning**: `EVENT_LOG_KEY` in `model.js` (`dcb-playground:events:vN`)
   must be bumped whenever a stored definition changes shape. The log is the
   whole state; there are no migrations — a fresh key is the honest move. Keep
   the changelog comment above the constant current.
-- **Scripted projections are unsandboxed**, run on the main thread, and run
-  unprompted — everywhere a declared projection would, repaints included.
-  What stands between an untrusted model and that is the import gate (every
-  external load pauses on `envelopeHasScript`; cancelling loads nothing), and
-  the way back into a page a hanging script would otherwise brick on every
-  reload is `?safe` on the URL — or, unasked, a reload after a load that
-  never finished (`boot`, index.html): `setScriptsDisabled` (evaluate.js)
-  compiles every script handler to a thrower, so the model loads and the
-  script can be fixed. Keep both intact — together they are why unprompted
-  is safe. The gate shows the code it asks about (`envelopeScripts`,
-  model.js). A Worker sandbox was weighed and shelved; see _Scripts and the
-  origin_.
+- **Nothing a model holds is code** (11.0 removed scripted projections):
+  no import gate, no safe mode, no sandbox. Keep it that way — a
+  construct that ran authored code would need all three back. What 11.0
+  removed (scripts, `currentValue`, guarded emissions, optional reads)
+  is refused on the write path and on import (`removedConstructIn`,
+  `refuseRemovedConstructs`, model.js): a script or `currentValue`
+  refuses the whole document, a guard or an optional read leaves its
+  command out with a note. See _Scripts and the origin_.
 - **Two failure kinds** in evaluation, never conflated: a command whose
   conditions do not hold is _rejected_ (an ordinary outcome); a scenario that
-  cannot run at all (missing event, missing argument, throwing script) is an
-  _error_.
+  cannot run at all (missing event, a tag left out, an unspecified field
+  read, a value of the wrong shape or outside its type) is an _error_.
 - **The write path refuses only structure** — a missing key, a name
-  collision, a body whose containers are not lists (`assertStorableBody`).
+  collision, a body whose containers are not lists, a construct 11.0
+  removed (`assertStorableBody`).
   Everything semantic (dangling references, write coverage, name idiom,
   mistyped values) is an _advisory_: computed per revision by
   `modelAdvisories` (model.js), folded into the Problems panel, shown as a
@@ -226,16 +224,16 @@ was decided, why, and what was tried and reverted:
   the generic functions, not in a per-kind copy.
 - **`null` is the one spelling of "no value"** on optional properties, and
   it is never the empty string. Writers spell it out (the payload editors
-  and the scenario save path store the explicit null; an unmapped optional
+  and the page's scenario save store the explicit null; an unmapped optional
   event property publishes it); readers are lenient (an absent key on an
-  optional property reads as null). Downstream it is an ordinary value —
+  optional property reads as null) — except in a scenario's payload, where
+  an absent key is _unspecified_ (11.0) and reading it is an error
+  (`EV_UNSPECIFIED`, evaluate.js). Downstream it is an ordinary value —
   equality and emptiness work — except where it would become a tag or an
-  ordering: a null exclusion or tag of a projection read is an
-  evaluation _error_, and so is a null boundary identifier _unless the binding is
-  marked `isOptional`_ — then it binds zero instances, conditions over
-  the alias hold vacuously, and reading a property of it yields null.
-  The optional-parameter, derived-null and absent-binding advisories say
-  all of this ahead of time.
+  ordering: a null tag of a projection read is an evaluation _error_,
+  and so is a null boundary identifier (11.0 removed the optional read
+  that bound nothing instead). The optional-parameter and derived-null
+  advisories say so ahead of time.
 - **Wire format majors**: a new member of a closed vocabulary is a
   _major_, judged from the reader's side; a field an old reader can
   ignore without misreading anything is a minor. The importer reads
@@ -243,17 +241,13 @@ was decided, why, and what was tried and reverted:
   A major reaches `main` together with the website's pin bump: the skill
   installs from `main`, so its language would otherwise differ from the
   one dcb.events documents.
-- **Anything walking a command's conditions must walk each emission's
-  `when` too**: guard reads count toward the derived DCB like condition
-  reads (both flow through `forEachCommandOperand`; see `allConditions`
-  in `validateCommandBody`).
 - **The code view's language is a spelling of the wire format**: print
   and parse are each other's inverse, and a definition that does not
   survive the round trip is printed as JSON. So a new wire-format
   construct needs a spelling in the printer and the parser, its parser
   marks and a case in `sourceSymbols`, or the dsl suite fails.
 - **Kind colours mean kinds; chrome is `--accent`.** `--command`,
-  `--event`, `--entity`/`--projection` and `--rule` colour only the thing
+  `--event`, `--projection` and `--rule` colour only the thing
   they name (chips, cards, lanes, marks). Buttons, focus rings, hover,
   selected tabs and pickers use `--accent` (dcb.events teal) — painting
   chrome command blue made every control read as "about a command".
